@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'crm.apps.CrmConfig',
 ]
 
 MIDDLEWARE = [
@@ -125,3 +126,9 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# --- Reguły cyklu życia leadów (CRM) ---
+LEAD_MAX_ATTEMPTS_PER_AGENT = 3        # ile prób dodzwonienia ma jeden agent
+LEAD_UNREACHABLE_AFTER_AGENTS = 5      # ilu różnych agentów musi nie zdołać, by lead był "nieosiągalny"
+LEAD_CLAIM_TIMEOUT_HOURS = 24          # po ilu godzinach nietknięty lead wraca do puli
+LEAD_UNREACHABLE_COOLDOWN_DAYS = 30    # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
