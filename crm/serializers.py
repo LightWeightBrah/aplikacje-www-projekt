@@ -1,0 +1,94 @@
+import re
+
+from django.utils import timezone
+from rest_framework import serializers
+
+from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = "__all__"
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+        fields = "__all__"
+        read_only_fields = ("created_at",)
+
+
+class LeadBatchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeadBatch
+        fields = "__all__"
+        read_only_fields = ("created_by", "created_at")
+
+
+class ActivitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Activity
+        fields = ("id", "lead", "agent", "outcome", "note", "created_at")
+        read_only_fields = ("agent", "created_at")
+
+
+class LeadAssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeadAssignment
+        fields = "__all__"
+        read_only_fields = fields
+
+
+class LeadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lead
+        fields = "__all__"
+        # Te pola zmienia wyłącznie system (losowanie, przepisywanie, historia),
+        # a nie użytkownik wysyłający dane
+        read_only_fields = (
+            "owner",
+            "attempts_count",
+            "claimed_at",
+            "last_activity_at",
+            "created_at",
+        )
+
+    # Walidacja na poziomie pojedynczego pola
+    def validate_phone(self, value):
+        digits = re.sub(r"\D", "", value)
+        if not 9 <= len(digits) <= 15:
+            raise serializers.ValidationError(
+                "Numer telefonu musi mieć od 9 do 15 cyfr."
+            )
+        return value.strip()
+
+    def validate_next_contact_at(self, value):
+        if value and value < timezone.now():
+            raise serializers.ValidationError(
+                "Termin kolejnego kontaktu nie może być w przeszłości."
+            )
+        return value
+
+    # Walidacja na poziomie całego obiektu (reguła biznesowa)
+    def validate(self, attrs):
+        # Przy częściowej aktualizacji (PATCH) brakujące pola bierzemy z istniejącego leada
+        status = attrs.get("status", getattr(self.instance, "status", Lead.Status.NEW))
+        next_at = attrs.get(
+            "next_contact_at", getattr(self.instance, "next_contact_at", None)
+        )
+        note = attrs.get(
+            "next_contact_note", getattr(self.instance, "next_contact_note", "")
+        )
+        if status == Lead.Status.CALLBACK and (not next_at or not note):
+            raise serializers.ValidationError(
+                "Status 'Do oddzwonienia' wymaga terminu i notatki."
+            )
+        return attrs
+
+
+class LeadDetailSerializer(LeadSerializer):
+    """Szczegóły leada razem z historią kontaktów i przypisań."""
+
+    activities = ActivitySerializer(many=True, read_only=True)
+    assignments = LeadAssignmentSerializer(many=True, read_only=True)
