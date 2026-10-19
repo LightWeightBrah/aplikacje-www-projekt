@@ -1,0 +1,44 @@
+{% extends 'crm/base.html' %}
+
+{% block title %}Leady – LeadCRM{% endblock %}
+
+{% block content %}
+    <h2>Leady</h2>
+    <p>Liczba leadów: <strong>{{ leads|length }}</strong></p>
+
+    {% if leads %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Kontakt</th>
+                    <th>Telefon</th>
+                    <th>Status</th>
+                    <th>Produkt</th>
+                    <th>Opiekun</th>
+                    <th>Następny kontakt</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lead in leads %}
+                    <tr>
+                        <td>{{ lead.contact_name }}</td>
+                        <td>{{ lead.phone }}</td>
+                        <td><span class="badge badge-{{ lead.status }}">{{ lead.get_status_display }}</span></td>
+                        <td>{{ lead.product.name|default:"—" }}</td>
+                        <td>{{ lead.owner.username|default:"w puli" }}</td>
+                        <td>
+                            {% if lead.next_contact_at %}
+                                {{ lead.next_contact_at|date:"d.m.Y H:i" }}
+                                <br><small>{{ lead.next_contact_note }}</small>
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>Brak leadów w bazie.</p>
+    {% endif %}
+{% endblock %}

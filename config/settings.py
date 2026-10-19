@@ -160,3 +160,6 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'REST API systemu CRM dla zespołu sprzedaży: leady, oddzwonienia, przejmowanie leadów.',
     'VERSION': '1.0.0',
 }
+
+# Strony HTML wymagające logowania przekierowują na logowanie z panelu admina
+LOGIN_URL = 'admin:login'

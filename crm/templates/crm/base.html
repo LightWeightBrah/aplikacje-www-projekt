@@ -1,0 +1,32 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CRM – zarządzanie leadami{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'crm/css/style.css' %}">
+</head>
+<body>
+    <header class="navbar">
+        <div class="container">
+            <h1 class="logo"><a href="{% url 'crm:lead-list' %}">Lead<span>CRM</span></a></h1>
+            <nav>
+                <a href="{% url 'crm:lead-list' %}">Leady</a>
+                <a href="/api/docs/" target="_blank">Dokumentacja API</a>
+                <a href="/admin/" target="_blank">Panel administratora</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 LeadCRM. Aplikacje WWW – Wydział Matematyki i Informatyki UWM.</p>
+        </div>
+    </footer>
+</body>
+</html>
