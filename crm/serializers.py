@@ -98,3 +98,11 @@ class LeadDetailSerializer(LeadSerializer):
 
     activities = ActivitySerializer(many=True, read_only=True)
     assignments = LeadAssignmentSerializer(many=True, read_only=True)
+
+
+class DueLeadsSerializer(serializers.Serializer):
+    """Opis odpowiedzi endpointu my-leads/due (używany głównie w dokumentacji Swagger)."""
+
+    window_minutes = serializers.IntegerField()
+    overdue = LeadSerializer(many=True)
+    upcoming = LeadSerializer(many=True)
