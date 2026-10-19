@@ -37,7 +37,13 @@ class LeadAssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeadAssignment
         fields = "__all__"
-        read_only_fields = fields
+        read_only_fields = (
+            "lead",
+            "from_agent",
+            "to_agent",
+            "reason",
+            "assigned_at",
+        )
 
 
 class LeadSerializer(serializers.ModelSerializer):
