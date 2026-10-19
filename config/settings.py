@@ -37,6 +37,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'django_filters',
+    'drf_spectacular',
     'crm.apps.CrmConfig',
 ]
 
@@ -132,3 +136,27 @@ LEAD_MAX_ATTEMPTS_PER_AGENT = 3        # ile prób dodzwonienia ma jeden agent
 LEAD_UNREACHABLE_AFTER_AGENTS = 5      # ilu różnych agentów musi nie zdołać, by lead był "nieosiągalny"
 LEAD_CLAIM_TIMEOUT_HOURS = 24          # po ilu godzinach nietknięty lead wraca do puli
 LEAD_UNREACHABLE_COOLDOWN_DAYS = 30    # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
+
+# --- Django REST Framework ---
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'CRM API',
+    'DESCRIPTION': 'REST API systemu CRM dla zespołu sprzedaży: leady, oddzwonienia, przejmowanie leadów.',
+    'VERSION': '1.0.0',
+}
