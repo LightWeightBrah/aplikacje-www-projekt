@@ -11,7 +11,7 @@ from crm.services import register_activity
 
 BATCH_NAME = "Demo - baza startowa"
 
-PRODUCTS = ("Internet światłowodowy", "Telefonia komórkowa", "Leasing samochodowy")
+PRODUCTS = ("Internet światłowodowy", "Abonament komórkowy", "Leasing samochodowy")
 
 COMPANIES = (
     ("Alfa Systemy Sp. z o.o.", "5250000001", "0000100001", "Olsztyn"),

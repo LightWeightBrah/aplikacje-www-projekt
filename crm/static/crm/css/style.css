@@ -25,11 +25,13 @@ main { padding-top: 24px; padding-bottom: 40px; min-height: 70vh; }
 .table th { background: #eef2f7; }
 .table small { color: #667; }
 
-.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.85rem; background: #e3e8ef; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.85rem; background: #e3e8ef; white-space: nowrap; }
 .badge-new { background: #dbeafe; }
 .badge-callback { background: #fef3c7; }
 .badge-interested, .badge-offer { background: #d1fae5; }
 .badge-won { background: #86efac; }
-.badge-lost, .badge-do_not_call, .badge-unreachable { background: #fecaca; }
+.badge-lost { background: #e5e7eb; color: #4b5563; }
+.badge-do_not_call { background: #fecaca; }
+.badge-unreachable { background: #ede9fe; }
 
 .footer { background: #1f2d3d; color: #9aa7b8; padding: 16px 0; text-align: center; font-size: 0.9rem; }
