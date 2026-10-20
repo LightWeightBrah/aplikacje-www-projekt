@@ -1,0 +1,25 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logowanie – LeadCRM</title>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}">
+</head>
+<body class="auth-page">
+    <main class="auth-card">
+        <div class="brand">Lead<span>CRM</span></div>
+        <h1>Zaloguj się</h1>
+        <p class="muted">Panel agentów i managerów zespołu sprzedaży.</p>
+        <form id="login-form" novalidate>
+            <label>Login<input id="username" autocomplete="username" required autofocus></label>
+            <label>Hasło<input id="password" type="password" autocomplete="current-password" required></label>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+            <button class="btn btn-primary btn-block" type="submit">Zaloguj</button>
+        </form>
+        <p class="muted small">Konta demo: agent1, agent2, manager1 (hasło: demo12345)</p>
+    </main>
+    <script src="{% static 'crm/js/app.js' %}"></script>
+    <script>CRM.initLogin();</script>
+</body>
+</html>

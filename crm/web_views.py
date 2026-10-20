@@ -12,3 +12,13 @@ def lead_list(request):
         request.user, Lead.objects.select_related("product", "company", "owner")
     )
     return render(request, "crm/lead_list.html", {"leads": leads})
+
+
+def login_page(request):
+    """Ekran logowania aplikacji. Logowanie robi JavaScript przez /api/token/."""
+    return render(request, "crm/login.html")
+
+
+def dashboard(request):
+    """Szkielet dashboardu. Dane pobiera JavaScript z /api/stats/ (token JWT)."""
+    return render(request, "crm/dashboard.html")

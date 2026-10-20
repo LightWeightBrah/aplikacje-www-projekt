@@ -1,0 +1,34 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}LeadCRM{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}">
+</head>
+<body>
+<div class="shell">
+    <aside class="sidebar">
+        <div class="brand">Lead<span>CRM</span></div>
+        <nav>
+            <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
+            <span class="nav-soon">Moja kolejka <em>wkrótce</em></span>
+            <span class="nav-soon">Leady <em>wkrótce</em></span>
+            <span class="nav-soon">Import / eksport <em>wkrótce</em></span>
+            <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
+        </nav>
+        <div class="user-chip">
+            <div class="avatar" id="user-avatar">?</div>
+            <div><strong id="user-name">…</strong><small id="user-role"></small></div>
+            <button class="btn-ghost" id="logout-btn" title="Wyloguj">Wyloguj</button>
+        </div>
+    </aside>
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+<script src="{% static 'crm/js/app.js' %}"></script>
+<script>CRM.initShell();</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

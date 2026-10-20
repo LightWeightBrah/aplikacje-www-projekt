@@ -1,0 +1,27 @@
+{% extends "crm/app_base.html" %}
+{% block title %}Dashboard – LeadCRM{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1 id="greeting">Dashboard</h1>
+        <p class="muted" id="subtitle">Ładowanie danych…</p>
+    </div>
+    <select id="days" class="select" aria-label="Okres">
+        <option value="7">Ostatnie 7 dni</option>
+        <option value="30">Ostatnie 30 dni</option>
+        <option value="90">Ostatnie 90 dni</option>
+    </select>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+<section class="kpis" id="kpis"></section>
+<section class="grid-2">
+    <div class="card"><h2>Lejek leadów</h2><div id="funnel"></div></div>
+    <div class="card"><h2>Rozmowy dzień po dniu</h2><div id="daily" class="bars"></div></div>
+</section>
+<section class="card" id="agents-card" hidden>
+    <h2>Skuteczność agentów</h2>
+    <div class="table-wrap"><table class="table" id="agents"></table></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>CRM.initDashboard();</script>{% endblock %}
