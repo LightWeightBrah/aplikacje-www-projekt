@@ -1,6 +1,6 @@
 # LeadCRM – REST API dla zespołu sprzedaży
 
-Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026).
+Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026Z).
 
 - **Autor:** Julian Łabanowski
 - **Język i framework:** Python 3.13, Django 6.1
@@ -108,6 +108,7 @@ Komendy zarządzające:
 | `python manage.py seed_demo --reset` | usuwa bazę demo i tworzy ją od nowa (przydatne przed pokazem) |
 | `python manage.py setup_roles --demo` | tworzy same grupy (Agent, Manager) i konta demo, **bez** leadów |
 | `python manage.py setup_roles` | tworzy same grupy (Agent, Manager), bez kont demo |
+| `python manage.py release_stale_leads` | zwraca do puli leady nietknięte przez agenta dłużej niż 24 h (`--dry-run` tylko liczy) |
 | `python manage.py test` | uruchamia testy automatyczne |
 
 Konta demo (hasło każdego: `demo12345`):
@@ -142,7 +143,7 @@ W Swaggerze: przycisk **Authorize** i wklejenie samego tokenu `access` (bez sło
 |---|---|
 | bez roli | nic (403) |
 | **Agent** | widzi i edytuje tylko swoje leady i ich historię, dodaje aktywności do swoich leadów, losuje leady z puli, czyta produkty, firmy i paczki |
-| **Manager** (grupa Manager lub superuser) | widzi wszystko, dodaje i zmienia produkty, firmy, paczki, usuwa leady |
+| **Manager** (grupa Manager lub superuser) | widzi wszystko, dodaje i zmienia produkty, firmy, paczki, usuwa leady, przypisuje i przepisuje leady, zarządza pulą nieosiągalnych |
 
 Własne klasy uprawnień (`crm/permissions.py`): `IsAgentOrManager`, `IsManager`, `IsManagerOrReadOnly`, `IsLeadOwnerOrManager` (dostęp do leada i jego historii ma opiekun albo manager).
 
@@ -166,6 +167,33 @@ Endpointy poza CRUD (logika biznesowa):
 | `POST /api/leads/next/` | losuje lead z puli i przypisuje zalogowanemu agentowi; opcjonalnie `?batch=<id>`; 404 gdy pula pusta, 409 gdy są zaległe oddzwonienia |
 | `GET /api/my-leads/` | leady zalogowanego użytkownika |
 | `GET /api/my-leads/due/` | leady do zrobienia: zaległe i z terminem w oknie `?minutes=` (domyślnie 15, max 1440) |
+| `GET /api/my-leads/schedule/` | plan dnia: leady z terminem kontaktu w dniu `?date=RRRR-MM-DD` (domyślnie dziś; na dziś także zaległe), posortowane po godzinie |
+| `GET /api/my-leads/calendar/` | plik `.ics` z terminami kontaktów, do zaimportowania w kalendarzu |
+| `GET /api/stats/` | statystyki: lejek leadów wg statusów, skuteczność agentów, rozmowy dzień po dniu (`?days=`, domyślnie 7, max 365); manager widzi cały zespół i pulę, agent tylko siebie |
+
+Endpointy managera (agent dostaje 403):
+
+| Endpoint | Co robi |
+|---|---|
+| `POST /api/leads/{id}/assign/` | przypisuje leada agentowi (`{"agent": 2}`) albo zwraca go do puli (`{"agent": null}`); zapisuje wpis w historii przypisań |
+| `POST /api/leads/reassign/` | przepisuje wszystkie aktywne leady odchodzącego agenta na innego (`{"from_agent": 1, "to_agent": 2}`) |
+| `GET /api/leads/unreachable/` | pula nieosiągalnych leadów; `?ready=true` tylko te po okresie karencji |
+| `POST /api/leads/recycle-unreachable/` | zwraca nieosiągalne leady po okresie karencji do obiegu (do puli) |
+
+## Cykl życia leada
+
+Ustawienia w `config/settings.py`:
+
+| Ustawienie | Domyślnie | Znaczenie |
+|---|---|---|
+| `LEAD_MAX_ATTEMPTS_PER_AGENT` | 3 | tyle nieodebranych prób ma jeden agent; potem lead wraca do puli i ten agent go już nie dostanie |
+| `LEAD_UNREACHABLE_AFTER_AGENTS` | 5 | tylu różnych agentów bez skutku i lead dostaje status „nieosiągalny” (nie wraca do puli) |
+| `LEAD_CLAIM_TIMEOUT_HOURS` | 24 | po tylu godzinach bez aktywności agenta lead wraca do puli |
+| `LEAD_UNREACHABLE_COOLDOWN_DAYS` | 30 | po tylu dniach manager może zwrócić nieosiągalne leady do obiegu |
+
+Lead z obietnicą oddzwonienia (status „do oddzwonienia”) zostaje przy agencie. Zwroty do puli zapisuje `LeadAssignment`.
+
+Komenda `python manage.py release_stale_leads` zwraca do puli leady nietknięte przez agenta dłużej niż `LEAD_CLAIM_TIMEOUT_HOURS` (z opcją `--dry-run` tylko liczy, nic nie zmienia).
 
 Filtrowanie, wyszukiwanie, sortowanie i paginacja (20 na stronę):
 
@@ -179,7 +207,7 @@ Filtrowanie, wyszukiwanie, sortowanie i paginacja (20 na stronę):
 python manage.py test
 ```
 
-27 testów `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności oraz `my-leads/due`.
+58 testów `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki oraz plan dnia i kalendarz `.ics`.
 
 ## Zrzuty ekranu
 
@@ -201,7 +229,7 @@ crm/
   models.py                  modele
   serializers.py             serializery i walidacja
   views.py                   ViewSety i akcje
-  services.py                logika biznesowa (losowanie leadów, skutki aktywności)
+  services.py                logika biznesowa (losowanie leadów, skutki aktywności, cykl życia, statystyki, plan dnia)
   permissions.py, roles.py   role i uprawnienia
   tests.py                   testy APITestCase
   management/commands/       setup_roles, seed_demo
