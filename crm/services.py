@@ -37,6 +37,10 @@ class NoLeadsAvailable(Exception):
     """W puli nie ma leadu, który ten agent może dostać."""
 
 
+class InvalidAssignment(Exception):
+    """Przypisanie leada jest niedozwolone (komunikat dla managera)."""
+
+
 class OverdueCallbacks(Exception):
     """Agent ma zaległe oddzwonienia, więc nie dostanie nowego leada."""
 
@@ -226,3 +230,104 @@ def release_stale_leads(dry_run=False):
         if _return_to_pool(lead, Lead.Status.NEW, reason):
             released += 1
     return released
+
+
+# Leady zamknięte nie są już przepisywane ani zwracane do puli
+FINISHED_STATUSES = (Lead.Status.WON, Lead.Status.LOST, Lead.Status.DO_NOT_CALL)
+
+
+def assign_lead(lead, agent, reason=""):
+    """Manager przypisuje leada agentowi albo zwraca go do puli (agent=None).
+
+    - zamknięty lead (wygrany, przegrany, nie dzwonić) nie może być przepisany,
+    - do puli wracają tylko leady nowe i nieosiągalne (resztę trzeba przepisać),
+    - przepisanie zachowuje status i termin kontaktu, tylko nieosiągalny
+      lead dostaje status "nowy",
+    - każda zmiana trafia do historii (LeadAssignment).
+    """
+    with transaction.atomic():
+        lead = Lead.objects.get(pk=lead.pk)
+        if lead.status in FINISHED_STATUSES:
+            raise InvalidAssignment("Zamkniętego leada nie można przepisać.")
+        if lead.owner_id == (agent.pk if agent else None):
+            raise InvalidAssignment(
+                "Ten agent już prowadzi leada."
+                if agent
+                else "Lead jest już w puli."
+            )
+
+        if agent is None:
+            if lead.status not in (Lead.Status.NEW, Lead.Status.UNREACHABLE):
+                raise InvalidAssignment(
+                    "Do puli wracają tylko leady nowe i nieosiągalne. "
+                    "Przepisz ten lead na innego agenta."
+                )
+            changes = {
+                "owner": None,
+                "claimed_at": None,
+                "status": Lead.Status.NEW,
+                "next_contact_at": None,
+                "next_contact_note": "",
+            }
+            default_reason = "Zwrot do puli przez managera"
+        else:
+            changes = {"owner": agent, "claimed_at": timezone.now()}
+            if lead.status == Lead.Status.UNREACHABLE:
+                changes["status"] = Lead.Status.NEW
+            default_reason = "Przypisanie przez managera"
+
+        former_owner_id = lead.owner_id
+        Lead.objects.filter(pk=lead.pk).update(**changes)
+        LeadAssignment.objects.create(
+            lead=lead,
+            from_agent_id=former_owner_id,
+            to_agent=agent,
+            reason=reason or default_reason,
+        )
+    return Lead.objects.get(pk=lead.pk)
+
+
+def reassign_agent_leads(from_agent, to_agent, reason=""):
+    """Przepisuje wszystkie aktywne leady odchodzącego agenta na innego agenta.
+
+    Zwraca liczbę przepisanych leadów. Leady zamknięte zostają jak były.
+    """
+    reason = reason or "Przepisanie leadów odchodzącego agenta"
+    with transaction.atomic():
+        leads = list(Lead.objects.filter(owner=from_agent, status__in=ACTIVE_STATUSES))
+        for lead in leads:
+            assign_lead(lead, to_agent, reason)
+    return len(leads)
+
+
+def unreachable_leads(ready_only=False):
+    """Pula nieosiągalnych. ready_only: tylko te, które przeleżały cooldown."""
+    queryset = Lead.objects.filter(status=Lead.Status.UNREACHABLE)
+    if ready_only:
+        cutoff = timezone.now() - timedelta(days=settings.LEAD_UNREACHABLE_COOLDOWN_DAYS)
+        queryset = queryset.filter(owner__isnull=True, last_activity_at__lte=cutoff)
+    return queryset.order_by("last_activity_at")
+
+
+def recycle_unreachable():
+    """Zwraca do obiegu nieosiągalne leady po LEAD_UNREACHABLE_COOLDOWN_DAYS dniach.
+
+    Lead dostaje status "nowy" i wraca do puli. Agenci, którzy już go prowadzili,
+    nadal go nie dostaną (historia przypisań). Zwraca liczbę leadów.
+    """
+    recycled = 0
+    for lead in unreachable_leads(ready_only=True):
+        with transaction.atomic():
+            changed = Lead.objects.filter(
+                pk=lead.pk, status=Lead.Status.UNREACHABLE
+            ).update(status=Lead.Status.NEW)
+            if changed:
+                LeadAssignment.objects.create(
+                    lead=lead,
+                    reason=(
+                        f"Koniec okresu karencji "
+                        f"({settings.LEAD_UNREACHABLE_COOLDOWN_DAYS} dni), zwrot do obiegu"
+                    ),
+                )
+                recycled += 1
+    return recycled

@@ -512,3 +512,165 @@ class LeadLifecycleTests(CrmTestBase):
         self.assertEqual(release_stale_leads(dry_run=True), 1)
         self.lead.refresh_from_db()
         self.assertEqual(self.lead.owner, self.agent1)
+
+
+class ManagerLeadManagementTests(CrmTestBase):
+    """Przypisywanie leadów, przepisanie leadów agenta i pula nieosiągalnych."""
+
+    def post_assign(self, lead, agent_id, user=None, **extra):
+        return self.api(user or self.manager).post(
+            f"/api/leads/{lead.id}/assign/",
+            {"agent": agent_id, **extra},
+            format="json",
+        )
+
+    # Agent nie może przypisywać leadów
+    def test_agent_cannot_assign_lead(self):
+        lead = self.make_lead()
+        response = self.post_assign(lead, self.agent1.id, user=self.agent1)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # Manager przypisuje lead z puli agentowi, zostaje wpis w historii
+    def test_manager_assigns_pool_lead_to_agent(self):
+        lead = self.make_lead()
+        response = self.post_assign(lead, self.agent2.id, reason="Duży klient")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        lead.refresh_from_db()
+        self.assertEqual(lead.owner, self.agent2)
+        self.assertIsNotNone(lead.claimed_at)
+        assignment = LeadAssignment.objects.get(lead=lead)
+        self.assertEqual(assignment.to_agent, self.agent2)
+        self.assertEqual(assignment.reason, "Duży klient")
+
+    # Przepisanie zachowuje status i termin kontaktu
+    def test_reassign_keeps_status_and_next_contact(self):
+        when = timezone.now() + timedelta(days=1)
+        lead = self.make_lead(
+            owner=self.agent1,
+            status=Lead.Status.CALLBACK,
+            next_contact_at=when,
+            next_contact_note="Oddzwonić",
+        )
+        self.post_assign(lead, self.agent2.id)
+
+        lead.refresh_from_db()
+        self.assertEqual(lead.owner, self.agent2)
+        self.assertEqual(lead.status, Lead.Status.CALLBACK)
+        self.assertEqual(lead.next_contact_at, when)
+        self.assertEqual(
+            LeadAssignment.objects.get(lead=lead).from_agent, self.agent1
+        )
+
+    # Nieosiągalny lead po przypisaniu agentowi znów jest "nowy"
+    def test_assigning_unreachable_lead_makes_it_new(self):
+        lead = self.make_lead(status=Lead.Status.UNREACHABLE)
+        self.post_assign(lead, self.agent1.id)
+
+        lead.refresh_from_db()
+        self.assertEqual(lead.status, Lead.Status.NEW)
+
+    # Zamkniętego leada nie można przepisać
+    def test_closed_lead_cannot_be_assigned(self):
+        lead = self.make_lead(owner=self.agent1, status=Lead.Status.LOST)
+        response = self.post_assign(lead, self.agent2.id)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Przypisać można tylko użytkownika z rolą
+    def test_cannot_assign_user_without_role(self):
+        lead = self.make_lead()
+        response = self.post_assign(lead, self.no_role.id)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Do puli wraca lead nowy; zainteresowany trzeba przepisać
+    def test_return_to_pool_only_for_new_or_unreachable(self):
+        new_lead = self.make_lead(owner=self.agent1)
+        hot_lead = self.make_lead(owner=self.agent1, status=Lead.Status.INTERESTED)
+
+        ok = self.post_assign(new_lead, None)
+        bad = self.post_assign(hot_lead, None)
+
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+        new_lead.refresh_from_db()
+        self.assertIsNone(new_lead.owner)
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Masowe przepisanie: tylko aktywne leady odchodzącego agenta
+    def test_bulk_reassign_moves_only_active_leads(self):
+        active = self.make_lead(owner=self.agent1)
+        closed = self.make_lead(owner=self.agent1, status=Lead.Status.LOST)
+        other = self.make_lead(owner=self.agent2)
+
+        response = self.api(self.manager).post(
+            "/api/leads/reassign/",
+            {"from_agent": self.agent1.id, "to_agent": self.agent2.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["reassigned"], 1)
+        active.refresh_from_db()
+        closed.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(active.owner, self.agent2)
+        self.assertEqual(closed.owner, self.agent1)
+        self.assertEqual(other.owner, self.agent2)
+
+    # Masowe przepisanie wymaga dwóch różnych agentów i roli managera
+    def test_bulk_reassign_validation_and_permission(self):
+        same = self.api(self.manager).post(
+            "/api/leads/reassign/",
+            {"from_agent": self.agent1.id, "to_agent": self.agent1.id},
+            format="json",
+        )
+        denied = self.api(self.agent1).post(
+            "/api/leads/reassign/",
+            {"from_agent": self.agent1.id, "to_agent": self.agent2.id},
+            format="json",
+        )
+        self.assertEqual(same.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+    # Pulę nieosiągalnych widzi tylko manager; filtr ready pokazuje leady po karencji
+    @override_settings(LEAD_UNREACHABLE_COOLDOWN_DAYS=30)
+    def test_unreachable_pool_and_ready_filter(self):
+        old = self.make_lead(
+            status=Lead.Status.UNREACHABLE,
+            last_activity_at=timezone.now() - timedelta(days=40),
+        )
+        self.make_lead(
+            status=Lead.Status.UNREACHABLE,
+            last_activity_at=timezone.now() - timedelta(days=5),
+        )
+
+        denied = self.api(self.agent1).get("/api/leads/unreachable/")
+        all_ = self.api(self.manager).get("/api/leads/unreachable/")
+        ready = self.api(self.manager).get("/api/leads/unreachable/?ready=true")
+
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(all_.data["count"], 2)
+        self.assertEqual(ready.data["count"], 1)
+        self.assertEqual(ready.data["results"][0]["id"], old.id)
+
+    # Zwrot do obiegu dotyczy tylko leadów po karencji
+    @override_settings(LEAD_UNREACHABLE_COOLDOWN_DAYS=30)
+    def test_recycle_unreachable_after_cooldown(self):
+        old = self.make_lead(
+            status=Lead.Status.UNREACHABLE,
+            last_activity_at=timezone.now() - timedelta(days=40),
+        )
+        fresh = self.make_lead(
+            status=Lead.Status.UNREACHABLE,
+            last_activity_at=timezone.now() - timedelta(days=5),
+        )
+
+        denied = self.api(self.agent1).post("/api/leads/recycle-unreachable/")
+        response = self.api(self.manager).post("/api/leads/recycle-unreachable/")
+
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["recycled"], 1)
+        old.refresh_from_db()
+        fresh.refresh_from_db()
+        self.assertEqual(old.status, Lead.Status.NEW)
+        self.assertEqual(fresh.status, Lead.Status.UNREACHABLE)
+        self.assertTrue(LeadAssignment.objects.filter(lead=old).exists())

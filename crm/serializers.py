@@ -1,8 +1,10 @@
 import re
 
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
+from .roles import AGENT, MANAGER
 from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
 
 
@@ -139,3 +141,32 @@ class DueLeadsSerializer(serializers.Serializer):
     window_minutes = serializers.IntegerField()
     overdue = LeadSerializer(many=True)
     upcoming = LeadSerializer(many=True)
+
+
+def assignable_users():
+    """Użytkownicy, którym można przypisać leada: agenci i managerowie."""
+    return get_user_model().objects.filter(
+        is_active=True, groups__name__in=[AGENT, MANAGER]
+    ).distinct()
+
+
+class AssignLeadSerializer(serializers.Serializer):
+    """Dane do przypisania leada: agent (null = zwrot do puli) i powód."""
+
+    agent = serializers.PrimaryKeyRelatedField(
+        queryset=assignable_users(), allow_null=True
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class ReassignLeadsSerializer(serializers.Serializer):
+    """Przepisanie wszystkich aktywnych leadów jednego agenta na drugiego."""
+
+    from_agent = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.all())
+    to_agent = serializers.PrimaryKeyRelatedField(queryset=assignable_users())
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def validate(self, attrs):
+        if attrs["from_agent"] == attrs["to_agent"]:
+            raise serializers.ValidationError("Agenci muszą być różni.")
+        return attrs

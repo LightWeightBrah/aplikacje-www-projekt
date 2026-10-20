@@ -14,6 +14,7 @@ from .permissions import (
 from .roles import is_manager, visible_to
 from .serializers import (
     ActivitySerializer,
+    AssignLeadSerializer,
     CompanySerializer,
     DueLeadsSerializer,
     LeadAssignmentSerializer,
@@ -21,13 +22,19 @@ from .serializers import (
     LeadDetailSerializer,
     LeadSerializer,
     ProductSerializer,
+    ReassignLeadsSerializer,
 )
 from .services import (
+    InvalidAssignment,
     NoLeadsAvailable,
     OverdueCallbacks,
     claim_next_lead,
+    assign_lead,
     due_leads,
+    reassign_agent_leads,
+    recycle_unreachable,
     register_activity,
+    unreachable_leads,
 )
 
 
@@ -63,6 +70,15 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
 
+MANAGER_ONLY_ACTIONS = (
+    "destroy",
+    "assign",
+    "reassign",
+    "unreachable",
+    "recycle",
+)
+
+
 class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
     queryset = Lead.objects.select_related("product", "company", "owner", "batch")
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
@@ -76,8 +92,9 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
         return LeadSerializer
 
     def get_permissions(self):
-        # Leady nie znikają: usuwać może tylko manager
-        if self.action == "destroy":
+        # Leady nie znikają: usuwać może tylko manager; tak samo przepisywanie
+        # i pula nieosiągalnych
+        if self.action in MANAGER_ONLY_ACTIONS:
             return [IsManager()]
         return super().get_permissions()
 
@@ -118,6 +135,65 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
                 {"detail": "Brak leadów w puli."}, status=status.HTTP_404_NOT_FOUND
             )
         return Response(LeadSerializer(lead).data)
+
+    @extend_schema(request=AssignLeadSerializer, responses=LeadSerializer)
+    @action(detail=True, methods=["post"])
+    def assign(self, request, pk=None):
+        """Manager: przypisuje leada agentowi albo zwraca go do puli (agent = null)."""
+        serializer = AssignLeadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            lead = assign_lead(
+                self.get_object(),
+                serializer.validated_data["agent"],
+                serializer.validated_data.get("reason", ""),
+            )
+        except InvalidAssignment as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(LeadSerializer(lead).data)
+
+    @extend_schema(
+        request=ReassignLeadsSerializer,
+        responses={200: {"type": "object", "properties": {"reassigned": {"type": "integer"}}}},
+    )
+    @action(detail=False, methods=["post"])
+    def reassign(self, request):
+        """Manager: przepisuje wszystkie aktywne leady odchodzącego agenta na innego."""
+        serializer = ReassignLeadsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        count = reassign_agent_leads(
+            serializer.validated_data["from_agent"],
+            serializer.validated_data["to_agent"],
+            serializer.validated_data.get("reason", ""),
+        )
+        return Response({"reassigned": count})
+
+    @extend_schema(
+        responses=LeadSerializer(many=True),
+        parameters=[
+            OpenApiParameter(
+                "ready", bool, description="true = tylko te po okresie karencji"
+            ),
+        ],
+    )
+    @action(detail=False, methods=["get"])
+    def unreachable(self, request):
+        """Manager: pula nieosiągalnych leadów (opcjonalnie tylko gotowe do zwrotu)."""
+        ready = request.query_params.get("ready", "").lower() in ("1", "true")
+        queryset = unreachable_leads(ready_only=ready).select_related(
+            "product", "company", "owner", "batch"
+        )
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(LeadSerializer(page, many=True).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: {"type": "object", "properties": {"recycled": {"type": "integer"}}}},
+    )
+    @action(detail=False, methods=["post"], url_path="recycle-unreachable")
+    def recycle(self, request):
+        """Manager: zwraca do obiegu nieosiągalne leady po okresie karencji."""
+        return Response({"recycled": recycle_unreachable()})
 
 
 class ActivityViewSet(
