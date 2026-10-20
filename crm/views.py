@@ -22,7 +22,13 @@ from .serializers import (
     LeadSerializer,
     ProductSerializer,
 )
-from .services import NoLeadsAvailable, OverdueCallbacks, claim_next_lead, due_leads
+from .services import (
+    NoLeadsAvailable,
+    OverdueCallbacks,
+    claim_next_lead,
+    due_leads,
+    register_activity,
+)
 
 
 class OwnerScopedMixin:
@@ -133,7 +139,16 @@ class ActivityViewSet(
         lead = serializer.validated_data["lead"]
         if not is_manager(self.request.user) and lead.owner_id != self.request.user.id:
             raise PermissionDenied("Aktywność możesz dodać tylko do swojego leada.")
-        serializer.save(agent=self.request.user)
+        data = serializer.validated_data
+        # Zapis rozmowy + aktualizacja leada (próby, status, termin) robi serwis
+        serializer.instance = register_activity(
+            lead=lead,
+            agent=self.request.user,
+            outcome=data["outcome"],
+            note=data.get("note", ""),
+            next_contact_at=data.get("next_contact_at"),
+            next_contact_note=data.get("next_contact_note", ""),
+        )
 
 
 class LeadAssignmentViewSet(OwnerScopedMixin, viewsets.ReadOnlyModelViewSet):
@@ -149,7 +164,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     serializer_class = LeadSerializer
     permission_classes = [IsAgentOrManager]
     filterset_fields = ["status", "batch", "product"]
-    search_fields = ["contact_name", "phone", "email"]
+    search_fields = ["contact_name", "phone", "email", "company__name", "company__nip", "company__krs"]
     ordering_fields = ["next_contact_at", "last_activity_at"]
 
     def get_queryset(self):

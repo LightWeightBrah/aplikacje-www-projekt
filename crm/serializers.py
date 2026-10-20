@@ -27,10 +27,43 @@ class LeadBatchSerializer(serializers.ModelSerializer):
 
 
 class ActivitySerializer(serializers.ModelSerializer):
+    # Pola tylko do zapisu: kiedy i w jakiej sprawie oddzwonić (trafiają do leada)
+    next_contact_at = serializers.DateTimeField(
+        write_only=True, required=False, allow_null=True
+    )
+    next_contact_note = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, max_length=255
+    )
+
     class Meta:
         model = Activity
-        fields = ("id", "lead", "agent", "outcome", "note", "created_at")
+        fields = (
+            "id",
+            "lead",
+            "agent",
+            "outcome",
+            "note",
+            "created_at",
+            "next_contact_at",
+            "next_contact_note",
+        )
         read_only_fields = ("agent", "created_at")
+
+    def validate_next_contact_at(self, value):
+        if value and value < timezone.now():
+            raise serializers.ValidationError(
+                "Termin kolejnego kontaktu nie może być w przeszłości."
+            )
+        return value
+
+    def validate(self, attrs):
+        if attrs["outcome"] == Activity.Outcome.CALLBACK and (
+            not attrs.get("next_contact_at") or not attrs.get("next_contact_note")
+        ):
+            raise serializers.ValidationError(
+                "Wynik 'Prosił o oddzwonienie' wymaga next_contact_at i next_contact_note."
+            )
+        return attrs
 
 
 class LeadAssignmentSerializer(serializers.ModelSerializer):
