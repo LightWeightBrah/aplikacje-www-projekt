@@ -1,7 +1,11 @@
 # LeadCRM – REST API dla zespołu sprzedaży
 
-Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026Z).
-Autor: Julian Łabanowski. Stos: Python 3.13, Django 6.1, Django REST Framework, SimpleJWT, drf-spectacular, django-filter, SQLite.
+Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026).
+
+- **Autor:** Julian Łabanowski
+- **Język i framework:** Python 3.13, Django 6.1
+- **API:** Django REST Framework, SimpleJWT (logowanie tokenem), drf-spectacular (Swagger), django-filter (filtrowanie)
+- **Baza danych:** SQLite
 
 ## Opis biznesowy
 
@@ -30,38 +34,89 @@ Jak to działa:
 
 ## Instalacja i uruchomienie (Windows, PowerShell)
 
-```powershell
-git clone https://github.com/LightWeightBrah/aplikacje-www-projekt.git
-cd aplikacje-www-projekt
+Każdy krok to jedna komenda wpisana w terminalu:
 
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+1. **Pobranie projektu**
 
-pip install -r requirements.txt
+   ```powershell
+   git clone https://github.com/LightWeightBrah/aplikacje-www-projekt.git
+   cd aplikacje-www-projekt
+   ```
 
-python manage.py migrate
-python manage.py seed_demo
-python manage.py createsuperuser   # opcjonalnie, do panelu /admin/
-python manage.py runserver
-```
+   Kopiuje repozytorium z GitHuba i wchodzi do jego folderu.
 
-Linux / macOS: aktywacja venv to `source .venv/bin/activate`, reszta bez zmian.
+2. **Środowisko wirtualne (venv)**
 
-Aplikacja działa pod `http://127.0.0.1:8000/`.
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   Pierwsza komenda tworzy osobne środowisko Pythona tylko dla tego projektu. Druga je włącza (w terminalu pojawi się `(.venv)`).
+
+3. **Instalacja bibliotek**
+
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+   Instaluje wszystkie biblioteki z listy (Django, DRF, JWT, Swagger, filtry).
+
+4. **Baza danych**
+
+   ```powershell
+   python manage.py migrate
+   ```
+
+   Tworzy w pliku SQLite wszystkie tabele projektu.
+
+5. **Dane demo**
+
+   ```powershell
+   python manage.py seed_demo
+   ```
+
+   Wypełnia bazę przykładowymi produktami, firmami, leadami i kontami (szczegóły w sekcji „Dane demo").
+
+6. **Konto administratora** (opcjonalnie)
+
+   ```powershell
+   python manage.py createsuperuser
+   ```
+
+   Tworzy konto do panelu `/admin/`.
+
+7. **Uruchomienie serwera**
+
+   ```powershell
+   python manage.py runserver
+   ```
+
+   Włącza aplikację pod adresem `http://127.0.0.1:8000/`. Zatrzymanie: `Ctrl+C`.
+
+Linux / macOS: włączenie venv to `source .venv/bin/activate`, reszta bez zmian.
 
 ## Dane demo
 
-Komenda `python manage.py seed_demo` tworzy produkty, firmy, bazę leadów, przykładowe aktywności oraz konta (hasło każdego: `demo12345`):
+Dane w repozytorium są wyłącznie **fikcyjne**.
+
+Komendy zarządzające:
+
+| Komenda | Co robi |
+|---|---|
+| `python manage.py seed_demo` | tworzy produkty, firmy, bazę leadów, przykładowe aktywności oraz konta demo; uruchomiona drugi raz niczego nie dubluje |
+| `python manage.py seed_demo --reset` | usuwa bazę demo i tworzy ją od nowa (przydatne przed pokazem) |
+| `python manage.py setup_roles --demo` | tworzy same grupy (Agent, Manager) i konta demo, **bez** leadów |
+| `python manage.py setup_roles` | tworzy same grupy (Agent, Manager), bez kont demo |
+| `python manage.py test` | uruchamia testy automatyczne |
+
+Konta demo (hasło każdego: `demo12345`):
 
 | Konto | Rola | Uwagi |
 |---|---|---|
 | `agent1` | Agent | ma kilka leadów w różnych statusach |
 | `agent2` | Agent | ma **zaległe oddzwonienie**, więc `POST /api/leads/next/` zwróci mu 409 |
 | `manager1` | Manager | widzi wszystkie leady, zarządza słownikami |
-
-`python manage.py seed_demo --reset` usuwa bazę demo i tworzy ją od nowa. Same role i konta (bez leadów) tworzy `python manage.py setup_roles --demo`.
-
-Dane w repozytorium są wyłącznie fikcyjne.
 
 ## Adresy
 
