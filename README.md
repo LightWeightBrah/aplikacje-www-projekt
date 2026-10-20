@@ -1,6 +1,6 @@
 # LeadCRM – REST API dla zespołu sprzedaży
 
-Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026Z).
+Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026).
 
 - **Autor:** Julian Łabanowski
 - **Język i framework:** Python 3.13, Django 6.1
@@ -108,6 +108,7 @@ Komendy zarządzające:
 | `python manage.py seed_demo --reset` | usuwa bazę demo i tworzy ją od nowa (przydatne przed pokazem) |
 | `python manage.py setup_roles --demo` | tworzy same grupy (Agent, Manager) i konta demo, **bez** leadów |
 | `python manage.py setup_roles` | tworzy same grupy (Agent, Manager), bez kont demo |
+| `python manage.py make_sample_excel` | tworzy przykładowy plik Excela `docs/przykladowa_baza.xlsx` (fikcyjne dane) do wypróbowania importu |
 | `python manage.py release_stale_leads` | zwraca do puli leady nietknięte przez agenta dłużej niż 24 h (`--dry-run` tylko liczy) |
 | `python manage.py test` | uruchamia testy automatyczne |
 
@@ -171,6 +172,13 @@ Endpointy poza CRUD (logika biznesowa):
 | `GET /api/my-leads/calendar/` | plik `.ics` z terminami kontaktów, do zaimportowania w kalendarzu |
 | `GET /api/stats/` | statystyki: lejek leadów wg statusów, skuteczność agentów, rozmowy dzień po dniu (`?days=`, domyślnie 7, max 365); manager widzi cały zespół i pulę, agent tylko siebie |
 
+Excel (`.xlsx`):
+
+| Endpoint | Co robi |
+|---|---|
+| `POST /api/batches/import/` | tylko manager: import bazy kontaktów z pliku `.xlsx` do nowej paczki leadów (pole `file`, opcjonalnie `name` i `product`); odpowiedź to raport z importu |
+| `GET /api/leads/export/` | eksport leadów do pliku `.xlsx`; działają te same filtry i wyszukiwanie co w `/api/leads/` (np. `?status=callback`); agent dostaje swoje leady, manager wszystkie |
+
 Endpointy managera (agent dostaje 403):
 
 | Endpoint | Co robi |
@@ -179,6 +187,27 @@ Endpointy managera (agent dostaje 403):
 | `POST /api/leads/reassign/` | przepisuje wszystkie aktywne leady odchodzącego agenta na innego (`{"from_agent": 1, "to_agent": 2}`) |
 | `GET /api/leads/unreachable/` | pula nieosiągalnych leadów; `?ready=true` tylko te po okresie karencji |
 | `POST /api/leads/recycle-unreachable/` | zwraca nieosiągalne leady po okresie karencji do obiegu (do puli) |
+
+## Import z Excela
+
+Format pliku: pierwszy arkusz, **pierwszy wiersz to nagłówki**, max 5 MB i 5000 wierszy. Przykład: [`docs/przykladowa_baza.xlsx`](docs/przykladowa_baza.xlsx) (fikcyjne dane, tworzy go też `python manage.py make_sample_excel`).
+
+| Kolumna | Wymagana | Rozpoznawane nagłówki (przykłady) |
+|---|---|---|
+| imię i nazwisko | tak | `Imię i nazwisko`, `Kontakt`, `Osoba` |
+| telefon | tak | `Telefon`, `Tel`, `Nr telefonu`, `Phone` |
+| e-mail | nie | `E-mail`, `Email`, `Mail` |
+| firma | nie | `Firma`, `Nazwa firmy`, `Company` |
+| NIP, KRS, REGON | nie | `NIP`, `KRS`, `REGON` |
+| miasto | nie | `Miasto`, `City` |
+
+Zasady importu:
+
+- każdy zaimportowany lead trafia do **puli** (bez opiekuna, status „nowy”), a cały plik tworzy jedną paczkę (`LeadBatch`),
+- **duplikaty** są pomijane: numer telefonu, który już jest w systemie albo powtarza się w pliku (zapis `+48 600-100-200` i `600100200` to ten sam numer),
+- **błędne wiersze** (brak imienia i nazwiska, zły telefon, e-mail, NIP/KRS/REGON) są pomijane, reszta pliku importuje się normalnie,
+- firmy łączone po NIP (a bez NIP po nazwie), więc kilka osób z jednej firmy ma jedną firmę,
+- raport odpowiedzi: `created`, `duplicates` i `errors` z numerami wierszy.
 
 ## Cykl życia leada
 
@@ -207,7 +236,7 @@ Filtrowanie, wyszukiwanie, sortowanie i paginacja (20 na stronę):
 python manage.py test
 ```
 
-58 testów `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki oraz plan dnia i kalendarz `.ics`.
+72 testów `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics` oraz import i eksport Excela.
 
 ## Zrzuty ekranu
 
