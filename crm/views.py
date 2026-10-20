@@ -45,6 +45,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
     queryset = Company.objects.all()
     serializer_class = CompanySerializer
     permission_classes = [IsManagerOrReadOnly]
+    search_fields = ["name", "nip", "krs", "regon"]
 
 
 class LeadBatchViewSet(viewsets.ModelViewSet):
@@ -60,7 +61,7 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
     queryset = Lead.objects.select_related("product", "company", "owner", "batch")
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
     filterset_fields = ["status", "owner", "batch", "product"]
-    search_fields = ["contact_name", "phone", "email"]
+    search_fields = ["contact_name", "phone", "email", "company__name", "company__nip", "company__krs"]
     ordering_fields = ["next_contact_at", "last_activity_at"]
 
     def get_serializer_class(self):

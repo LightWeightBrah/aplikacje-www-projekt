@@ -18,8 +18,8 @@ class ProductAdmin(admin.ModelAdmin):
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ("name", "nip", "city", "created_at")
-    search_fields = ("name", "nip", "city")
+    list_display = ("name", "nip", "krs", "regon", "city", "created_at")
+    search_fields = ("name", "nip", "krs", "regon", "city")
 
 
 @admin.register(LeadBatch)

@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 
 
@@ -20,7 +20,23 @@ class Product(models.Model):
 
 class Company(models.Model):
     name = models.CharField(max_length=200)
-    nip = models.CharField(max_length=10, blank=True, db_index=True)
+    nip = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        validators=[RegexValidator(r"^\d{10}$", "NIP musi mieć dokładnie 10 cyfr.")],
+    )
+    krs = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        validators=[RegexValidator(r"^\d{10}$", "KRS musi mieć dokładnie 10 cyfr.")],
+    )
+    regon = models.CharField(
+        max_length=14,
+        blank=True,
+        validators=[RegexValidator(r"^(\d{9}|\d{14})$", "REGON ma 9 lub 14 cyfr.")],
+    )
     city = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
