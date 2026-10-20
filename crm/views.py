@@ -1,3 +1,7 @@
+from datetime import date
+
+from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -23,13 +27,20 @@ from .serializers import (
     LeadSerializer,
     ProductSerializer,
     ReassignLeadsSerializer,
+    ScheduleSerializer,
+    StatsSerializer,
 )
 from .services import (
+    CalendarRenderer,
     InvalidAssignment,
     NoLeadsAvailable,
     OverdueCallbacks,
     claim_next_lead,
     assign_lead,
+    build_stats,
+    calendar_ics,
+    calendar_leads,
+    day_schedule,
     due_leads,
     reassign_agent_leads,
     recycle_unreachable,
@@ -271,3 +282,63 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         overdue, upcoming = due_leads(request.user, minutes)
         data = {"window_minutes": minutes, "overdue": overdue, "upcoming": upcoming}
         return Response(DueLeadsSerializer(data).data)
+
+    @extend_schema(
+        responses=ScheduleSerializer,
+        parameters=[
+            OpenApiParameter(
+                "date", str, description="Dzień w formacie RRRR-MM-DD (domyślnie dziś)"
+            ),
+        ],
+    )
+    @action(detail=False, methods=["get"])
+    def schedule(self, request):
+        """Plan dnia: leady z terminem kontaktu w danym dniu (na dziś także zaległe)."""
+        raw = request.query_params.get("date")
+        try:
+            day = date.fromisoformat(raw) if raw else timezone.localdate()
+        except ValueError:
+            return Response(
+                {"detail": "Parametr date musi mieć format RRRR-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        overdue, scheduled = day_schedule(request.user, day)
+        data = {"date": day, "overdue": overdue, "scheduled": scheduled}
+        return Response(ScheduleSerializer(data).data)
+
+    @extend_schema(responses={(200, "text/calendar"): OpenApiTypes.STR})
+    @action(
+        detail=False,
+        methods=["get"],
+        renderer_classes=[CalendarRenderer],
+    )
+    def calendar(self, request):
+        """Plik .ics z terminami kontaktów: można go zaimportować do kalendarza."""
+        response = Response(calendar_ics(calendar_leads(request.user)))
+        response["Content-Disposition"] = 'attachment; filename="leadcrm.ics"'
+        return response
+
+
+class StatsViewSet(viewsets.ViewSet):
+    """Statystyki: manager widzi cały zespół, agent tylko własne wyniki."""
+
+    permission_classes = [IsAgentOrManager]
+
+    @extend_schema(
+        responses=StatsSerializer,
+        parameters=[
+            OpenApiParameter(
+                "days", int, description="Okno w dniach dla rozmów (domyślnie 7, 1-365)"
+            ),
+        ],
+    )
+    def list(self, request):
+        """Lejek leadów, skuteczność agentów i liczba rozmów dzień po dniu."""
+        raw = request.query_params.get("days", "7")
+        if not raw.isdigit() or not 1 <= int(raw) <= 365:
+            return Response(
+                {"detail": "Parametr days musi być liczbą od 1 do 365."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data = build_stats(request.user, int(raw), is_manager(request.user))
+        return Response(StatsSerializer(data).data)

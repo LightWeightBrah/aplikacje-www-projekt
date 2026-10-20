@@ -1,14 +1,21 @@
 """Logika biznesowa CRM (poza widokami): losowanie leadów, terminarz oddzwonień
-i cykl życia leada (limit prób, zwrot do puli, nieosiągalni)."""
+i cykl życia leada (limit prób, zwrot do puli, nieosiągalni),
+statystyki oraz plan dnia."""
 
-from datetime import timedelta
+import json
+from datetime import datetime, time, timedelta
+from datetime import timezone as dt_timezone
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Exists, F, OuterRef
+from django.db.models import Count, Exists, F, OuterRef, Q
+from django.db.models.functions import TruncDate
 from django.utils import timezone
+from rest_framework.renderers import BaseRenderer
 
 from .models import Activity, Lead, LeadAssignment
+from .roles import AGENT
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
 ACTIVE_STATUSES = (
@@ -331,3 +338,224 @@ def recycle_unreachable():
                 )
                 recycled += 1
     return recycled
+
+
+
+# ---------------------------------------------------------------- plan dnia
+
+def day_bounds(day):
+    """Początek i koniec doby (w lokalnej strefie czasowej) dla podanej daty."""
+    tz = timezone.get_current_timezone()
+    start = timezone.make_aware(datetime.combine(day, time.min), tz)
+    end = timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min), tz)
+    return start, end
+
+
+def _scheduled_leads(user):
+    """Aktywne leady agenta, które mają wyznaczony termin kontaktu."""
+    return Lead.objects.filter(
+        owner=user,
+        status__in=ACTIVE_STATUSES,
+        next_contact_at__isnull=False,
+    ).select_related("product", "company", "batch")
+
+
+def day_schedule(user, day):
+    """Plan dnia agenta: (zaległe, zaplanowane na ten dzień).
+
+    Zaległe (z terminem przed dzisiejszą dobą) pokazujemy tylko w planie na dziś.
+    """
+    start, end = day_bounds(day)
+    base = _scheduled_leads(user)
+    scheduled = base.filter(
+        next_contact_at__gte=start, next_contact_at__lt=end
+    ).order_by("next_contact_at")
+    if day == timezone.localdate():
+        overdue = base.filter(next_contact_at__lt=start).order_by("next_contact_at")
+    else:
+        overdue = base.none()
+    return list(overdue), list(scheduled)
+
+
+def calendar_leads(user):
+    """Leady do kalendarza: terminy od początku dzisiejszej doby."""
+    start, _ = day_bounds(timezone.localdate())
+    return _scheduled_leads(user).filter(next_contact_at__gte=start).order_by(
+        "next_contact_at"
+    )
+
+
+def _ics_escape(text):
+    return (
+        text.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\n", "\\n")
+    )
+
+
+def calendar_ics(leads):
+    """Buduje plik kalendarza (.ics): każdy termin kontaktu to 15-minutowe wydarzenie."""
+    utc = dt_timezone.utc
+    stamp = timezone.now().astimezone(utc).strftime("%Y%m%dT%H%M%SZ")
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//LeadCRM//PL", "CALSCALE:GREGORIAN"]
+    for lead in leads:
+        start = lead.next_contact_at.astimezone(utc).strftime("%Y%m%dT%H%M%SZ")
+        description = f"Tel: {lead.phone}. {lead.next_contact_note}".strip()
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:lead-{lead.pk}@leadcrm",
+            f"DTSTAMP:{stamp}",
+            f"DTSTART:{start}",
+            "DURATION:PT15M",
+            f"SUMMARY:{_ics_escape('Oddzwonić: ' + lead.contact_name)}",
+            f"DESCRIPTION:{_ics_escape(description)}",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines) + "\r\n"
+
+
+class CalendarRenderer(BaseRenderer):
+    """Odpowiedź w formacie kalendarza (text/calendar); błędy zwracamy jako JSON."""
+
+    media_type = "text/calendar"
+    format = "ics"
+    charset = "utf-8"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        if isinstance(data, (str, bytes)):
+            return data
+        return json.dumps(data)
+
+
+# ------------------------------------------------------------- statystyki
+
+def _ratio(part, whole):
+    return round(part / whole, 2) if whole else None
+
+
+def lead_funnel(leads):
+    """Lejek: liczba leadów w każdym statusie (także tych z zerem)."""
+    counts = dict(leads.order_by().values_list("status").annotate(n=Count("id")))
+    return {code: counts.get(code, 0) for code, _ in Lead.Status.choices}
+
+
+def agent_stats(users, since):
+    """Skuteczność agentów: rozmowy od `since` oraz bieżący stan ich leadów."""
+    ids = [user.pk for user in users]
+    Outcome = Activity.Outcome
+
+    activity_rows = (
+        Activity.objects.filter(agent__in=ids, created_at__gte=since)
+        .order_by()
+        .values("agent")
+        .annotate(
+            calls=Count("id", filter=~Q(outcome=Outcome.NOTE)),
+            answered=Count(
+                "id", filter=~Q(outcome__in=[Outcome.NOTE, Outcome.NO_ANSWER])
+            ),
+            interested=Count("id", filter=Q(outcome=Outcome.INTERESTED)),
+            refused=Count("id", filter=Q(outcome=Outcome.REFUSED)),
+        )
+    )
+    activity = {row["agent"]: row for row in activity_rows}
+
+    lead_rows = (
+        Lead.objects.filter(owner__in=ids)
+        .order_by()
+        .values("owner")
+        .annotate(
+            leads_total=Count("id"),
+            leads_active=Count("id", filter=Q(status__in=ACTIVE_STATUSES)),
+            leads_won=Count("id", filter=Q(status=Lead.Status.WON)),
+        )
+    )
+    leads = {row["owner"]: row for row in lead_rows}
+
+    result = []
+    for user in users:
+        a = activity.get(user.pk, {})
+        l = leads.get(user.pk, {})
+        calls, answered, interested = (
+            a.get("calls", 0),
+            a.get("answered", 0),
+            a.get("interested", 0),
+        )
+        result.append(
+            {
+                "agent": user.pk,
+                "username": user.username,
+                "leads_total": l.get("leads_total", 0),
+                "leads_active": l.get("leads_active", 0),
+                "leads_won": l.get("leads_won", 0),
+                "calls": calls,
+                "answered": answered,
+                "interested": interested,
+                "refused": a.get("refused", 0),
+                "answer_rate": _ratio(answered, calls),
+                "interest_rate": _ratio(interested, answered),
+            }
+        )
+    return result
+
+
+def daily_calls(days, agent_ids=None):
+    """Liczba rozmów (bez notatek) w każdym z ostatnich `days` dni, także z zerami."""
+    today = timezone.localdate()
+    first = today - timedelta(days=days - 1)
+    since, _ = day_bounds(first)
+
+    queryset = Activity.objects.filter(created_at__gte=since).exclude(
+        outcome=Activity.Outcome.NOTE
+    )
+    if agent_ids is not None:
+        queryset = queryset.filter(agent__in=agent_ids)
+    rows = (
+        queryset.order_by()
+        .annotate(day=TruncDate("created_at"))
+        .values("day")
+        .annotate(n=Count("id"))
+    )
+    counts = {row["day"]: row["n"] for row in rows}
+    return [
+        {"date": first + timedelta(days=i), "calls": counts.get(first + timedelta(days=i), 0)}
+        for i in range(days)
+    ]
+
+
+def build_stats(user, days, manager):
+    """Statystyki: manager widzi cały zespół, agent tylko siebie."""
+    since, _ = day_bounds(timezone.localdate() - timedelta(days=days - 1))
+    User = get_user_model()
+
+    if manager:
+        leads = Lead.objects.all()
+        active_ids = set(
+            Activity.objects.filter(created_at__gte=since)
+            .exclude(agent=None)
+            .values_list("agent", flat=True)
+        ) | set(
+            Lead.objects.exclude(owner=None).values_list("owner", flat=True)
+        )
+        users = list(
+            User.objects.filter(Q(groups__name=AGENT) | Q(pk__in=active_ids))
+            .distinct()
+            .order_by("username")
+        )
+        pool = Lead.objects.filter(owner__isnull=True, status=Lead.Status.NEW).count()
+        agent_ids = None
+    else:
+        leads = Lead.objects.filter(owner=user)
+        users = [user]
+        pool = None
+        agent_ids = [user.pk]
+
+    return {
+        "days": days,
+        "total_leads": leads.count(),
+        "pool_leads": pool,
+        "leads_by_status": lead_funnel(leads),
+        "agents": agent_stats(users, since),
+        "daily_calls": daily_calls(days, agent_ids),
+    }

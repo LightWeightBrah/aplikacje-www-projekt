@@ -170,3 +170,41 @@ class ReassignLeadsSerializer(serializers.Serializer):
         if attrs["from_agent"] == attrs["to_agent"]:
             raise serializers.ValidationError("Agenci muszą być różni.")
         return attrs
+
+
+class ScheduleSerializer(serializers.Serializer):
+    """Opis odpowiedzi my-leads/schedule (plan dnia agenta)."""
+
+    date = serializers.DateField()
+    overdue = LeadSerializer(many=True)
+    scheduled = LeadSerializer(many=True)
+
+
+class AgentStatsSerializer(serializers.Serializer):
+    agent = serializers.IntegerField()
+    username = serializers.CharField()
+    leads_total = serializers.IntegerField()
+    leads_active = serializers.IntegerField()
+    leads_won = serializers.IntegerField()
+    calls = serializers.IntegerField()
+    answered = serializers.IntegerField()
+    interested = serializers.IntegerField()
+    refused = serializers.IntegerField()
+    answer_rate = serializers.FloatField(allow_null=True)
+    interest_rate = serializers.FloatField(allow_null=True)
+
+
+class DailyCallsSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    calls = serializers.IntegerField()
+
+
+class StatsSerializer(serializers.Serializer):
+    """Opis odpowiedzi /api/stats/ (lejek, skuteczność agentów, rozmowy dzień po dniu)."""
+
+    days = serializers.IntegerField()
+    total_leads = serializers.IntegerField()
+    pool_leads = serializers.IntegerField(allow_null=True)
+    leads_by_status = serializers.DictField(child=serializers.IntegerField())
+    agents = AgentStatsSerializer(many=True)
+    daily_calls = DailyCallsSerializer(many=True)

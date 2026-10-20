@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from django.contrib.auth.models import Group, User
 from django.test import override_settings
@@ -674,3 +674,181 @@ class ManagerLeadManagementTests(CrmTestBase):
         self.assertEqual(old.status, Lead.Status.NEW)
         self.assertEqual(fresh.status, Lead.Status.UNREACHABLE)
         self.assertTrue(LeadAssignment.objects.filter(lead=old).exists())
+
+
+class StatsTests(CrmTestBase):
+    """Statystyki: lejek, skuteczność agentów, rozmowy dzień po dniu."""
+
+    def setUp(self):
+        super().setUp()
+        self.make_lead()  # w puli
+        self.make_lead(owner=self.agent1)
+        self.make_lead(owner=self.agent1, status=Lead.Status.INTERESTED)
+        self.make_lead(owner=self.agent2, status=Lead.Status.WON)
+        lead = Lead.objects.filter(owner=self.agent1).first()
+        for outcome in ("no_answer", "no_answer", "interested", "note"):
+            Activity.objects.create(lead=lead, agent=self.agent1, outcome=outcome)
+
+    def agent_row(self, response, username):
+        return next(row for row in response.data["agents"] if row["username"] == username)
+
+    # Manager dostaje lejek, pulę i wyniki wszystkich agentów
+    def test_manager_sees_funnel_pool_and_all_agents(self):
+        response = self.api(self.manager).get("/api/stats/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_leads"], 4)
+        self.assertEqual(response.data["pool_leads"], 1)
+        self.assertEqual(response.data["leads_by_status"]["new"], 2)
+        self.assertEqual(response.data["leads_by_status"]["interested"], 1)
+        self.assertEqual(response.data["leads_by_status"]["won"], 1)
+        self.assertEqual(response.data["leads_by_status"]["unreachable"], 0)
+
+        row = self.agent_row(response, "agent1")
+        self.assertEqual(row["calls"], 3)  # notatka nie jest rozmową
+        self.assertEqual(row["answered"], 1)
+        self.assertEqual(row["interested"], 1)
+        self.assertEqual(row["answer_rate"], 0.33)
+        self.assertEqual(row["interest_rate"], 1.0)
+        self.assertEqual(row["leads_total"], 2)
+        self.assertEqual(self.agent_row(response, "agent2")["leads_won"], 1)
+        self.assertIsNone(self.agent_row(response, "agent2")["answer_rate"])
+
+    # Agent widzi tylko własne statystyki i nie widzi puli
+    def test_agent_sees_only_own_stats(self):
+        response = self.api(self.agent1).get("/api/stats/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["agents"]), 1)
+        self.assertEqual(response.data["agents"][0]["username"], "agent1")
+        self.assertIsNone(response.data["pool_leads"])
+        self.assertEqual(response.data["total_leads"], 2)
+
+    # Rozmowy dzień po dniu: długość = days, dzisiejsze rozmowy policzone
+    def test_daily_calls_cover_each_day_in_window(self):
+        response = self.api(self.manager).get("/api/stats/?days=3")
+
+        daily = response.data["daily_calls"]
+        self.assertEqual(len(daily), 3)
+        self.assertEqual(daily[-1]["date"], timezone.localdate().isoformat())
+        self.assertEqual(daily[-1]["calls"], 3)
+        self.assertEqual(daily[0]["calls"], 0)
+
+    # Rozmowy sprzed okna nie są liczone
+    def test_old_activities_are_outside_window(self):
+        Activity.objects.update(created_at=timezone.now() - timedelta(days=10))
+
+        response = self.api(self.manager).get("/api/stats/?days=7")
+
+        self.assertEqual(self.agent_row(response, "agent1")["calls"], 0)
+
+    # Zły parametr days daje 400
+    def test_invalid_days_returns_400(self):
+        for value in ("0", "abc", "400"):
+            response = self.api(self.manager).get(f"/api/stats/?days={value}")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Statystyki wymagają logowania i roli
+    def test_stats_require_login_and_role(self):
+        self.assertEqual(
+            self.api().get("/api/stats/").status_code, status.HTTP_401_UNAUTHORIZED
+        )
+        self.assertEqual(
+            self.api(self.no_role).get("/api/stats/").status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+class ScheduleTests(CrmTestBase):
+    """Plan dnia (my-leads/schedule) i kalendarz .ics."""
+
+    def at(self, day, hour):
+        return timezone.make_aware(datetime.combine(day, time(hour, 0)))
+
+    def setUp(self):
+        super().setUp()
+        self.tomorrow = timezone.localdate() + timedelta(days=1)
+        self.late = self.make_lead(
+            owner=self.agent1,
+            contact_name="Pozny Klient",
+            status=Lead.Status.CALLBACK,
+            next_contact_at=self.at(self.tomorrow, 14),
+        )
+        self.early = self.make_lead(
+            owner=self.agent1,
+            contact_name="Ranny Klient",
+            status=Lead.Status.CALLBACK,
+            next_contact_at=self.at(self.tomorrow, 9),
+        )
+
+    # Plan dnia: tylko ten dzień, posortowany po godzinie, tylko własne leady
+    def test_schedule_lists_leads_of_the_day_in_order(self):
+        self.make_lead(  # inny dzień
+            owner=self.agent1,
+            status=Lead.Status.CALLBACK,
+            next_contact_at=self.at(self.tomorrow + timedelta(days=1), 10),
+        )
+        self.make_lead(  # cudzy lead
+            owner=self.agent2,
+            status=Lead.Status.CALLBACK,
+            next_contact_at=self.at(self.tomorrow, 10),
+        )
+        self.make_lead(  # zamknięty lead
+            owner=self.agent1,
+            status=Lead.Status.LOST,
+            next_contact_at=self.at(self.tomorrow, 11),
+        )
+
+        response = self.api(self.agent1).get(
+            f"/api/my-leads/schedule/?date={self.tomorrow.isoformat()}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [lead["id"] for lead in response.data["scheduled"]]
+        self.assertEqual(ids, [self.early.id, self.late.id])
+        self.assertEqual(response.data["overdue"], [])
+
+    # Plan na dziś zawiera zaległe oddzwonienia z poprzednich dni
+    def test_schedule_for_today_includes_overdue(self):
+        overdue = self.make_lead(
+            owner=self.agent1,
+            status=Lead.Status.CALLBACK,
+            next_contact_at=timezone.now() - timedelta(days=2),
+        )
+
+        response = self.api(self.agent1).get("/api/my-leads/schedule/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([lead["id"] for lead in response.data["overdue"]], [overdue.id])
+        self.assertEqual(response.data["date"], timezone.localdate().isoformat())
+
+    # Zła data daje 400
+    def test_schedule_invalid_date_returns_400(self):
+        response = self.api(self.agent1).get("/api/my-leads/schedule/?date=jutro")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Kalendarz .ics zawiera wydarzenia tylko własnych leadów
+    def test_calendar_contains_only_own_future_callbacks(self):
+        other = self.make_lead(
+            owner=self.agent2,
+            contact_name="Cudzy Klient",
+            status=Lead.Status.CALLBACK,
+            next_contact_at=self.at(self.tomorrow, 12),
+        )
+
+        response = self.api(self.agent1).get("/api/my-leads/calendar/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response["Content-Type"].startswith("text/calendar"))
+        body = response.content.decode("utf-8")
+        self.assertIn("BEGIN:VCALENDAR", body)
+        self.assertEqual(body.count("BEGIN:VEVENT"), 2)
+        self.assertIn("SUMMARY:Oddzwonić: Ranny Klient", body)
+        self.assertNotIn(f"UID:lead-{other.id}@", body)
+
+    # Plan dnia i kalendarz wymagają logowania
+    def test_schedule_requires_login(self):
+        self.assertEqual(
+            self.api().get("/api/my-leads/schedule/").status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )

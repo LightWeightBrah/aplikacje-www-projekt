@@ -10,5 +10,6 @@ router.register("leads", views.LeadViewSet)
 router.register("my-leads", views.MyLeadsViewSet, basename="my-lead")
 router.register("activities", views.ActivityViewSet)
 router.register("assignments", views.LeadAssignmentViewSet)
+router.register("stats", views.StatsViewSet, basename="stats")
 
 urlpatterns = router.urls
