@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
+from .excel import MAX_IMPORT_BYTES
 from .roles import AGENT, MANAGER
 from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
 
@@ -208,3 +209,42 @@ class StatsSerializer(serializers.Serializer):
     leads_by_status = serializers.DictField(child=serializers.IntegerField())
     agents = AgentStatsSerializer(many=True)
     daily_calls = DailyCallsSerializer(many=True)
+
+
+class ImportLeadsSerializer(serializers.Serializer):
+    """Formularz importu: plik .xlsx, opcjonalnie nazwa bazy i produkt dla wszystkich leadów."""
+
+    file = serializers.FileField(help_text="Plik .xlsx; pierwszy wiersz = nagłówki")
+    name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=150,
+        help_text="Nazwa bazy (domyślnie: nazwa pliku i data)",
+    )
+    product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(), required=False, allow_null=True
+    )
+
+    def validate_file(self, value):
+        if not value.name.lower().endswith(".xlsx"):
+            raise serializers.ValidationError("Wgraj plik w formacie .xlsx.")
+        if value.size > MAX_IMPORT_BYTES:
+            raise serializers.ValidationError("Plik jest za duży (max 5 MB).")
+        return value
+
+
+class ImportIssueSerializer(serializers.Serializer):
+    row = serializers.IntegerField()
+    message = serializers.CharField(required=False)
+    phone = serializers.CharField(required=False)
+    reason = serializers.CharField(required=False)
+
+
+class ImportResultSerializer(serializers.Serializer):
+    """Raport z importu: ile leadów powstało, co pominięto i dlaczego."""
+
+    batch = serializers.DictField(allow_null=True)
+    total_rows = serializers.IntegerField()
+    created = serializers.IntegerField()
+    duplicates = ImportIssueSerializer(many=True)
+    errors = ImportIssueSerializer(many=True)

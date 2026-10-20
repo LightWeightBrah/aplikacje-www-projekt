@@ -1,12 +1,15 @@
+import io
 from datetime import datetime, time, timedelta
 
 from django.contrib.auth.models import Group, User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
+from openpyxl import Workbook, load_workbook
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Activity, Company, Lead, LeadAssignment
+from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
 from .roles import AGENT, MANAGER
 from .services import release_stale_leads
 
@@ -851,4 +854,219 @@ class ScheduleTests(CrmTestBase):
         self.assertEqual(
             self.api().get("/api/my-leads/schedule/").status_code,
             status.HTTP_401_UNAUTHORIZED,
+        )
+
+
+IMPORT_HEADERS = [
+    "Imię i nazwisko", "Telefon", "E-mail", "Firma", "NIP", "KRS", "REGON", "Miasto",
+]
+
+
+def make_xlsx(rows, headers=IMPORT_HEADERS, filename="baza.xlsx"):
+    """Buduje plik .xlsx w pamięci i zwraca go jako upload do testów."""
+    workbook = Workbook()
+    sheet = workbook.active
+    if headers:
+        sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return SimpleUploadedFile(
+        filename,
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+class ExcelImportTests(CrmTestBase):
+    """Import bazy kontaktów z Excela."""
+
+    def do_import(self, upload, user=None, **extra):
+        return self.api(user or self.manager).post(
+            "/api/batches/import/", {"file": upload, **extra}, format="multipart"
+        )
+
+    # Agent nie może importować
+    def test_agent_cannot_import(self):
+        response = self.do_import(make_xlsx([]), user=self.agent1)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # Import tworzy paczkę, leady w puli i firmy (ta sama firma po NIP tylko raz)
+    def test_import_creates_batch_leads_and_companies(self):
+        product = Product.objects.create(name="Światłowód")
+        upload = make_xlsx(
+            [
+                ["Anna Nowak", "600 100 200", "anna@example.com", "Alfa", "1234567890", "", "", "Olsztyn"],
+                ["Piotr Zieliński", "+48 600-100-201", "", "Alfa", "1234567890", "", "", "Olsztyn"],
+                ["Ewa Kot", 600100202, "", "", "", "", "", ""],
+            ]
+        )
+
+        response = self.do_import(upload, name="Baza testowa", product=product.id)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["created"], 3)
+        batch = LeadBatch.objects.get(name="Baza testowa")
+        self.assertEqual(batch.source_file_name, "baza.xlsx")
+        self.assertEqual(batch.created_by, self.manager)
+        leads = Lead.objects.filter(batch=batch)
+        self.assertEqual(leads.count(), 3)
+        for lead in leads:
+            self.assertIsNone(lead.owner)
+            self.assertEqual(lead.status, Lead.Status.NEW)
+            self.assertEqual(lead.product, product)
+        self.assertEqual(Company.objects.filter(nip="1234567890").count(), 1)
+        self.assertTrue(leads.filter(phone="600100202").exists())  # liczba z Excela
+
+    # Duplikaty: numer już w systemie (inny zapis) i powtórzony w pliku
+    def test_duplicates_are_skipped_and_reported(self):
+        self.make_lead(phone="+48 600 100 200")
+        upload = make_xlsx(
+            [
+                ["A", "600100200"],
+                ["B", "600100203"],
+                ["C", "600 100 203"],
+            ],
+            headers=["Imię i nazwisko", "Telefon"],
+        )
+
+        response = self.do_import(upload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["created"], 1)
+        rows = [item["row"] for item in response.data["duplicates"]]
+        self.assertEqual(rows, [2, 4])
+
+    # Błędne wiersze są raportowane z numerem, poprawne i tak się importują
+    def test_invalid_rows_are_reported_with_row_numbers(self):
+        upload = make_xlsx(
+            [
+                ["", "600100210"],
+                ["X", "123"],
+                ["Y", "600100211", "zly-mail"],
+                ["Z", "600100212", "", "Firma", "12345"],
+                ["Dobry", "600100213"],
+            ]
+        )
+
+        response = self.do_import(upload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual([e["row"] for e in response.data["errors"]], [2, 3, 4, 5])
+        self.assertEqual(response.data["total_rows"], 5)
+
+    # Nagłówki rozpoznajemy też w innych zapisach
+    def test_header_aliases_are_recognised(self):
+        upload = make_xlsx([["Jan", "600100220"]], headers=["Osoba", "Nr telefonu"])
+
+        response = self.do_import(upload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["created"], 1)
+
+    # Brak wymaganych kolumn
+    def test_missing_required_columns_returns_400(self):
+        upload = make_xlsx([["Jan", "jan@example.com"]], headers=["Imię i nazwisko", "E-mail"])
+
+        response = self.do_import(upload)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("telefon", response.data["detail"])
+
+    # Plik, który nie jest Excelem, i zły format są odrzucane
+    def test_invalid_files_are_rejected(self):
+        wrong_ext = SimpleUploadedFile("baza.txt", b"abc", content_type="text/plain")
+        broken = SimpleUploadedFile("baza.xlsx", b"to nie jest excel")
+
+        self.assertEqual(
+            self.do_import(wrong_ext).status_code, status.HTTP_400_BAD_REQUEST
+        )
+        self.assertEqual(self.do_import(broken).status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Gdy żaden wiersz nie jest poprawny, nie powstaje pusta paczka
+    def test_no_valid_rows_creates_nothing(self):
+        response = self.do_import(make_xlsx([["X", "123"], ["", "600100230"]]))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(LeadBatch.objects.count(), 0)
+        self.assertEqual(Lead.objects.count(), 0)
+
+    # Nazwa bazy musi być unikalna
+    def test_duplicate_batch_name_returns_400(self):
+        LeadBatch.objects.create(name="Zajęta")
+
+        response = self.do_import(make_xlsx([["Jan", "600100240"]]), name="Zajęta")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class ExcelExportTests(CrmTestBase):
+    """Eksport leadów do Excela."""
+
+    def read_sheet(self, response):
+        workbook = load_workbook(io.BytesIO(response.content))
+        return list(workbook.active.iter_rows(values_only=False))
+
+    def setUp(self):
+        super().setUp()
+        company = Company.objects.create(name="Alfa", nip="1234567890")
+        self.pool = self.make_lead(contact_name="Z Puli", phone="500000001")
+        self.mine = self.make_lead(
+            owner=self.agent1, contact_name="Mój", phone="500000002", company=company
+        )
+        self.lost = self.make_lead(
+            owner=self.agent2,
+            contact_name="Przegrany",
+            phone="500000003",
+            status=Lead.Status.LOST,
+        )
+
+    # Manager dostaje wszystkie leady w poprawnym pliku .xlsx
+    def test_manager_exports_all_leads(self):
+        response = self.api(self.manager).get("/api/leads/export/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("spreadsheetml", response["Content-Type"])
+        self.assertIn("attachment", response["Content-Disposition"])
+        rows = self.read_sheet(response)
+        self.assertEqual(rows[0][1].value, "Imię i nazwisko")
+        self.assertEqual(len(rows), 4)  # nagłówek + 3 leady
+        mine_row = next(r for r in rows if r[1].value == "Mój")
+        self.assertEqual(mine_row[4].value, "Alfa")
+        self.assertEqual(mine_row[10].value, "agent1")
+
+    # Agent eksportuje tylko swoje leady
+    def test_agent_exports_only_own_leads(self):
+        response = self.api(self.agent1).get("/api/leads/export/")
+
+        rows = self.read_sheet(response)
+        self.assertEqual([r[1].value for r in rows[1:]], ["Mój"])
+
+    # Eksport respektuje filtry z listy
+    def test_export_respects_filters(self):
+        response = self.api(self.manager).get("/api/leads/export/?status=lost")
+
+        rows = self.read_sheet(response)
+        self.assertEqual([r[1].value for r in rows[1:]], ["Przegrany"])
+
+    # Dane zaczynające się od "=" trafiają do pliku jako tekst, nie formuła
+    def test_formula_like_text_is_exported_as_text(self):
+        self.make_lead(contact_name="=1+1", phone="500000004")
+
+        response = self.api(self.manager).get("/api/leads/export/")
+
+        cell = next(r[1] for r in self.read_sheet(response)[1:] if r[1].value == "=1+1")
+        self.assertEqual(cell.data_type, "s")
+
+    # Eksport wymaga logowania i roli
+    def test_export_requires_login_and_role(self):
+        self.assertEqual(
+            self.api().get("/api/leads/export/").status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+        self.assertEqual(
+            self.api(self.no_role).get("/api/leads/export/").status_code,
+            status.HTTP_403_FORBIDDEN,
         )

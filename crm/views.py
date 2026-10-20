@@ -5,9 +5,17 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from .excel import (
+    XLSX_CONTENT_TYPE,
+    ImportFileError,
+    XlsxRenderer,
+    import_leads as run_import,
+    leads_to_xlsx,
+)
 from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
 from .permissions import (
     IsAgentOrManager,
@@ -19,6 +27,8 @@ from .roles import is_manager, visible_to
 from .serializers import (
     ActivitySerializer,
     AssignLeadSerializer,
+    ImportLeadsSerializer,
+    ImportResultSerializer,
     CompanySerializer,
     DueLeadsSerializer,
     LeadAssignmentSerializer,
@@ -79,6 +89,36 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @extend_schema(request=ImportLeadsSerializer, responses=ImportResultSerializer)
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="import",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_file(self, request):
+        """Manager: import bazy kontaktów z pliku .xlsx do nowej paczki leadów.
+
+        Leady trafiają do puli. Duplikaty (po numerze telefonu) i błędne wiersze
+        są pomijane, a raport opisuje każdy z nich.
+        """
+        serializer = ImportLeadsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            result = run_import(
+                data["file"],
+                request.user,
+                data.get("name", ""),
+                data.get("product"),
+            )
+        except ImportFileError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        if not result["created"]:
+            result["detail"] = "Nie zaimportowano żadnego leada."
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_201_CREATED)
 
 
 MANAGER_ONLY_ACTIONS = (
@@ -146,6 +186,18 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
                 {"detail": "Brak leadów w puli."}, status=status.HTTP_404_NOT_FOUND
             )
         return Response(LeadSerializer(lead).data)
+
+    @extend_schema(responses={(200, XLSX_CONTENT_TYPE): OpenApiTypes.BINARY})
+    @action(detail=False, methods=["get"], renderer_classes=[XlsxRenderer])
+    def export(self, request):
+        """Eksport leadów do pliku .xlsx (te same filtry i wyszukiwanie co w liście).
+
+        Agent dostaje swoje leady, manager wszystkie.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        response = Response(leads_to_xlsx(queryset))
+        response["Content-Disposition"] = 'attachment; filename="leady.xlsx"'
+        return response
 
     @extend_schema(request=AssignLeadSerializer, responses=LeadSerializer)
     @action(detail=True, methods=["post"])
