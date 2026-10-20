@@ -24,6 +24,14 @@ class FrontendPagesTests(CrmTestBase):
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "login-form")
 
+    def test_login_has_theme_button(self):
+        self.assertContains(self.client.get("/crm/login/"), 'id="theme-btn"')
+
+    def test_dashboard_has_user_menu_with_theme_choice(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'id="user-popover"')
+        self.assertContains(r, 'data-theme-choice="auto"')
+
     def test_dashboard_shell_renders(self):
         r = self.client.get("/crm/")
         self.assertEqual(r.status_code, 200)

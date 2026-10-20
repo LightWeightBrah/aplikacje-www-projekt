@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}LeadCRM{% endblock %}</title>
+    <meta name="color-scheme" content="light dark">
+    <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
     <link rel="stylesheet" href="{% static 'crm/css/app.css' %}">
 </head>
 <body>
@@ -17,10 +19,22 @@
             <span class="nav-soon">Import / eksport <em>wkrótce</em></span>
             <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
         </nav>
-        <div class="user-chip">
-            <div class="avatar" id="user-avatar">?</div>
-            <div><strong id="user-name">…</strong><small id="user-role"></small></div>
-            <button class="btn-ghost" id="logout-btn" title="Wyloguj">Wyloguj</button>
+        <div class="user-menu">
+            <div class="popover" id="user-popover" hidden>
+                <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
+                <div class="pop-label">Motyw</div>
+                <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
+                    <button type="button" data-theme-choice="light">Jasny</button>
+                    <button type="button" data-theme-choice="dark">Ciemny</button>
+                    <button type="button" data-theme-choice="auto">Auto</button>
+                </div>
+                <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
+            </div>
+            <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
+                <span class="avatar" id="user-avatar">?</span>
+                <span class="who"><strong id="user-name">…</strong><small id="user-role"></small></span>
+                <span class="chev" aria-hidden="true">&#8963;</span>
+            </button>
         </div>
     </aside>
     <main class="content">

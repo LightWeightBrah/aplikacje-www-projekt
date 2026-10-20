@@ -4,9 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Logowanie – LeadCRM</title>
+    <meta name="color-scheme" content="light dark">
+    <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
     <link rel="stylesheet" href="{% static 'crm/css/app.css' %}">
 </head>
 <body class="auth-page">
+    <button class="btn-ghost theme-btn floating" id="theme-btn" title="Zmień motyw (jasny / ciemny)" aria-label="Zmień motyw"></button>
     <main class="auth-card">
         <div class="brand">Lead<span>CRM</span></div>
         <h1>Zaloguj się</h1>

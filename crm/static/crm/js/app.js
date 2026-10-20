@@ -51,7 +51,49 @@ const CRM = (() => {
     try { return JSON.parse(store.get("crm_user")); } catch { return null; }
   }
 
+  /* Motyw: domyślnie jak w systemie, wybór ręczny zapamiętany w przeglądarce. */
+  const root = document.documentElement;
+  const themeMode = () => root.dataset.theme || "auto";
+  const isDark = () => (root.dataset.theme
+    ? root.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches);
+  function setTheme(mode) {
+    if (mode === "auto") { delete root.dataset.theme; store.del("crm_theme"); }
+    else { root.dataset.theme = mode; store.set("crm_theme", mode); }
+  }
+
+  /* Ekran logowania: pojedynczy przycisk motywu w rogu. */
+  function initTheme() {
+    const btn = $("theme-btn");
+    if (!btn) return;
+    const paint = () => { btn.textContent = isDark() ? "\u2600" : "\u263E"; };
+    btn.addEventListener("click", () => { setTheme(isDark() ? "light" : "dark"); paint(); });
+    paint();
+  }
+
+  /* Aplikacja: menu użytkownika (motyw + wylogowanie) po kliknięciu w profil. */
+  function initUserMenu(user) {
+    const btn = $("user-btn"), pop = $("user-popover");
+    const paint = () => document.querySelectorAll("[data-theme-choice]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeChoice === themeMode())));
+    const toggle = (open) => {
+      pop.hidden = !open;
+      btn.setAttribute("aria-expanded", String(open));
+    };
+    $("pop-name").textContent = user.full_name;
+    $("pop-role").textContent = ROLE[user.role] || "";
+    btn.addEventListener("click", (e) => { e.stopPropagation(); toggle(pop.hidden); });
+    pop.addEventListener("click", (e) => e.stopPropagation());
+    document.addEventListener("click", () => toggle(false));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggle(false); });
+    document.querySelectorAll("[data-theme-choice]").forEach((b) =>
+      b.addEventListener("click", () => { setTheme(b.dataset.themeChoice); paint(); }));
+    $("logout-btn").addEventListener("click", logout);
+    paint();
+  }
+
   function initLogin() {
+    initTheme();
     if (store.get("crm_access") && currentUser()) { location.href = HOME_URL; return; }
     const form = $("login-form"), err = $("login-error");
     form.addEventListener("submit", async (e) => {
@@ -89,7 +131,7 @@ const CRM = (() => {
     $("user-name").textContent = user.full_name;
     $("user-role").textContent = ROLE[user.role] || "";
     $("user-avatar").textContent = user.full_name.charAt(0).toUpperCase();
-    $("logout-btn").addEventListener("click", logout);
+    initUserMenu(user);
   }
 
   const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
