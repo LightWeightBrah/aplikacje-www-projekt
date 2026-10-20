@@ -8,6 +8,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .models import Activity, Company, Lead, LeadAssignment
 from .roles import AGENT, MANAGER
+from .services import release_stale_leads
 
 
 # Szybszy hasher haseł, używany tylko w testach
@@ -366,3 +367,148 @@ class MyLeadsDueTests(CrmTestBase):
             self.assertEqual(
                 response.status_code, status.HTTP_400_BAD_REQUEST, msg=value
             )
+
+
+class LeadLifecycleTests(CrmTestBase):
+    """Cykl życia leada: limit prób, zwrot do puli, nieosiągalni, nietknięte leady."""
+
+    def setUp(self):
+        super().setUp()
+        self.lead = self.make_lead(owner=self.agent1, claimed_at=timezone.now())
+
+    def no_answer(self, agent=None):
+        return self.api(agent or self.agent1).post(
+            "/api/activities/",
+            {"lead": self.lead.id, "outcome": "no_answer"},
+            format="json",
+        )
+
+    # Poniżej limitu lead zostaje u agenta
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=3)
+    def test_lead_stays_with_agent_below_attempt_limit(self):
+        self.no_answer()
+        self.no_answer()
+
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.owner, self.agent1)
+
+    # Po wyczerpaniu limitu lead wraca do puli i zostaje wpis w historii przypisań
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=3)
+    def test_lead_returns_to_pool_after_attempt_limit(self):
+        for _ in range(3):
+            self.no_answer()
+
+        self.lead.refresh_from_db()
+        self.assertIsNone(self.lead.owner)
+        self.assertEqual(self.lead.status, Lead.Status.NEW)
+        self.assertIsNone(self.lead.claimed_at)
+        assignment = LeadAssignment.objects.get(lead=self.lead, to_agent=None)
+        self.assertEqual(assignment.from_agent, self.agent1)
+
+    # Agent, który wyczerpał limit, nie dostanie tego leada ponownie
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=2)
+    def test_agent_does_not_get_released_lead_again(self):
+        self.no_answer()
+        self.no_answer()
+
+        response = self.api(self.agent1).post("/api/leads/next/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.api(self.agent2).post("/api/leads/next/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.lead.id)
+
+    # Lead z obietnicą oddzwonienia nie wraca do puli mimo nieodebranych telefonów
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=2)
+    def test_callback_lead_is_not_released(self):
+        Lead.objects.filter(pk=self.lead.pk).update(
+            status=Lead.Status.CALLBACK,
+            next_contact_at=timezone.now() + timedelta(days=1),
+            next_contact_note="Oddzwonić",
+        )
+        self.no_answer()
+        self.no_answer()
+
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.owner, self.agent1)
+        self.assertEqual(self.lead.status, Lead.Status.CALLBACK)
+
+    # Odmowa lub inny wynik niż brak odpowiedzi nie zwraca leada do puli
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=1)
+    def test_other_outcomes_do_not_release_lead(self):
+        self.api(self.agent1).post(
+            "/api/activities/",
+            {"lead": self.lead.id, "outcome": "note", "note": "Zadzwonić po 15"},
+            format="json",
+        )
+
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.owner, self.agent1)
+
+    # Gdy tyle prób zrobiło już N różnych agentów, lead staje się nieosiągalny
+    @override_settings(LEAD_MAX_ATTEMPTS_PER_AGENT=1, LEAD_UNREACHABLE_AFTER_AGENTS=2)
+    def test_lead_becomes_unreachable_after_enough_agents(self):
+        self.no_answer()  # agent1 wyczerpał limit, lead wraca do puli
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.status, Lead.Status.NEW)
+
+        response = self.api(self.agent2).post("/api/leads/next/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.no_answer(agent=self.agent2)  # drugi agent bez skutku
+
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.status, Lead.Status.UNREACHABLE)
+        self.assertIsNone(self.lead.owner)
+
+        # nieosiągalny lead nie trafia już do losowania
+        self.assertEqual(
+            self.api(self.manager).post("/api/leads/next/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    # Nietknięty od ponad limitu godzin lead wraca do puli
+    @override_settings(LEAD_CLAIM_TIMEOUT_HOURS=24)
+    def test_release_stale_returns_untouched_lead(self):
+        Lead.objects.filter(pk=self.lead.pk).update(
+            claimed_at=timezone.now() - timedelta(hours=30)
+        )
+
+        released = release_stale_leads()
+
+        self.assertEqual(released, 1)
+        self.lead.refresh_from_db()
+        self.assertIsNone(self.lead.owner)
+        self.assertTrue(
+            LeadAssignment.objects.filter(
+                lead=self.lead, from_agent=self.agent1, to_agent=None
+            ).exists()
+        )
+
+    # Świeży lub ruszony przez agenta lead zostaje u agenta
+    @override_settings(LEAD_CLAIM_TIMEOUT_HOURS=24)
+    def test_release_stale_ignores_fresh_and_touched_leads(self):
+        fresh = self.make_lead(owner=self.agent2, claimed_at=timezone.now())
+        touched = self.make_lead(
+            owner=self.agent2, claimed_at=timezone.now() - timedelta(hours=30)
+        )
+        Activity.objects.create(
+            lead=touched, agent=self.agent2, outcome=Activity.Outcome.NOTE
+        )
+        Lead.objects.filter(pk=self.lead.pk).update(claimed_at=timezone.now())
+
+        self.assertEqual(release_stale_leads(), 0)
+        fresh.refresh_from_db()
+        touched.refresh_from_db()
+        self.assertEqual(fresh.owner, self.agent2)
+        self.assertEqual(touched.owner, self.agent2)
+
+    # Tryb --dry-run tylko liczy i niczego nie zmienia
+    @override_settings(LEAD_CLAIM_TIMEOUT_HOURS=24)
+    def test_release_stale_dry_run_changes_nothing(self):
+        Lead.objects.filter(pk=self.lead.pk).update(
+            claimed_at=timezone.now() - timedelta(hours=30)
+        )
+
+        self.assertEqual(release_stale_leads(dry_run=True), 1)
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.owner, self.agent1)

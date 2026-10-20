@@ -1,9 +1,11 @@
-"""Logika biznesowa CRM (poza widokami): losowanie leadów i terminarz oddzwonień."""
+"""Logika biznesowa CRM (poza widokami): losowanie leadów, terminarz oddzwonień
+i cykl życia leada (limit prób, zwrot do puli, nieosiągalni)."""
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import Exists, F, OuterRef
 from django.utils import timezone
 
 from .models import Activity, Lead, LeadAssignment
@@ -140,4 +142,87 @@ def register_activity(
 
         Lead.objects.filter(pk=lead.pk).update(**changes)
 
+        # Kolejny nieodebrany telefon może wyczerpać limit prób agenta
+        if outcome == Activity.Outcome.NO_ANSWER:
+            release_if_exhausted(lead.pk)
+
     return activity
+
+
+def _return_to_pool(lead, new_status, reason):
+    """Odbiera leada agentowi i zapisuje to w historii przypisań.
+
+    Warunkowy UPDATE (owner nadal ten sam) chroni przed wyścigiem z innym żądaniem.
+    """
+    former_owner_id = lead.owner_id
+    changed = Lead.objects.filter(pk=lead.pk, owner_id=former_owner_id).update(
+        owner=None,
+        claimed_at=None,
+        status=new_status,
+        next_contact_at=None,
+        next_contact_note="",
+    )
+    if changed:
+        LeadAssignment.objects.create(
+            lead=lead, from_agent_id=former_owner_id, to_agent=None, reason=reason
+        )
+    return bool(changed)
+
+
+def release_if_exhausted(lead_id):
+    """Zwraca leada do puli, gdy jego opiekun wyczerpał limit prób.
+
+    Dotyczy tylko leadów o statusie "nowy": lead z obietnicą oddzwonienia
+    zostaje przy agencie. Zwraca nowy status leada albo None, gdy nic się nie stało.
+
+    - opiekun ma już LEAD_MAX_ATTEMPTS_PER_AGENT nieodebranych prób -> lead wraca do puli,
+    - jeśli tyle prób zrobiło już LEAD_UNREACHABLE_AFTER_AGENTS różnych agentów,
+      lead dostaje status "nieosiągalny" i do puli nie wraca.
+    """
+    lead = Lead.objects.get(pk=lead_id)
+    if lead.owner_id is None or lead.status != Lead.Status.NEW:
+        return None
+
+    no_answers = Activity.objects.filter(
+        lead=lead, outcome=Activity.Outcome.NO_ANSWER
+    )
+    owner_tries = no_answers.filter(agent_id=lead.owner_id).count()
+    if owner_tries < settings.LEAD_MAX_ATTEMPTS_PER_AGENT:
+        return None
+
+    agents_tried = no_answers.values("agent").distinct().count()
+    if agents_tried >= settings.LEAD_UNREACHABLE_AFTER_AGENTS:
+        new_status = Lead.Status.UNREACHABLE
+        reason = f"Nieosiągalny: {agents_tried} agentów bez skutku"
+    else:
+        new_status = Lead.Status.NEW
+        reason = f"Limit prób ({owner_tries}) wyczerpany, zwrot do puli"
+
+    if _return_to_pool(lead, new_status, reason):
+        return new_status
+    return None
+
+
+def release_stale_leads(dry_run=False):
+    """Zwraca do puli leady, których agent nie ruszył od LEAD_CLAIM_TIMEOUT_HOURS godzin.
+
+    "Nietknięty" = status nowy, przypisany dawno temu i bez żadnej aktywności
+    obecnego opiekuna. Zwraca liczbę leadów (przy dry_run tylko je liczy).
+    """
+    cutoff = timezone.now() - timedelta(hours=settings.LEAD_CLAIM_TIMEOUT_HOURS)
+    touched = Activity.objects.filter(lead=OuterRef("pk"), agent=OuterRef("owner"))
+    stale = Lead.objects.filter(
+        owner__isnull=False,
+        status=Lead.Status.NEW,
+        claimed_at__lt=cutoff,
+    ).exclude(Exists(touched))
+
+    if dry_run:
+        return stale.count()
+
+    released = 0
+    for lead in stale:
+        reason = f"Brak aktywności przez {settings.LEAD_CLAIM_TIMEOUT_HOURS} h, zwrot do puli"
+        if _return_to_pool(lead, Lead.Status.NEW, reason):
+            released += 1
+    return released
