@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=17">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=18">
 </head>
 <body>
 <div class="shell">
@@ -16,7 +16,7 @@
             <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
             <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Moja kolejka</a>
             <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Panel managera</a>
-            <span class="nav-soon">Import / eksport <em>wkrótce</em></span>
+            <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport</a>
             <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
         </nav>
         <div class="user-menu">
@@ -41,7 +41,7 @@
         {% block content %}{% endblock %}
     </main>
 </div>
-<script src="{% static 'crm/js/app.js' %}?v=17"></script>
+<script src="{% static 'crm/js/app.js' %}?v=18"></script>
 <script>CRM.initShell();</script>
 {% block scripts %}{% endblock %}
 </body>

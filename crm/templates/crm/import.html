@@ -1,0 +1,67 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Import / eksport – LeadCRM{% endblock %}
+{% block nav_import %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Import / eksport</h1>
+        <p class="muted">Wgraj bazę kontaktów z Excela albo pobierz leady do pliku</p>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="import-area">
+    <section class="card">
+        <h2>Import bazy z Excela</h2>
+        <form id="import-form" class="import-form" novalidate>
+            <label class="dropzone" id="dropzone" for="file-input">
+                <input type="file" id="file-input" accept=".xlsx" hidden>
+                <strong id="drop-title">Wybierz plik .xlsx albo upuść go tutaj</strong>
+                <small id="drop-hint" class="muted">Pierwszy arkusz, pierwszy wiersz = nagłówki. Max 5 MB i 5000 wierszy.</small>
+            </label>
+            <div class="import-fields">
+                <label class="field">Nazwa bazy (opcjonalnie)
+                    <input id="batch-name" class="select" maxlength="150" placeholder="domyślnie: nazwa pliku i data">
+                </label>
+                <label class="field">Produkt dla wszystkich leadów (opcjonalnie)
+                    <select id="product" class="select"><option value="">Bez produktu</option></select>
+                </label>
+            </div>
+            <p id="import-error" class="form-error" hidden></p>
+            <div class="actions">
+                <button type="submit" class="btn btn-primary" id="import-btn">Importuj</button>
+            </div>
+        </form>
+        <div class="columns-help">
+            <h3>Jakie kolumny rozpoznajemy</h3>
+            <p class="small"><b>Wymagane:</b> <code>Imię i nazwisko</code>, <code>Telefon</code>.
+                <b>Opcjonalne:</b> <code>E-mail</code>, <code>Firma</code>, <code>NIP</code>, <code>KRS</code>, <code>REGON</code>, <code>Miasto</code>.</p>
+            <p class="small muted">Leady trafiają do puli. Numer telefonu, który już jest w systemie albo powtarza się w pliku, jest pomijany jako duplikat (np. <code>+48 600-100-200</code> i <code>600100200</code> to ten sam numer). Błędne wiersze są pomijane, reszta pliku importuje się normalnie.</p>
+        </div>
+    </section>
+
+    <section class="card" id="result-card" hidden aria-live="polite">
+        <h2>Wynik importu</h2>
+        <p id="result-detail" class="form-error" hidden></p>
+        <div class="totals" id="result-totals"></div>
+        <p id="result-batch" class="small"></p>
+        <div id="result-dups" hidden>
+            <h3>Pominięte duplikaty</h3>
+            <div class="table-wrap"><table class="table" id="dups-table"></table></div>
+        </div>
+        <div id="result-errors" hidden>
+            <h3>Błędne wiersze</h3>
+            <div class="table-wrap"><table class="table" id="errors-table"></table></div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Eksport do Excela</h2>
+        <p class="muted small">Pobiera wszystkie leady do pliku <code>leady.xlsx</code>. Eksport z filtrami zrobisz w <a href="{% url 'crm:manager' %}">panelu managera</a>.</p>
+        <div class="actions"><button type="button" class="btn btn-secondary" id="export-all">Pobierz wszystkie leady</button></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/import.js' %}?v=18"></script>
+<script>CRM.initImport();</script>{% endblock %}

@@ -223,3 +223,13 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .lead-item .transfer{color:var(--brand);font-weight:600}
 .transfer-note{margin-bottom:1rem;padding:.8rem 1rem;border-radius:12px;border:1px solid color-mix(in srgb,var(--brand) 45%,var(--line));background:color-mix(in srgb,var(--brand) 12%,transparent)}
 .transfer-note{display:flex;flex-direction:column;gap:.2rem}.transfer-note strong{font-size:1rem}.transfer-note small{color:var(--muted);margin-top:.2rem}
+.import-form{display:flex;flex-direction:column;gap:1rem}
+.dropzone{display:flex;flex-direction:column;align-items:center;gap:.3rem;text-align:center;padding:2rem 1rem;border:2px dashed var(--line);border-radius:14px;background:var(--bg);cursor:pointer;transition:border-color .15s,background .15s}
+.dropzone:hover,.dropzone.drag{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 8%,var(--bg))}
+.dropzone.has-file{border-style:solid;border-color:var(--brand)}
+.import-fields{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:700px){.import-fields{grid-template-columns:1fr}}
+.columns-help{margin-top:1.2rem;padding-top:1rem;border-top:1px solid var(--line)}
+.columns-help h3,#result-card h3{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:1.2rem 0 .5rem}
+.columns-help p{margin:.3rem 0}code{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.05rem .35rem;font-size:.85em}
+#result-card .table-wrap{max-height:18rem;overflow:auto}

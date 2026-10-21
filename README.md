@@ -241,6 +241,7 @@ Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szabl
 | `/crm/` | dashboard: statystyki, lejek leadów, rozmowy dzień po dniu, skuteczność agentów (manager) |
 | `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
 | `/crm/manager/` | panel managera: tabela wszystkich leadów, filtry, przypisywanie, przepisywanie, pula nieosiągalnych, eksport |
+| `/crm/import/` | import bazy z Excela (wybór pliku, nazwa bazy, produkt) z raportem: zaimportowane, duplikaty i błędne wiersze z numerami; eksport wszystkich leadów (tylko manager) |
 
 Funkcje kolejki agenta: przycisk „Daj kolejnego leada”, zapis wyniku z przejściem do następnego leada („Zapisz i weź kolejnego”), skróty klawiszowe (`1`–`5` wybór wyniku, `Enter` / `Ctrl+Enter` zapis) oraz wpisywanie terminu tekstem, np. `jutro 9 55`, `25.10 10 23`, `pon 8`, `za 2h` (rok uzupełnia się sam) albo wybierane z kalendarza. `Esc` (lub ponowne kliknięcie wyniku) czyści formularz i pozwala zacząć od nowa. Motyw jasny / ciemny / auto wybiera się w menu profilu (lewy dolny róg).
 

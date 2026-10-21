@@ -73,6 +73,23 @@ class FrontendPagesTests(CrmTestBase):
         self.assertContains(r, "CRM.initDashboard")
 
 
+class ImportPageTests(CrmTestBase):
+    def test_import_page_renders(self):
+        r = self.client.get("/crm/import/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "import-form")
+        self.assertContains(r, "CRM.initImport")
+
+    def test_menu_links_to_import_page_for_managers_only(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/import/"')
+        self.assertContains(r, "data-manager-only")
+
+    def test_import_endpoint_used_by_page_is_manager_only(self):
+        self.assertEqual(self.api().post("/api/batches/import/").status_code, 401)
+        self.assertEqual(self.api(self.agent1).post("/api/batches/import/").status_code, 403)
+
+
 class AgentListTests(CrmTestBase):
     def test_agents_endpoint_is_manager_only(self):
         self.assertEqual(self.api().get("/api/agents/").status_code, 401)

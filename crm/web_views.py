@@ -32,3 +32,8 @@ def dashboard(request):
 def manager_page(request):
     """Szkielet panelu managera. Dane pobiera JavaScript z API (token JWT)."""
     return render(request, "crm/manager.html")
+
+
+def import_page(request):
+    """Szkielet strony importu i eksportu Excela (tylko manager). Dane idą przez API."""
+    return render(request, "crm/import.html")
