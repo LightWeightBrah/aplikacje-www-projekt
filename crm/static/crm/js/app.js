@@ -204,5 +204,5 @@ const CRM = (() => {
     load();
   }
 
-  return { initLogin, initShell, initDashboard, api };
+  return { initLogin, initShell, initDashboard, api, esc, STATUS, $, currentUser };
 })();

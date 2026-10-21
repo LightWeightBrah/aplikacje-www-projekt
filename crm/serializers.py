@@ -30,6 +30,9 @@ class LeadBatchSerializer(serializers.ModelSerializer):
 
 
 class ActivitySerializer(serializers.ModelSerializer):
+    # Kto prowadził rozmowę (do historii kontaktów)
+    agent_name = serializers.SerializerMethodField()
+
     # Pola tylko do zapisu: kiedy i w jakiej sprawie oddzwonić (trafiają do leada)
     next_contact_at = serializers.DateTimeField(
         write_only=True, required=False, allow_null=True
@@ -44,6 +47,7 @@ class ActivitySerializer(serializers.ModelSerializer):
             "id",
             "lead",
             "agent",
+            "agent_name",
             "outcome",
             "note",
             "created_at",
@@ -51,6 +55,9 @@ class ActivitySerializer(serializers.ModelSerializer):
             "next_contact_note",
         )
         read_only_fields = ("agent", "created_at")
+
+    def get_agent_name(self, obj):
+        return obj.agent.username if obj.agent else None
 
     def validate_next_contact_at(self, value):
         if value and value < timezone.now():

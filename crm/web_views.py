@@ -19,6 +19,11 @@ def login_page(request):
     return render(request, "crm/login.html")
 
 
+def queue_page(request):
+    """Szkielet kolejki agenta. Dane pobiera JavaScript z API (token JWT)."""
+    return render(request, "crm/queue.html")
+
+
 def dashboard(request):
     """Szkielet dashboardu. Dane pobiera JavaScript z /api/stats/ (token JWT)."""
     return render(request, "crm/dashboard.html")

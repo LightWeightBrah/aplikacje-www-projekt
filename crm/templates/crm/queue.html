@@ -1,0 +1,23 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Moja kolejka – LeadCRM{% endblock %}
+{% block nav_queue %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Moja kolejka</h1>
+        <p class="muted" id="queue-sub">Twoje aktywne leady, najpilniejsze na górze</p>
+    </div>
+</header>
+<div class="queue">
+    <aside class="card list-card">
+        <button class="btn btn-primary btn-block claim" id="claim-btn" type="button">+ Daj kolejnego leada</button>
+        <h2>Do obsłużenia <span class="count" id="lead-count"></span></h2>
+        <div id="lead-list" class="lead-list"></div>
+    </aside>
+    <section id="lead-pane" class="lead-pane"></section>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/when.js' %}?v=12"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=12"></script>{% endblock %}
