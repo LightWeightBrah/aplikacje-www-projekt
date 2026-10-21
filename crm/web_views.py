@@ -27,3 +27,8 @@ def queue_page(request):
 def dashboard(request):
     """Szkielet dashboardu. Dane pobiera JavaScript z /api/stats/ (token JWT)."""
     return render(request, "crm/dashboard.html")
+
+
+def manager_page(request):
+    """Szkielet panelu managera. Dane pobiera JavaScript z API (token JWT)."""
+    return render(request, "crm/manager.html")

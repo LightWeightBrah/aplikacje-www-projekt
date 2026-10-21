@@ -9,7 +9,7 @@ from datetime import timezone as dt_timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Exists, F, OuterRef, Q
+from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework.renderers import BaseRenderer
@@ -54,6 +54,20 @@ class OverdueCallbacks(Exception):
     def __init__(self, count):
         super().__init__(count)
         self.count = count
+
+
+def with_transfer_info(queryset):
+    """Dodaje do leadów `transferred_from_name`: kto prowadził leada przed obecnym opiekunem.
+
+    Bierzemy ostatnie przypisanie do obecnego opiekuna; gdy lead przyszedł z puli,
+    wartość jest pusta.
+    """
+    latest = LeadAssignment.objects.filter(
+        lead=OuterRef("pk"), to_agent=OuterRef("owner")
+    ).order_by("-assigned_at", "-id")
+    return queryset.annotate(
+        transferred_from_name=Subquery(latest.values("from_agent__username")[:1])
+    )
 
 
 def overdue_leads(user):

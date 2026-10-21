@@ -131,6 +131,7 @@ const CRM = (() => {
     $("user-name").textContent = user.full_name;
     $("user-role").textContent = ROLE[user.role] || "";
     $("user-avatar").textContent = user.full_name.charAt(0).toUpperCase();
+    document.querySelectorAll("[data-manager-only]").forEach((el) => { el.hidden = user.role !== "manager"; });
     initUserMenu(user);
   }
 

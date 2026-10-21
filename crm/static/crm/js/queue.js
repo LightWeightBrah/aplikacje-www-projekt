@@ -69,7 +69,7 @@
       if (g !== last) { html += `<h3 class="grp g${g}">${GROUPS[g]}</h3>`; last = g; }
       const when = l.next_contact_at ? `<small class="when${g === 0 ? " late" : ""}" title="${fmt(l.next_contact_at)}">${rel(l.next_contact_at)} · ${fmt(l.next_contact_at)}</small>` : "";
       html += `<button type="button" class="lead-item${l.id === selectedId ? " active" : ""}" data-id="${l.id}">
-        <div><strong>${esc(l.contact_name)}</strong>${chip(l.status)}</div><small>${esc(l.phone)}</small>${when}${l.next_contact_note ? `<small class="why">${esc(l.next_contact_note)}</small>` : ""}</button>`;
+        <div><strong>${esc(l.contact_name)}</strong>${chip(l.status)}</div><small>${esc(l.phone)}</small>${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why">${esc(l.next_contact_note)}</small>` : ""}</button>`;
     });
     $("lead-list").innerHTML = html;
   }
@@ -119,7 +119,15 @@
           : `<div class="nc-date">Nie zaplanowano</div>`}</div>
       ${lastNote ? `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(lastNote.created_at)}</span><div class="nc-text">${esc(lastNote.note)}</div></div>` : ""}
     </div>`;
+    const mv = (d.assignments || [])[0];
+    const transfer = d.transferred_from && mv && mv.to_agent === d.owner
+      ? `<div class="transfer-note">
+        <strong>↪ Przepisany od ${esc(d.transferred_from)}</strong>
+        <span>Kiedy: ${fmt(mv.assigned_at)}</span>
+        ${mv.reason ? `<span>Powód: ${esc(mv.reason)}</span>` : ""}
+        <small>Wcześniejsze rozmowy widzisz w historii kontaktów na dole.</small></div>` : "";
     $("lead-pane").innerHTML = `
+      ${transfer}
       <div class="card">
         <div class="lead-head"><div><h2 class="lead-name">${esc(d.contact_name)}</h2>
           <p class="muted">${company ? esc(company.name) : "Brak firmy"}${product ? " · " + esc(product.name) : ""}</p></div>${chip(d.status)}</div>

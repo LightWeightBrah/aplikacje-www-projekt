@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.db.models import Count, Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -16,6 +17,7 @@ from .excel import (
     import_leads as run_import,
     leads_to_xlsx,
 )
+from .filters import LeadFilter
 from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
 from .permissions import (
     IsAgentOrManager,
@@ -26,6 +28,7 @@ from .permissions import (
 from .roles import is_manager, visible_to
 from .serializers import (
     ActivitySerializer,
+    AgentSerializer,
     AssignLeadSerializer,
     ImportLeadsSerializer,
     ImportResultSerializer,
@@ -39,8 +42,10 @@ from .serializers import (
     ReassignLeadsSerializer,
     ScheduleSerializer,
     StatsSerializer,
+    assignable_users,
 )
 from .services import (
+    ACTIVE_STATUSES,
     CalendarRenderer,
     InvalidAssignment,
     NoLeadsAvailable,
@@ -48,6 +53,7 @@ from .services import (
     claim_next_lead,
     assign_lead,
     build_stats,
+    with_transfer_info,
     calendar_ics,
     calendar_leads,
     day_schedule,
@@ -133,9 +139,19 @@ MANAGER_ONLY_ACTIONS = (
 class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
     queryset = Lead.objects.select_related("product", "company", "owner", "batch")
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
-    filterset_fields = ["status", "owner", "batch", "product"]
+    filterset_class = LeadFilter
     search_fields = ["contact_name", "phone", "email", "company__name", "company__nip", "company__krs"]
-    ordering_fields = ["next_contact_at", "last_activity_at"]
+    ordering_fields = [
+        "next_contact_at",
+        "last_activity_at",
+        "created_at",
+        "contact_name",
+        "status",
+        "attempts_count",
+    ]
+
+    def get_queryset(self):
+        return with_transfer_info(super().get_queryset())
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -235,7 +251,7 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
         responses=LeadSerializer(many=True),
         parameters=[
             OpenApiParameter(
-                "ready", bool, description="true = tylko te po okresie karencji"
+                "ready", bool, description="true = tylko te, które czekają już wymagany czas (domyślnie 30 dni od ostatniej próby)"
             ),
         ],
     )
@@ -255,8 +271,40 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="recycle-unreachable")
     def recycle(self, request):
-        """Manager: zwraca do obiegu nieosiągalne leady po okresie karencji."""
+        """Manager: zwraca do puli nieosiągalne leady, które czekają już wymagany czas (domyślnie 30 dni)."""
         return Response({"recycled": recycle_unreachable()})
+
+
+class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Manager: lista agentów i managerów (do przypisywania leadów i filtrów)."""
+
+    serializer_class = AgentSerializer
+    permission_classes = [IsManager]
+    pagination_class = None
+    filter_backends = []
+
+    def get_queryset(self):
+        return assignable_users()
+
+    def list(self, request, *args, **kwargs):
+        active = Q(leads__status__in=ACTIVE_STATUSES)
+        overdue = active & Q(leads__next_contact_at__lt=timezone.now())
+        users = self.get_queryset().annotate(
+            active_leads=Count("leads", filter=active, distinct=True),
+            overdue_leads=Count("leads", filter=overdue, distinct=True),
+        )
+        rows = [
+            {
+                "id": u.pk,
+                "username": u.username,
+                "full_name": u.get_full_name() or u.username,
+                "role": "manager" if is_manager(u) else "agent",
+                "active_leads": u.active_leads,
+                "overdue_leads": u.overdue_leads,
+            }
+            for u in users.order_by("username")
+        ]
+        return Response(AgentSerializer(rows, many=True).data)
 
 
 class ActivityViewSet(
@@ -309,9 +357,10 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def get_queryset(self):
         if not self.request.user.is_authenticated:  # np. generowanie schematu Swaggera
             return Lead.objects.none()
-        return Lead.objects.select_related("product", "company", "batch").filter(
+        queryset = Lead.objects.select_related("product", "company", "owner", "batch").filter(
             owner=self.request.user
         )
+        return with_transfer_info(queryset)
 
     @extend_schema(
         responses=DueLeadsSerializer,

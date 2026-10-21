@@ -77,6 +77,9 @@ class ActivitySerializer(serializers.ModelSerializer):
 
 
 class LeadAssignmentSerializer(serializers.ModelSerializer):
+    from_agent_name = serializers.CharField(source="from_agent.username", read_only=True, allow_null=True)
+    to_agent_name = serializers.CharField(source="to_agent.username", read_only=True, allow_null=True)
+
     class Meta:
         model = LeadAssignment
         fields = "__all__"
@@ -90,6 +93,15 @@ class LeadAssignmentSerializer(serializers.ModelSerializer):
 
 
 class LeadSerializer(serializers.ModelSerializer):
+    # Czytelne nazwy powiązanych obiektów (tabele w panelu nie muszą dopytywać o każdy id)
+    company_name = serializers.CharField(source="company.name", read_only=True, allow_null=True)
+    company_nip = serializers.CharField(source="company.nip", read_only=True, allow_null=True)
+    owner_name = serializers.CharField(source="owner.username", read_only=True, allow_null=True)
+    product_name = serializers.CharField(source="product.name", read_only=True, allow_null=True)
+    batch_name = serializers.CharField(source="batch.name", read_only=True, allow_null=True)
+    # Od kogo lead został przepisany obecnemu opiekunowi (null = wzięty z puli)
+    transferred_from = serializers.SerializerMethodField()
+
     class Meta:
         model = Lead
         fields = "__all__"
@@ -102,6 +114,9 @@ class LeadSerializer(serializers.ModelSerializer):
             "last_activity_at",
             "created_at",
         )
+
+    def get_transferred_from(self, obj):
+        return getattr(obj, "transferred_from_name", None)
 
     # Walidacja na poziomie pojedynczego pola
     def validate_phone(self, value):
@@ -141,6 +156,17 @@ class LeadDetailSerializer(LeadSerializer):
 
     activities = ActivitySerializer(many=True, read_only=True)
     assignments = LeadAssignmentSerializer(many=True, read_only=True)
+
+
+class AgentSerializer(serializers.Serializer):
+    """Użytkownik, któremu można przypisywać leady (lista dla panelu managera)."""
+
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    full_name = serializers.CharField()
+    role = serializers.CharField()
+    active_leads = serializers.IntegerField()
+    overdue_leads = serializers.IntegerField()
 
 
 class DueLeadsSerializer(serializers.Serializer):

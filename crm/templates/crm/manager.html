@@ -1,0 +1,101 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Panel managera – LeadCRM{% endblock %}
+{% block nav_manager %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Panel managera</h1>
+        <p class="muted" id="mgr-sub">Wszystkie leady zespołu: filtrowanie, przypisywanie, pula</p>
+    </div>
+    <div class="head-actions">
+        <button type="button" class="btn btn-secondary" id="reassign-open">Przepisz leady agenta…</button>
+        <button type="button" class="btn btn-secondary" id="export-btn">Eksport do Excela</button>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div class="tabs" id="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="all" aria-selected="true">Wszystkie</button>
+    <button type="button" role="tab" data-tab="overdue" aria-selected="false">Zaległe <small id="late-count"></small></button>
+    <button type="button" role="tab" data-tab="pool" aria-selected="false">Pula <small id="pool-count"></small></button>
+    <button type="button" role="tab" data-tab="unreachable" aria-selected="false">Nieosiągalni <small id="unr-count"></small></button>
+</div>
+
+<div class="card info-bar" id="late-bar" hidden>
+    <span>Aktywne leady, których termin kontaktu już minął (najstarsze na górze). Wybierz agenta w filtrze, żeby sprawdzić, czy czegoś nie przegapił.</span>
+</div>
+
+<div class="card info-bar" id="unr-bar" hidden>
+    <span id="unr-text"></span>
+    <button type="button" class="btn btn-secondary" id="recycle-btn">Zwróć gotowe do puli</button>
+</div>
+
+<div class="card filters">
+    <input type="search" id="f-search" class="select grow" placeholder="Szukaj: nazwisko, telefon, e-mail, firma, NIP, KRS" aria-label="Szukaj">
+    <select id="f-status" class="select" aria-label="Status"><option value="">Każdy status</option></select>
+    <select id="f-owner" class="select" aria-label="Agent"><option value="">Każdy agent</option></select>
+    <select id="f-product" class="select" aria-label="Produkt"><option value="">Każdy produkt</option></select>
+    <select id="f-batch" class="select" aria-label="Baza"><option value="">Każda baza</option></select>
+    <button type="button" class="link-btn" id="f-clear">Wyczyść filtry</button>
+</div>
+
+<div class="totals" id="totals" aria-live="polite"></div>
+
+<div class="bulk-bar" id="bulk-bar" hidden>
+    <strong id="bulk-count"></strong>
+    <select id="bulk-agent" class="select" aria-label="Przypisz do"></select>
+    <button type="button" class="btn btn-primary" id="bulk-assign">Przypisz</button>
+    <button type="button" class="btn btn-secondary" id="bulk-pool">Zwróć do puli</button>
+    <button type="button" class="link-btn" id="bulk-clear">Odznacz</button>
+</div>
+
+<div class="card table-card">
+    <div class="table-wrap">
+        <table class="table leads-table" id="leads-table">
+            <thead><tr>
+                <th class="chk"><input type="checkbox" id="check-all" aria-label="Zaznacz wszystkie na stronie"></th>
+                <th data-sort="contact_name">Kontakt</th>
+                <th>Telefon</th>
+                <th data-sort="status">Status</th>
+                <th>Agent</th>
+                <th>Produkt</th>
+                <th data-sort="attempts_count" class="num">Próby</th>
+                <th data-sort="next_contact_at">Następny kontakt</th>
+            </tr></thead>
+            <tbody id="leads-body"></tbody>
+        </table>
+    </div>
+    <div class="pager">
+        <span class="muted" id="pager-info"></span>
+        <div>
+            <button type="button" class="btn btn-secondary" id="prev-page">&larr; Poprzednia</button>
+            <button type="button" class="btn btn-secondary" id="next-page">Następna &rarr;</button>
+        </div>
+    </div>
+</div>
+
+<div class="drawer-back" id="drawer-back" hidden></div>
+<aside class="drawer" id="drawer" aria-label="Szczegóły leada" hidden>
+    <button type="button" class="drawer-close" id="drawer-close" aria-label="Zamknij">&times;</button>
+    <div id="drawer-body"></div>
+</aside>
+
+<dialog id="reassign-dialog" class="dialog">
+    <form method="dialog" id="reassign-form">
+        <h2>Przepisz leady agenta</h2>
+        <p class="muted small">Wszystkie aktywne leady wybranego agenta trafią do drugiego. Historia kontaktów zostaje.</p>
+        <label class="field">Od agenta<select id="re-from" class="select" required></select></label>
+        <label class="field">Do agenta<select id="re-to" class="select" required></select></label>
+        <label class="field">Powód (opcjonalnie)<input id="re-reason" class="select" maxlength="255" placeholder="np. urlop, odejście z zespołu"></label>
+        <p class="form-error" id="re-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="re-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="re-ok">Przepisz</button>
+        </div>
+    </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=17"></script>
+<script>CRM.initManager();</script>{% endblock %}

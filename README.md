@@ -166,6 +166,7 @@ Endpointy poza CRUD (logika biznesowa):
 | Endpoint | Co robi |
 |---|---|
 | `POST /api/leads/next/` | losuje lead z puli i przypisuje zalogowanemu agentowi; opcjonalnie `?batch=<id>`; 404 gdy pula pusta, 409 gdy są zaległe oddzwonienia |
+| `GET /api/agents/` | tylko manager: lista agentów i managerów z liczbą aktywnych i zaległych leadów (do przypisywania i filtrów) |
 | `GET /api/my-leads/` | leady zalogowanego użytkownika |
 | `GET /api/my-leads/due/` | leady do zrobienia: zaległe i z terminem w oknie `?minutes=` (domyślnie 15, max 1440) |
 | `GET /api/my-leads/schedule/` | plan dnia: leady z terminem kontaktu w dniu `?date=RRRR-MM-DD` (domyślnie dziś; na dziś także zaległe), posortowane po godzinie |
@@ -185,8 +186,8 @@ Endpointy managera (agent dostaje 403):
 |---|---|
 | `POST /api/leads/{id}/assign/` | przypisuje leada agentowi (`{"agent": 2}`) albo zwraca go do puli (`{"agent": null}`); zapisuje wpis w historii przypisań |
 | `POST /api/leads/reassign/` | przepisuje wszystkie aktywne leady odchodzącego agenta na innego (`{"from_agent": 1, "to_agent": 2}`) |
-| `GET /api/leads/unreachable/` | pula nieosiągalnych leadów; `?ready=true` tylko te po okresie karencji |
-| `POST /api/leads/recycle-unreachable/` | zwraca nieosiągalne leady po okresie karencji do obiegu (do puli) |
+| `GET /api/leads/unreachable/` | pula nieosiągalnych leadów; `?ready=true` tylko te, które czekają już wymagany czas (domyślnie 30 dni od ostatniej próby) |
+| `POST /api/leads/recycle-unreachable/` | zwraca do puli nieosiągalne leady, które czekają już wymagany czas (domyślnie 30 dni) |
 
 ## Import z Excela
 
@@ -239,8 +240,11 @@ Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szabl
 | `/crm/login/` | logowanie (JWT), rola rozpoznawana przez `GET /api/me/` |
 | `/crm/` | dashboard: statystyki, lejek leadów, rozmowy dzień po dniu, skuteczność agentów (manager) |
 | `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
+| `/crm/manager/` | panel managera: tabela wszystkich leadów, filtry, przypisywanie, przepisywanie, pula nieosiągalnych, eksport |
 
 Funkcje kolejki agenta: przycisk „Daj kolejnego leada”, zapis wyniku z przejściem do następnego leada („Zapisz i weź kolejnego”), skróty klawiszowe (`1`–`5` wybór wyniku, `Enter` / `Ctrl+Enter` zapis) oraz wpisywanie terminu tekstem, np. `jutro 9 55`, `25.10 10 23`, `pon 8`, `za 2h` (rok uzupełnia się sam) albo wybierane z kalendarza. `Esc` (lub ponowne kliknięcie wyniku) czyści formularz i pozwala zacząć od nowa. Motyw jasny / ciemny / auto wybiera się w menu profilu (lewy dolny róg).
+
+Panel managera (`/crm/manager/`, widoczny w menu tylko dla managera): zakładki „Wszystkie”, „Pula” i „Nieosiągalni”, wyszukiwanie (nazwisko, telefon, e-mail, firma, NIP, KRS), filtry (status, agent, produkt, baza), sortowanie po kliknięciu w nagłówek, paginacja, zaznaczanie leadów i masowe przypisywanie do agenta lub zwrot do puli, szczegóły leada z historią kontaktów i opiekunów (panel z prawej strony), przepisanie wszystkich leadów agenta na innego oraz przycisk zwracający do puli nieosiągalne leady po 30 dniach od ostatniej próby. Zakładka „Zaległe” pokazuje aktywne leady z minionym terminem kontaktu (z filtrem agenta, a w liście agentów widać liczbę jego zaległych). Nad tabelą widać liczbę leadów w bazie i liczbę pasujących do filtrów. Przycisk „Eksport do Excela” pobiera leady z aktualnie ustawionymi filtrami.
 
 ## Testy
 
@@ -248,7 +252,7 @@ Funkcje kolejki agenta: przycisk „Daj kolejnego leada”, zapis wyniku z przej
 python manage.py test
 ```
 
-82 testy `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics` oraz import i eksport Excela.
+89 testów `APITestCase` (`crm/tests.py`, `crm/test_frontend.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics`, import i eksport Excela, listę agentów, filtr puli oraz stronę panelu managera.
 
 ## Zrzuty ekranu
 
@@ -269,10 +273,10 @@ config/                      ustawienia i główne trasy
 crm/
   models.py                  modele
   serializers.py             serializery i walidacja
-  views.py                   ViewSety i akcje
+  views.py, filters.py       ViewSety, akcje i filtry
   services.py                logika biznesowa (losowanie leadów, skutki aktywności, cykl życia, statystyki, plan dnia)
   permissions.py, roles.py   role i uprawnienia
-  tests.py                   testy APITestCase
+  tests.py, test_frontend.py testy APITestCase
   management/commands/       setup_roles, seed_demo
   templates/, static/        strona HTML (MVT)
 docs/                        zrzuty ekranu do README
