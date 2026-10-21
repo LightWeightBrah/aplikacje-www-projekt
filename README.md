@@ -230,13 +230,25 @@ Filtrowanie, wyszukiwanie, sortowanie i paginacja (20 na stronę):
 - `GET /api/leads/?search=Alfa` (szuka po kontakcie, telefonie, e-mailu, nazwie firmy, NIP i KRS)
 - `GET /api/leads/?ordering=next_contact_at`
 
+## Interfejs webowy (frontend)
+
+Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szablony Django, własny CSS i zwykły JavaScript (bez Node.js), który korzysta z tego samego API i tokenów JWT. Po `python manage.py runserver` wejdź na `http://127.0.0.1:8000/crm/login/` (konta demo: `agent1`, `agent2`, `manager1`, hasło `demo12345`).
+
+| Adres | Opis |
+|---|---|
+| `/crm/login/` | logowanie (JWT), rola rozpoznawana przez `GET /api/me/` |
+| `/crm/` | dashboard: statystyki, lejek leadów, rozmowy dzień po dniu, skuteczność agentów (manager) |
+| `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
+
+Funkcje kolejki agenta: przycisk „Daj kolejnego leada”, zapis wyniku z przejściem do następnego leada („Zapisz i weź kolejnego”), skróty klawiszowe (`1`–`5` wybór wyniku, `Enter` / `Ctrl+Enter` zapis) oraz wpisywanie terminu tekstem, np. `jutro 9 55`, `25.10 10 23`, `pon 8`, `za 2h` (rok uzupełnia się sam) albo wybierane z kalendarza. `Esc` (lub ponowne kliknięcie wyniku) czyści formularz i pozwala zacząć od nowa. Motyw jasny / ciemny / auto wybiera się w menu profilu (lewy dolny róg).
+
 ## Testy
 
 ```powershell
 python manage.py test
 ```
 
-72 testów `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics` oraz import i eksport Excela.
+82 testy `APITestCase` (`crm/tests.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics` oraz import i eksport Excela.
 
 ## Zrzuty ekranu
 
