@@ -9,8 +9,16 @@ from openpyxl import Workbook, load_workbook
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
-from .roles import AGENT, MANAGER
+from .models import (
+    Activity,
+    AgentProfile,
+    Company,
+    Lead,
+    LeadAssignment,
+    LeadBatch,
+    Product,
+)
+from .roles import AGENT, MANAGER, can_view_team_stats
 from .services import release_stale_leads
 
 
@@ -1207,3 +1215,213 @@ class ExcelExportTests(CrmTestBase):
             self.api(self.no_role).get("/api/leads/export/").status_code,
             status.HTTP_403_FORBIDDEN,
         )
+
+
+class TeamAccessFlagTests(CrmTestBase):
+    """Flaga „może widzieć wyniki innych agentów” (AgentProfile) i jej zmiana przez managera."""
+
+    def patch_flag(self, user, target, value):
+        return self.api(user).patch(
+            f"/api/agents/{target.pk}/", {"can_view_team_stats": value}, format="json"
+        )
+
+    # Bez profilu agent ma dostęp (domyślnie wszyscy widzą ranking)
+    def test_agent_without_profile_can_view_team(self):
+        self.assertTrue(can_view_team_stats(self.agent1))
+
+    # Wyłączony profil blokuje agenta, ale nie managera
+    def test_disabled_profile_blocks_agent_but_not_manager(self):
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        self.assertFalse(can_view_team_stats(self.agent1))
+        self.assertTrue(can_view_team_stats(self.manager))
+
+    # /api/me/ zwraca informację o dostępie do rankingu
+    def test_me_returns_can_view_team(self):
+        response = self.api(self.agent1).get("/api/me/")
+        self.assertTrue(response.data["can_view_team"])
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        response = self.api(self.agent1).get("/api/me/")
+        self.assertFalse(response.data["can_view_team"])
+
+    # Lista agentów (manager) pokazuje flagę
+    def test_agents_list_shows_flag(self):
+        AgentProfile.objects.create(user=self.agent2, can_view_team_stats=False)
+        rows = {r["username"]: r for r in self.api(self.manager).get("/api/agents/").data}
+        self.assertTrue(rows["agent1"]["can_view_team_stats"])
+        self.assertFalse(rows["agent2"]["can_view_team_stats"])
+
+    # Manager wyłącza i włącza podgląd agentowi
+    def test_manager_can_toggle_flag(self):
+        response = self.patch_flag(self.manager, self.agent1, False)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(can_view_team_stats(self.agent1))
+        self.patch_flag(self.manager, self.agent1, True)
+        self.assertTrue(can_view_team_stats(self.agent1))
+        self.assertEqual(AgentProfile.objects.filter(user=self.agent1).count(), 1)
+
+    # Agent nie może zmienić flagi ani sobie, ani innym (403)
+    def test_agent_cannot_change_flag(self):
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        own = self.patch_flag(self.agent1, self.agent1, True)
+        other = self.patch_flag(self.agent1, self.agent2, False)
+        self.assertEqual(own.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(other.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(can_view_team_stats(self.agent1))
+
+    # Bez tokena 401, błędne dane 400, managerowi nie da się wyłączyć podglądu
+    def test_patch_flag_validation(self):
+        self.assertEqual(
+            self.api().patch(f"/api/agents/{self.agent1.pk}/", {}, format="json").status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+        empty = self.api(self.manager).patch(
+            f"/api/agents/{self.agent1.pk}/", {}, format="json"
+        )
+        self.assertEqual(empty.status_code, status.HTTP_400_BAD_REQUEST)
+        other_manager = User.objects.create_user("manager2", password="haslo12345")
+        other_manager.groups.add(Group.objects.get(name=MANAGER))
+        self.assertEqual(
+            self.patch_flag(self.manager, other_manager, False).status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class LeaderboardTests(CrmTestBase):
+    """Ranking agentów, cudze statystyki i blokada 403 ustawiana przez managera."""
+
+    def add_calls(self, agent, outcome, count, created_at=None):
+        lead = self.make_lead(owner=agent)
+        for _ in range(count):
+            activity = Activity.objects.create(lead=lead, agent=agent, outcome=outcome)
+            if created_at:
+                Activity.objects.filter(pk=activity.pk).update(created_at=created_at)
+
+    def ranking(self, user, query=""):
+        return self.api(user).get(f"/api/leaderboard/{query}")
+
+    # Ranking jest posortowany wg sprzedanych, a remis rozstrzyga liczba rozmów
+    def test_ranking_sorted_by_sold_then_calls(self):
+        self.add_calls(self.agent1, Activity.Outcome.SOLD, 1)
+        self.add_calls(self.agent2, Activity.Outcome.SOLD, 1)
+        self.add_calls(self.agent2, Activity.Outcome.NO_ANSWER, 3)
+        response = self.ranking(self.agent1, "?days=1")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.data["results"]
+        self.assertEqual([r["username"] for r in rows], ["agent2", "agent1"])
+        self.assertEqual([r["rank"] for r in rows], [1, 2])
+        self.assertEqual(rows[0]["sold"], 1)
+        self.assertEqual(rows[0]["calls"], 4)
+
+    # Taki sam wynik i liczba rozmów dają to samo miejsce
+    def test_equal_scores_share_rank(self):
+        self.add_calls(self.agent1, Activity.Outcome.SOLD, 1)
+        self.add_calls(self.agent2, Activity.Outcome.SOLD, 1)
+        rows = self.ranking(self.manager, "?days=1").data["results"]
+        self.assertEqual([r["rank"] for r in rows], [1, 1])
+
+    # Własny wiersz jest oznaczony, a managera nie ma w rankingu
+    def test_own_row_marked_and_manager_not_listed(self):
+        rows = self.ranking(self.agent1).data["results"]
+        self.assertEqual({r["username"] for r in rows}, {"agent1", "agent2"})
+        self.assertEqual([r["username"] for r in rows if r["is_me"]], ["agent1"])
+
+    # Ranking można układać wg rozmów i zainteresowanych
+    def test_sort_by_calls_and_interested(self):
+        self.add_calls(self.agent1, Activity.Outcome.INTERESTED, 1)
+        self.add_calls(self.agent2, Activity.Outcome.NO_ANSWER, 5)
+        by_calls = self.ranking(self.manager, "?days=1&sort=calls").data["results"]
+        by_interest = self.ranking(self.manager, "?days=1&sort=interested").data["results"]
+        self.assertEqual(by_calls[0]["username"], "agent2")
+        self.assertEqual(by_interest[0]["username"], "agent1")
+        bad = self.ranking(self.manager, "?sort=pieniadze")
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Okres „dziś” liczy tylko dzisiejsze rozmowy
+    def test_today_period_counts_only_today(self):
+        old = timezone.now() - timedelta(days=3)
+        self.add_calls(self.agent1, Activity.Outcome.SOLD, 2, created_at=old)
+        self.add_calls(self.agent2, Activity.Outcome.SOLD, 1)
+        today = self.ranking(self.manager, "?days=1").data["results"]
+        week = self.ranking(self.manager, "?days=7").data["results"]
+        self.assertEqual({r["username"]: r["sold"] for r in today}, {"agent1": 0, "agent2": 1})
+        self.assertEqual({r["username"]: r["sold"] for r in week}, {"agent1": 2, "agent2": 1})
+
+    # Zakres dat i błędne okresy działają jak w /api/stats/
+    def test_ranking_period_validation(self):
+        today = timezone.localdate().isoformat()
+        ok = self.ranking(self.manager, f"?date_from={today}&date_to={today}")
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+        bad = self.ranking(self.manager, "?days=0")
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Ranking nie zawiera danych klientów ani leadów
+    def test_ranking_has_no_client_data(self):
+        self.add_calls(self.agent2, Activity.Outcome.SOLD, 1, created_at=None)
+        text = str(self.ranking(self.agent1, "?days=1").data)
+        self.assertNotIn("500100200", text)
+        self.assertNotIn("Kowalski", text)
+
+    # Niezalogowany 401, użytkownik bez roli 403
+    def test_ranking_requires_login_and_role(self):
+        self.assertEqual(self.ranking(None).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.ranking(self.no_role).status_code, status.HTTP_403_FORBIDDEN)
+
+    # Agent z wyłączonym podglądem dostaje 403 z czytelnym komunikatem
+    def test_blocked_agent_gets_403_on_ranking(self):
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        response = self.ranking(self.agent1)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("wyłączony przez managera", response.data["detail"])
+        # inny agent i manager nadal widzą ranking
+        self.assertEqual(self.ranking(self.agent2).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.ranking(self.manager).status_code, status.HTTP_200_OK)
+
+    # Zablokowany agent nadal jest widoczny w rankingu u innych
+    def test_blocked_agent_still_listed_for_others(self):
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        rows = self.ranking(self.agent2).data["results"]
+        self.assertIn("agent1", [r["username"] for r in rows])
+
+    # Agent z dostępem widzi liczby innego agenta, ale nie stan jego leadów
+    def test_agent_sees_peer_numbers_without_lead_data(self):
+        self.add_calls(self.agent2, Activity.Outcome.SOLD, 2)
+        response = self.api(self.agent1).get(f"/api/stats/?days=1&agent={self.agent2.pk}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["outcomes"]["sold"], 2)
+        self.assertEqual(response.data["agents"][0]["username"], "agent2")
+        self.assertEqual(response.data["total_leads"], 0)
+        self.assertEqual(sum(response.data["leads_by_status"].values()), 0)
+        self.assertEqual(sum(response.data["scheduled"].values()), 0)
+        self.assertIsNone(response.data["pool_leads"])
+
+    # Agent bez dostępu dostaje 403 na cudze statystyki, ale własne działają
+    def test_blocked_agent_gets_403_on_peer_stats(self):
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        peer = self.api(self.agent1).get(f"/api/stats/?agent={self.agent2.pk}")
+        own = self.api(self.agent1).get(f"/api/stats/?agent={self.agent1.pk}")
+        plain = self.api(self.agent1).get("/api/stats/")
+        self.assertEqual(peer.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(own.status_code, status.HTTP_200_OK)
+        self.assertEqual(plain.status_code, status.HTTP_200_OK)
+
+    # Manager widzi pełne statystyki wskazanego agenta; zły parametr to 400/404
+    def test_manager_stats_for_agent_and_bad_param(self):
+        self.make_lead(owner=self.agent2)
+        response = self.api(self.manager).get(f"/api/stats/?agent={self.agent2.pk}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_leads"], 1)
+        bad = self.api(self.manager).get("/api/stats/?agent=abc")
+        missing = self.api(self.manager).get("/api/stats/?agent=99999")
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(missing.status_code, status.HTTP_404_NOT_FOUND)
+
+    # Po włączeniu podglądu przez managera agent znowu widzi ranking
+    def test_manager_unblocking_restores_access(self):
+        self.api(self.manager).patch(
+            f"/api/agents/{self.agent1.pk}/", {"can_view_team_stats": False}, format="json"
+        )
+        self.assertEqual(self.ranking(self.agent1).status_code, status.HTTP_403_FORBIDDEN)
+        self.api(self.manager).patch(
+            f"/api/agents/{self.agent1.pk}/", {"can_view_team_stats": True}, format="json"
+        )
+        self.assertEqual(self.ranking(self.agent1).status_code, status.HTTP_200_OK)

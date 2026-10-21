@@ -217,3 +217,25 @@ class LeadAssignment(models.Model):
 
     def __str__(self):
         return f"{self.lead}: {self.from_agent} -> {self.to_agent}"
+
+
+class AgentProfile(models.Model):
+    """Ustawienia agenta nadawane przez managera (na razie: podgląd wyników zespołu)."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="agent_profile",
+    )
+    can_view_team_stats = models.BooleanField(
+        "może widzieć wyniki innych agentów",
+        default=True,
+        help_text="Odznacz, aby ukryć ranking i statystyki innych agentów przed tym agentem.",
+    )
+
+    class Meta:
+        verbose_name = "Profil agenta"
+        verbose_name_plural = "Profile agentów"
+
+    def __str__(self):
+        return f"Profil: {self.user}"

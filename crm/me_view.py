@@ -2,7 +2,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .roles import is_agent, is_manager
+from .roles import can_view_team_stats, is_agent, is_manager
 
 
 class MeView(APIView):
@@ -24,5 +24,6 @@ class MeView(APIView):
                 "username": user.username,
                 "full_name": user.get_full_name() or user.username,
                 "role": role,
+                "can_view_team": can_view_team_stats(user),
             }
         )

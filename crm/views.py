@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .excel import (
     XLSX_CONTENT_TYPE,
@@ -18,16 +19,25 @@ from .excel import (
     leads_to_xlsx,
 )
 from .filters import LeadFilter
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
+from .models import (
+    Activity,
+    AgentProfile,
+    Company,
+    Lead,
+    LeadAssignment,
+    LeadBatch,
+    Product,
+)
 from .permissions import (
     IsAgentOrManager,
     IsLeadOwnerOrManager,
     IsManager,
     IsManagerOrReadOnly,
 )
-from .roles import is_manager, visible_to
+from .roles import can_view_team_stats, is_manager, visible_to
 from .serializers import (
     ActivitySerializer,
+    AgentAccessSerializer,
     AgentSerializer,
     AssignLeadSerializer,
     ImportLeadsSerializer,
@@ -37,6 +47,7 @@ from .serializers import (
     LeadAssignmentSerializer,
     LeadBatchSerializer,
     LeadDetailSerializer,
+    LeaderboardSerializer,
     LeadSerializer,
     ProductSerializer,
     ReassignLeadsSerializer,
@@ -52,7 +63,9 @@ from .services import (
     OverdueCallbacks,
     claim_next_lead,
     assign_lead,
+    LEADERBOARD_SORT_KEYS,
     build_stats,
+    leaderboard,
     with_transfer_info,
     calendar_ics,
     calendar_leads,
@@ -276,7 +289,10 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
 
 
 class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    """Manager: lista agentów i managerów (do przypisywania leadów i filtrów)."""
+    """Manager: lista agentów i managerów (do przypisywania leadów i filtrów).
+
+    `PATCH /api/agents/{id}/` pozwala włączyć lub wyłączyć agentowi podgląd wyników innych.
+    """
 
     serializer_class = AgentSerializer
     permission_classes = [IsManager]
@@ -293,6 +309,11 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             active_leads=Count("leads", filter=active, distinct=True),
             overdue_leads=Count("leads", filter=overdue, distinct=True),
         )
+        blocked = set(
+            AgentProfile.objects.filter(can_view_team_stats=False).values_list(
+                "user_id", flat=True
+            )
+        )
         rows = [
             {
                 "id": u.pk,
@@ -301,10 +322,32 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 "role": "manager" if is_manager(u) else "agent",
                 "active_leads": u.active_leads,
                 "overdue_leads": u.overdue_leads,
+                "can_view_team_stats": u.pk not in blocked,
             }
             for u in users.order_by("username")
         ]
         return Response(AgentSerializer(rows, many=True).data)
+
+    @extend_schema(request=AgentAccessSerializer, responses=AgentAccessSerializer)
+    def partial_update(self, request, pk=None):
+        """Manager włącza lub wyłącza agentowi podgląd wyników innych agentów."""
+        agent = self.get_object()
+        if is_manager(agent):
+            return Response(
+                {"detail": "Manager zawsze widzi wyniki zespołu."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = AgentAccessSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        AgentProfile.objects.update_or_create(
+            user=agent,
+            defaults={
+                "can_view_team_stats": serializer.validated_data["can_view_team_stats"]
+            },
+        )
+        return Response(
+            {"can_view_team_stats": serializer.validated_data["can_view_team_stats"]}
+        )
 
 
 class ActivityViewSet(
@@ -420,58 +463,145 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         return response
 
 
+TEAM_STATS_DISABLED = "Podgląd wyników innych agentów jest wyłączony przez managera."
+
+PERIOD_PARAMETERS = [
+    OpenApiParameter("days", int, description="Okno w dniach (domyślnie 7, 1-365)"),
+    OpenApiParameter(
+        "date_from", OpenApiTypes.DATE, description="Początek zakresu (RRRR-MM-DD), razem z date_to"
+    ),
+    OpenApiParameter(
+        "date_to", OpenApiTypes.DATE, description="Koniec zakresu włącznie (RRRR-MM-DD)"
+    ),
+]
+
+
+def parse_period(params):
+    """Okres z parametrów zapytania: (date_from, date_to, błąd). Błąd to gotowa odpowiedź 400."""
+    if "date_from" in params or "date_to" in params:
+        try:
+            date_from = date.fromisoformat(params.get("date_from", ""))
+            date_to = date.fromisoformat(params.get("date_to", ""))
+        except ValueError:
+            return None, None, Response(
+                {"detail": "Podaj obie daty w formacie RRRR-MM-DD (date_from i date_to)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if date_from > date_to:
+            return None, None, Response(
+                {"detail": "Data początkowa nie może być późniejsza niż końcowa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if (date_to - date_from).days + 1 > 365:
+            return None, None, Response(
+                {"detail": "Zakres może mieć maksymalnie 365 dni."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return date_from, date_to, None
+    raw = params.get("days", "7")
+    if not raw.isdigit() or not 1 <= int(raw) <= 365:
+        return None, None, Response(
+            {"detail": "Parametr days musi być liczbą od 1 do 365."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    date_to = timezone.localdate()
+    return date_to - timedelta(days=int(raw) - 1), date_to, None
+
+
 class StatsViewSet(viewsets.ViewSet):
-    """Statystyki: manager widzi cały zespół, agent tylko własne wyniki."""
+    """Statystyki: manager widzi cały zespół, agent własne wyniki (i cudze, jeśli wolno)."""
 
     permission_classes = [IsAgentOrManager]
 
     @extend_schema(
         responses=StatsSerializer,
-        parameters=[
+        parameters=PERIOD_PARAMETERS
+        + [
             OpenApiParameter(
-                "days", int, description="Okno w dniach dla rozmów (domyślnie 7, 1-365)"
-            ),
-            OpenApiParameter(
-                "date_from", OpenApiTypes.DATE, description="Początek zakresu (RRRR-MM-DD), razem z date_to"
-            ),
-            OpenApiParameter(
-                "date_to", OpenApiTypes.DATE, description="Koniec zakresu włącznie (RRRR-MM-DD)"
-            ),
+                "agent",
+                int,
+                description=(
+                    "Id agenta, którego wyniki chcesz zobaczyć (tylko liczby, bez leadów). "
+                    "Agent może to robić, dopóki manager mu nie wyłączy podglądu (403)."
+                ),
+            )
         ],
     )
     def list(self, request):
         """Lejek leadów, skuteczność agentów i rozmowy dzień po dniu.
 
         Okres: `days` (ostatnie N dni) albo zakres `date_from` + `date_to` (do 365 dni).
+        `?agent=ID` zwraca wyniki wskazanego agenta (bez jego leadów i bez puli).
         """
-        params = request.query_params
+        date_from, date_to, error = parse_period(request.query_params)
+        if error:
+            return error
         manager = is_manager(request.user)
-        if "date_from" in params or "date_to" in params:
-            try:
-                date_from = date.fromisoformat(params.get("date_from", ""))
-                date_to = date.fromisoformat(params.get("date_to", ""))
-            except ValueError:
-                return Response(
-                    {"detail": "Podaj obie daty w formacie RRRR-MM-DD (date_from i date_to)."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if date_from > date_to:
-                return Response(
-                    {"detail": "Data początkowa nie może być późniejsza niż końcowa."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if (date_to - date_from).days + 1 > 365:
-                return Response(
-                    {"detail": "Zakres może mieć maksymalnie 365 dni."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+
+        raw_agent = request.query_params.get("agent")
+        if raw_agent is None or raw_agent == str(request.user.pk):
             data = build_stats(request.user, 0, manager, date_from, date_to)
-        else:
-            raw = params.get("days", "7")
-            if not raw.isdigit() or not 1 <= int(raw) <= 365:
-                return Response(
-                    {"detail": "Parametr days musi być liczbą od 1 do 365."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            data = build_stats(request.user, int(raw), manager)
+            return Response(StatsSerializer(data).data)
+
+        if not raw_agent.isdigit():
+            return Response(
+                {"detail": "Parametr agent musi być numerem id agenta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not can_view_team_stats(request.user):
+            raise PermissionDenied(TEAM_STATS_DISABLED)
+        target = assignable_users().filter(pk=int(raw_agent)).first()
+        if target is None:
+            return Response(
+                {"detail": "Nie ma takiego agenta."}, status=status.HTTP_404_NOT_FOUND
+            )
+        data = build_stats(target, 0, False, date_from, date_to)
+        if not manager:
+            # Agent widzi cudze liczby rozmów, ale nie stan leadów i terminów innego agenta.
+            data["total_leads"] = 0
+            data["leads_by_status"] = {code: 0 for code in data["leads_by_status"]}
+            data["scheduled"] = {key: 0 for key in data["scheduled"]}
+            for row in data["agents"]:
+                row["leads_total"] = row["leads_active"] = row["leads_won"] = 0
         return Response(StatsSerializer(data).data)
+
+
+@extend_schema(
+    responses=LeaderboardSerializer,
+    parameters=PERIOD_PARAMETERS
+    + [
+        OpenApiParameter(
+            "sort",
+            str,
+            enum=list(LEADERBOARD_SORT_KEYS),
+            description="Wg czego układać ranking: sold (domyślnie), calls, interested",
+        )
+    ],
+)
+class LeaderboardView(APIView):
+    """Ranking agentów (tylko liczby wyników). Agent z wyłączonym podglądem dostaje 403."""
+
+    permission_classes = [IsAgentOrManager]
+
+    def get(self, request):
+        return leaderboard_response(request)
+
+
+def leaderboard_response(request):
+    if not can_view_team_stats(request.user):
+        raise PermissionDenied(TEAM_STATS_DISABLED)
+    date_from, date_to, error = parse_period(request.query_params)
+    if error:
+        return error
+    sort = request.query_params.get("sort", "sold")
+    if sort not in LEADERBOARD_SORT_KEYS:
+        return Response(
+            {"detail": "Parametr sort musi mieć wartość: sold, calls lub interested."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    rows = leaderboard(date_from, date_to, sort, me_id=request.user.pk)
+    return Response(
+        LeaderboardSerializer(
+            {"date_from": date_from, "date_to": date_to, "sort": sort, "results": rows}
+        ).data
+    )

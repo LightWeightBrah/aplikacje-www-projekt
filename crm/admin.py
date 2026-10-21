@@ -1,6 +1,16 @@
 from django.contrib import admin
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin
 
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
+from .models import (
+    Activity,
+    AgentProfile,
+    Company,
+    Lead,
+    LeadAssignment,
+    LeadBatch,
+    Product,
+)
 
 
 class ActivityInline(admin.TabularInline):
@@ -56,3 +66,18 @@ class ActivityAdmin(admin.ModelAdmin):
 class LeadAssignmentAdmin(admin.ModelAdmin):
     list_display = ("lead", "from_agent", "to_agent", "reason", "assigned_at")
     list_filter = ("to_agent",)
+
+
+class AgentProfileInline(admin.StackedInline):
+    model = AgentProfile
+    can_delete = False
+
+
+class UserWithProfileAdmin(UserAdmin):
+    """Zwykły panel użytkownika z dodatkowym polem „może widzieć wyniki innych agentów”."""
+
+    inlines = [AgentProfileInline]
+
+
+admin.site.unregister(get_user_model())
+admin.site.register(get_user_model(), UserWithProfileAdmin)

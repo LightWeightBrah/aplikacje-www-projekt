@@ -21,3 +21,19 @@ def visible_to(user, queryset, owner_lookup="owner"):
     if not user.is_authenticated:
         return queryset.none()
     return queryset.filter(**{owner_lookup: user})
+
+
+def can_view_team_stats(user):
+    """Czy użytkownik może oglądać ranking i wyniki innych agentów.
+
+    Manager zawsze może. Agent może, dopóki manager mu tego nie wyłączy;
+    brak profilu oznacza zgodę (domyślnie wszyscy widzą ranking).
+    """
+    if not user.is_authenticated:
+        return False
+    if is_manager(user):
+        return True
+    from .models import AgentProfile
+
+    profile = AgentProfile.objects.filter(user=user).first()
+    return profile is None or profile.can_view_team_stats

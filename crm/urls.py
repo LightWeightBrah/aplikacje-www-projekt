@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from . import views
@@ -13,4 +14,7 @@ router.register("assignments", views.LeadAssignmentViewSet)
 router.register("agents", views.AgentViewSet, basename="agent")
 router.register("stats", views.StatsViewSet, basename="stats")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("leaderboard/", views.LeaderboardView.as_view(), name="leaderboard"),
+    *router.urls,
+]

@@ -167,6 +167,13 @@ class AgentSerializer(serializers.Serializer):
     role = serializers.CharField()
     active_leads = serializers.IntegerField()
     overdue_leads = serializers.IntegerField()
+    can_view_team_stats = serializers.BooleanField()
+
+
+class AgentAccessSerializer(serializers.Serializer):
+    """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager)."""
+
+    can_view_team_stats = serializers.BooleanField()
 
 
 class DueLeadsSerializer(serializers.Serializer):
@@ -295,3 +302,25 @@ class ImportResultSerializer(serializers.Serializer):
     created = serializers.IntegerField()
     duplicates = ImportIssueSerializer(many=True)
     errors = ImportIssueSerializer(many=True)
+
+
+class LeaderboardRowSerializer(serializers.Serializer):
+    rank = serializers.IntegerField()
+    agent = serializers.IntegerField()
+    username = serializers.CharField()
+    full_name = serializers.CharField()
+    sold = serializers.IntegerField()
+    calls = serializers.IntegerField()
+    answered = serializers.IntegerField()
+    interested = serializers.IntegerField()
+    answer_rate = serializers.FloatField(allow_null=True)
+    is_me = serializers.BooleanField()
+
+
+class LeaderboardSerializer(serializers.Serializer):
+    """Opis odpowiedzi /api/leaderboard/ (ranking agentów w wybranym okresie)."""
+
+    date_from = serializers.DateField()
+    date_to = serializers.DateField()
+    sort = serializers.CharField()
+    results = LeaderboardRowSerializer(many=True)

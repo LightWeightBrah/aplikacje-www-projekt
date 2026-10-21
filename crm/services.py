@@ -650,3 +650,44 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
         # rozbicie na godziny tylko dla okresu jednodniowego (np. "Dziś")
         "hourly_calls": hourly_calls(date_from, agent_ids) if date_from == date_to else [],
     }
+
+
+LEADERBOARD_SORT_KEYS = ("sold", "calls", "interested")
+
+
+def leaderboard(date_from, date_to, sort="sold", me_id=None):
+    """Ranking agentów w okresie: tylko liczby wyników, bez żadnych danych klientów.
+
+    Sortowanie malejąco wg `sort` (sold / calls / interested), remis rozstrzyga liczba
+    rozmów. Agenci z takim samym wynikiem i taką samą liczbą rozmów mają to samo miejsce.
+    """
+    since, _ = day_bounds(date_from)
+    _, until = day_bounds(date_to)
+    users = list(
+        get_user_model()
+        .objects.filter(is_active=True, groups__name=AGENT)
+        .distinct()
+        .order_by("username")
+    )
+    rows = [
+        {
+            "agent": row["agent"],
+            "username": row["username"],
+            "full_name": user.get_full_name() or user.username,
+            "sold": row["sold"],
+            "calls": row["calls"],
+            "answered": row["answered"],
+            "interested": row["interested"],
+            "answer_rate": row["answer_rate"],
+            "is_me": row["agent"] == me_id,
+        }
+        for user, row in zip(users, agent_stats(users, since, until))
+    ]
+    rows.sort(key=lambda r: (-r[sort], -r["calls"], r["username"]))
+    previous, rank = None, 0
+    for position, row in enumerate(rows, start=1):
+        score = (row[sort], row["calls"])
+        if score != previous:
+            rank, previous = position, score
+        row["rank"] = rank
+    return rows
