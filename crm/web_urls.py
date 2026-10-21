@@ -9,6 +9,7 @@ urlpatterns = [
     path("queue/", web_views.queue_page, name="queue"),
     path("login/", web_views.login_page, name="login"),
     path("manager/", web_views.manager_page, name="manager"),
+    path("ranking/", web_views.ranking_page, name="ranking"),
     path("import/", web_views.import_page, name="import"),
     path("leads/", web_views.lead_list, name="lead-list"),
 ]

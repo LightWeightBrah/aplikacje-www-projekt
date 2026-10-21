@@ -139,7 +139,20 @@ const CRM = (() => {
     $("user-role").textContent = ROLE[user.role] || "";
     $("user-avatar").textContent = user.full_name.charAt(0).toUpperCase();
     document.querySelectorAll("[data-manager-only]").forEach((el) => { el.hidden = user.role !== "manager"; });
+    applyTeamAccess(user);
     initUserMenu(user);
+    /* Manager mógł zmienić uprawnienia od logowania, więc odświeżamy je z /api/me/. */
+    api("/api/me/").then((r) => (r.ok ? r.json() : null)).then((me) => {
+      if (!me || me.role === "none") return;
+      store.set("crm_user", JSON.stringify({ ...user, can_view_team: me.can_view_team }));
+      applyTeamAccess(me);
+    }).catch(() => { /* zostaje zapamiętana wartość */ });
+  }
+
+  /* Pozycja "Ranking" w menu: manager zawsze, agent dopóki manager nie wyłączył mu podglądu. */
+  function applyTeamAccess(user) {
+    const allowed = user.role === "manager" || user.can_view_team !== false;
+    document.querySelectorAll("[data-team-only]").forEach((el) => { el.hidden = !allowed; });
   }
 
   const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");

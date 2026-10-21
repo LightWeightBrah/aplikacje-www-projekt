@@ -1,0 +1,53 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Ranking – LeadCRM{% endblock %}
+{% block nav_ranking %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Ranking zespołu</h1>
+        <p class="muted" id="subtitle">Ładowanie danych…</p>
+    </div>
+    <div class="period">
+        <select id="days" class="select" aria-label="Okres">
+            <option value="1" selected>Dziś</option>
+            <option value="7">Ostatnie 7 dni</option>
+            <option value="30">Ostatnie 30 dni</option>
+            <option value="90">Ostatnie 90 dni</option>
+            <option value="custom">Własny zakres…</option>
+        </select>
+        <span class="range" id="range" hidden>
+            <input type="date" id="date-from" class="select" aria-label="Od dnia">
+            <span class="muted">–</span>
+            <input type="date" id="date-to" class="select" aria-label="Do dnia">
+        </span>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="locked" class="card locked-card" hidden>
+    <strong>Ranking jest dla Ciebie wyłączony</strong>
+    <p class="muted" id="locked-msg">Podgląd wyników innych agentów jest wyłączony przez managera.</p>
+</div>
+
+<div id="ranking-area">
+    <div class="tabs" id="tabs" role="tablist">
+        <button type="button" role="tab" data-sort="sold" aria-selected="true">Sprzedane</button>
+        <button type="button" role="tab" data-sort="calls" aria-selected="false">Rozmowy</button>
+        <button type="button" role="tab" data-sort="interested" aria-selected="false">Zainteresowani</button>
+    </div>
+    <section class="card">
+        <p class="champion" id="champion" aria-live="polite"></p>
+        <div class="table-wrap"><table class="table rank-table" id="rank-table"></table></div>
+        <p class="card-desc rank-note">Ranking pokazuje tylko liczby wyników. Przy remisie wyżej jest osoba z większą liczbą rozmów.</p>
+    </section>
+</div>
+
+<section class="card" id="access-card" hidden>
+    <h2>Kto może widzieć wyniki innych</h2>
+    <p class="card-desc">Wyłącz podgląd np. nowym agentom, żeby nie porównywali się od razu z doświadczonymi. Wyłączony agent nadal widzi własne wyniki, a inni nadal widzą jego w rankingu.</p>
+    <div id="access-list"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=24"></script>
+<script>CRM.initRanking();</script>{% endblock %}

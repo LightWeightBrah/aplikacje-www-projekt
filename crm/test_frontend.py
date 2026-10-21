@@ -229,3 +229,26 @@ class TransferInfoTests(CrmTestBase):
         )
         row = self.api(self.agent1).get("/api/my-leads/").data["results"][0]
         self.assertIsNone(row["transferred_from"])
+
+
+class RankingPageTests(CrmTestBase):
+    def test_ranking_page_renders(self):
+        r = self.client.get("/crm/ranking/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, 'id="rank-table"')
+        self.assertContains(r, 'id="access-card"')
+        self.assertContains(r, "CRM.initRanking")
+        self.assertContains(r, '<option value="1" selected>Dziś</option>')
+
+    def test_menu_has_ranking_link_hidden_for_blocked_agents(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/ranking/"')
+        self.assertContains(r, "data-team-only")
+
+    def test_blocked_agent_gets_403_from_api_used_by_page(self):
+        from .models import AgentProfile
+
+        AgentProfile.objects.create(user=self.agent1, can_view_team_stats=False)
+        r = self.api(self.agent1).get("/api/leaderboard/?days=1")
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.api(self.agent2).get("/api/leaderboard/?days=1").status_code, 200)

@@ -1,12 +1,22 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from crm.models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
+from crm.models import (
+    Activity,
+    AgentProfile,
+    Company,
+    Lead,
+    LeadAssignment,
+    LeadBatch,
+    Product,
+)
+from crm.roles import AGENT
 from crm.services import register_activity
 
 BATCH_NAME = "Demo - baza startowa"
@@ -150,6 +160,25 @@ class Command(BaseCommand):
             lead, agent2, Activity.Outcome.INTERESTED, "Prosi o ofertę na maila"
         )
 
+        # Dzisiejsze sprzedaże, żeby ranking "Dziś" nie był pusty na pokazie.
+        for owner, names in (
+            (agent1, ("Julia Adamska", "Kamil Borkowski")),
+            (agent2, ("Lena Czerwińska",)),
+        ):
+            for contact_name in names:
+                lead = new_lead(contact_name, owner=owner)
+                register_activity(lead, owner, Activity.Outcome.SOLD, "Podpisana umowa")
+
+        # Nowy agent z wyłączonym podglądem rankingu (pokaz blokady 403).
+        agent3, created = User.objects.get_or_create(username="agent3")
+        if created:
+            agent3.set_password("demo12345")
+            agent3.save()
+        agent3.groups.add(Group.objects.get(name=AGENT))
+        AgentProfile.objects.update_or_create(
+            user=agent3, defaults={"can_view_team_stats": False}
+        )
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Gotowe: {batch.leads.count()} leadów w bazie '{BATCH_NAME}'."
@@ -160,4 +189,7 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             "agent2 ma zaległe oddzwonienie, więc POST /api/leads/next/ zwróci mu 409."
+        )
+        self.stdout.write(
+            "agent3 ma wyłączony podgląd rankingu: GET /api/leaderboard/ zwróci mu 403."
         )

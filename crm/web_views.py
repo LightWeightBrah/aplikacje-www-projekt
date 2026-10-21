@@ -37,3 +37,8 @@ def manager_page(request):
 def import_page(request):
     """Szkielet strony importu i eksportu Excela (tylko manager). Dane idą przez API."""
     return render(request, "crm/import.html")
+
+
+def ranking_page(request):
+    """Szkielet rankingu zespołu. Dane idą z /api/leaderboard/ (403, gdy manager wyłączył podgląd)."""
+    return render(request, "crm/ranking.html")
