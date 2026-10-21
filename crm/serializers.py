@@ -224,6 +224,10 @@ class AgentStatsSerializer(serializers.Serializer):
     answered = serializers.IntegerField()
     interested = serializers.IntegerField()
     refused = serializers.IntegerField()
+    sold = serializers.IntegerField()
+    no_answer = serializers.IntegerField()
+    callbacks = serializers.IntegerField()
+    wrong_number = serializers.IntegerField()
     answer_rate = serializers.FloatField(allow_null=True)
     interest_rate = serializers.FloatField(allow_null=True)
 
@@ -233,15 +237,25 @@ class DailyCallsSerializer(serializers.Serializer):
     calls = serializers.IntegerField()
 
 
+class HourlyCallsSerializer(serializers.Serializer):
+    hour = serializers.IntegerField()
+    calls = serializers.IntegerField()
+
+
 class StatsSerializer(serializers.Serializer):
     """Opis odpowiedzi /api/stats/ (lejek, skuteczność agentów, rozmowy dzień po dniu)."""
 
     days = serializers.IntegerField()
+    date_from = serializers.DateField()
+    date_to = serializers.DateField()
     total_leads = serializers.IntegerField()
     pool_leads = serializers.IntegerField(allow_null=True)
     leads_by_status = serializers.DictField(child=serializers.IntegerField())
+    outcomes = serializers.DictField(child=serializers.IntegerField())
+    scheduled = serializers.DictField(child=serializers.IntegerField())
     agents = AgentStatsSerializer(many=True)
     daily_calls = DailyCallsSerializer(many=True)
+    hourly_calls = HourlyCallsSerializer(many=True)
 
 
 class ImportLeadsSerializer(serializers.Serializer):

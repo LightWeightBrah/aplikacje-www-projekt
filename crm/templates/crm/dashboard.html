@@ -7,20 +7,36 @@
         <h1 id="greeting">Dashboard</h1>
         <p class="muted" id="subtitle">Ładowanie danych…</p>
     </div>
-    <select id="days" class="select" aria-label="Okres">
-        <option value="7">Ostatnie 7 dni</option>
-        <option value="30">Ostatnie 30 dni</option>
-        <option value="90">Ostatnie 90 dni</option>
-    </select>
+    <div class="period">
+        <select id="days" class="select" aria-label="Okres">
+            <option value="1" selected>Dziś</option>
+            <option value="7">Ostatnie 7 dni</option>
+            <option value="30">Ostatnie 30 dni</option>
+            <option value="90">Ostatnie 90 dni</option>
+            <option value="custom">Własny zakres…</option>
+        </select>
+        <span class="range" id="range" hidden>
+            <input type="date" id="date-from" class="select" aria-label="Od dnia">
+            <span class="muted">–</span>
+            <input type="date" id="date-to" class="select" aria-label="Do dnia">
+        </span>
+    </div>
 </header>
 <p id="page-error" class="form-error" hidden></p>
 <section class="kpis" id="kpis"></section>
+<section class="grid-2 wide-first">
+    <div class="card"><h2>Wyniki rozmów <small class="muted" id="outcomes-period"></small></h2>
+        <p class="card-desc">Czym zakończyło się każde zadzwonienie w wybranym okresie. Do jednego klienta można dzwonić kilka razy – każda rozmowa liczy się osobno.</p><div id="outcomes"></div></div>
+    <div class="card"><h2>Zaplanowane kontakty <small class="muted">stan na teraz</small></h2>
+        <p class="card-desc">Kiedy masz zadzwonić do klientów, z którymi umówiono kolejny kontakt.</p><div id="scheduled"></div></div>
+</section>
 <section class="grid-2">
-    <div class="card"><h2>Lejek leadów</h2><div id="funnel"></div></div>
-    <div class="card"><h2>Rozmowy dzień po dniu</h2><div id="daily" class="bars"></div></div>
+    <div class="card"><h2><span id="funnel-title">Moi klienci</span> <small class="muted">stan na teraz</small></h2>
+        <p class="card-desc">Ilu klientów ma dziś dany status. Każdy klient liczy się raz, niezależnie od wybranego okresu i liczby rozmów.</p><div id="funnel"></div></div>
+    <div class="card"><h2 id="daily-title">Rozmowy dzień po dniu</h2><div id="daily" class="bars"></div></div>
 </section>
 <section class="card" id="agents-card" hidden>
-    <h2>Skuteczność agentów</h2>
+    <h2>Wyniki agentów <small class="muted" id="agents-period"></small></h2>
     <div class="table-wrap"><table class="table" id="agents"></table></div>
 </section>
 {% endblock %}

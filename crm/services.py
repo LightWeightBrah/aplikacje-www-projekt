@@ -10,7 +10,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from rest_framework.renderers import BaseRenderer
 
@@ -30,12 +30,13 @@ ACTIVE_STATUSES = (
 OUTCOME_TO_STATUS = {
     Activity.Outcome.CALLBACK: Lead.Status.CALLBACK,
     Activity.Outcome.INTERESTED: Lead.Status.INTERESTED,
+    Activity.Outcome.SOLD: Lead.Status.WON,
     Activity.Outcome.REFUSED: Lead.Status.LOST,
     Activity.Outcome.WRONG_NUMBER: Lead.Status.DO_NOT_CALL,
 }
 
 # Zamknięte leady nie mają już kolejnego kroku
-CLOSED_STATUSES = (Lead.Status.LOST, Lead.Status.DO_NOT_CALL)
+CLOSED_STATUSES = (Lead.Status.WON, Lead.Status.LOST, Lead.Status.DO_NOT_CALL)
 
 CLAIM_ATTEMPTS = 5  # tyle razy próbujemy, gdy ktoś inny zdąży przejąć wylosowany lead
 
@@ -455,13 +456,16 @@ def lead_funnel(leads):
     return {code: counts.get(code, 0) for code, _ in Lead.Status.choices}
 
 
-def agent_stats(users, since):
-    """Skuteczność agentów: rozmowy od `since` oraz bieżący stan ich leadów."""
+def agent_stats(users, since, until=None):
+    """Skuteczność agentów: rozmowy od `since` (do `until`, bez niego) oraz bieżący stan ich leadów."""
     ids = [user.pk for user in users]
     Outcome = Activity.Outcome
 
+    in_range = Activity.objects.filter(agent__in=ids, created_at__gte=since)
+    if until is not None:
+        in_range = in_range.filter(created_at__lt=until)
     activity_rows = (
-        Activity.objects.filter(agent__in=ids, created_at__gte=since)
+        in_range
         .order_by()
         .values("agent")
         .annotate(
@@ -471,6 +475,10 @@ def agent_stats(users, since):
             ),
             interested=Count("id", filter=Q(outcome=Outcome.INTERESTED)),
             refused=Count("id", filter=Q(outcome=Outcome.REFUSED)),
+            sold=Count("id", filter=Q(outcome=Outcome.SOLD)),
+            no_answer=Count("id", filter=Q(outcome=Outcome.NO_ANSWER)),
+            callbacks=Count("id", filter=Q(outcome=Outcome.CALLBACK)),
+            wrong_number=Count("id", filter=Q(outcome=Outcome.WRONG_NUMBER)),
         )
     )
     activity = {row["agent"]: row for row in activity_rows}
@@ -507,6 +515,10 @@ def agent_stats(users, since):
                 "answered": answered,
                 "interested": interested,
                 "refused": a.get("refused", 0),
+                "sold": a.get("sold", 0),
+                "no_answer": a.get("no_answer", 0),
+                "callbacks": a.get("callbacks", 0),
+                "wrong_number": a.get("wrong_number", 0),
                 "answer_rate": _ratio(answered, calls),
                 "interest_rate": _ratio(interested, answered),
             }
@@ -514,13 +526,12 @@ def agent_stats(users, since):
     return result
 
 
-def daily_calls(days, agent_ids=None):
-    """Liczba rozmów (bez notatek) w każdym z ostatnich `days` dni, także z zerami."""
-    today = timezone.localdate()
-    first = today - timedelta(days=days - 1)
+def daily_calls(first, last, agent_ids=None):
+    """Liczba rozmów (bez notatek) w każdym dniu od `first` do `last` włącznie, także z zerami."""
     since, _ = day_bounds(first)
+    _, until = day_bounds(last)
 
-    queryset = Activity.objects.filter(created_at__gte=since).exclude(
+    queryset = Activity.objects.filter(created_at__gte=since, created_at__lt=until).exclude(
         outcome=Activity.Outcome.NOTE
     )
     if agent_ids is not None:
@@ -532,21 +543,81 @@ def daily_calls(days, agent_ids=None):
         .annotate(n=Count("id"))
     )
     counts = {row["day"]: row["n"] for row in rows}
+    total_days = (last - first).days + 1
     return [
         {"date": first + timedelta(days=i), "calls": counts.get(first + timedelta(days=i), 0)}
-        for i in range(days)
+        for i in range(total_days)
     ]
 
 
-def build_stats(user, days, manager):
-    """Statystyki: manager widzi cały zespół, agent tylko siebie."""
-    since, _ = day_bounds(timezone.localdate() - timedelta(days=days - 1))
+def hourly_calls(day, agent_ids=None):
+    """Liczba rozmów (bez notatek) w każdej godzinie (0-23) wskazanego dnia, także z zerami."""
+    since, until = day_bounds(day)
+    queryset = Activity.objects.filter(created_at__gte=since, created_at__lt=until).exclude(
+        outcome=Activity.Outcome.NOTE
+    )
+    if agent_ids is not None:
+        queryset = queryset.filter(agent__in=agent_ids)
+    rows = (
+        queryset.order_by()
+        .annotate(hour=TruncHour("created_at"))
+        .values("hour")
+        .annotate(n=Count("id"))
+    )
+    counts = {}
+    for row in rows:
+        local_hour = timezone.localtime(row["hour"]).hour
+        counts[local_hour] = counts.get(local_hour, 0) + row["n"]
+    return [{"hour": h, "calls": counts.get(h, 0)} for h in range(24)]
+
+
+def outcome_counts(since, until, agent_ids=None):
+    """Ile razy wystąpił każdy wynik rozmowy w okresie (także zera i notatki)."""
+    queryset = Activity.objects.filter(created_at__gte=since, created_at__lt=until)
+    if agent_ids is not None:
+        queryset = queryset.filter(agent__in=agent_ids)
+    counts = dict(queryset.order_by().values_list("outcome").annotate(n=Count("id")))
+    return {code: counts.get(code, 0) for code, _ in Activity.Outcome.choices}
+
+
+def scheduled_counts(leads):
+    """Aktywne leady z wyznaczonym terminem kontaktu: zaległe, na dziś, jutro i później.
+
+    To stan na teraz (nie zależy od wybranego okresu).
+    """
+    now = timezone.now()
+    today = timezone.localdate()
+    _, end_today = day_bounds(today)
+    _, end_tomorrow = day_bounds(today + timedelta(days=1))
+    planned = leads.filter(status__in=ACTIVE_STATUSES, next_contact_at__isnull=False)
+    return {
+        "overdue": planned.filter(next_contact_at__lt=now).count(),
+        "today": planned.filter(next_contact_at__gte=now, next_contact_at__lt=end_today).count(),
+        "tomorrow": planned.filter(
+            next_contact_at__gte=end_today, next_contact_at__lt=end_tomorrow
+        ).count(),
+        "later": planned.filter(next_contact_at__gte=end_tomorrow).count(),
+    }
+
+
+def build_stats(user, days, manager, date_from=None, date_to=None):
+    """Statystyki: manager widzi cały zespół, agent tylko siebie.
+
+    Okres to albo ostatnie `days` dni (łącznie z dzisiaj), albo zakres
+    `date_from`-`date_to` (obie daty włącznie).
+    """
+    if date_from is None:
+        date_to = timezone.localdate()
+        date_from = date_to - timedelta(days=days - 1)
+    days = (date_to - date_from).days + 1
+    since, _ = day_bounds(date_from)
+    _, until = day_bounds(date_to)
     User = get_user_model()
 
     if manager:
         leads = Lead.objects.all()
         active_ids = set(
-            Activity.objects.filter(created_at__gte=since)
+            Activity.objects.filter(created_at__gte=since, created_at__lt=until)
             .exclude(agent=None)
             .values_list("agent", flat=True)
         ) | set(
@@ -567,9 +638,15 @@ def build_stats(user, days, manager):
 
     return {
         "days": days,
+        "date_from": date_from,
+        "date_to": date_to,
         "total_leads": leads.count(),
         "pool_leads": pool,
         "leads_by_status": lead_funnel(leads),
-        "agents": agent_stats(users, since),
-        "daily_calls": daily_calls(days, agent_ids),
+        "outcomes": outcome_counts(since, until, agent_ids),
+        "scheduled": scheduled_counts(leads),
+        "agents": agent_stats(users, since, until),
+        "daily_calls": daily_calls(date_from, date_to, agent_ids),
+        # rozbicie na godziny tylko dla okresu jednodniowego (np. "Dziś")
+        "hourly_calls": hourly_calls(date_from, agent_ids) if date_from == date_to else [],
     }

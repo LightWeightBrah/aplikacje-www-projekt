@@ -431,15 +431,47 @@ class StatsViewSet(viewsets.ViewSet):
             OpenApiParameter(
                 "days", int, description="Okno w dniach dla rozmów (domyślnie 7, 1-365)"
             ),
+            OpenApiParameter(
+                "date_from", OpenApiTypes.DATE, description="Początek zakresu (RRRR-MM-DD), razem z date_to"
+            ),
+            OpenApiParameter(
+                "date_to", OpenApiTypes.DATE, description="Koniec zakresu włącznie (RRRR-MM-DD)"
+            ),
         ],
     )
     def list(self, request):
-        """Lejek leadów, skuteczność agentów i liczba rozmów dzień po dniu."""
-        raw = request.query_params.get("days", "7")
-        if not raw.isdigit() or not 1 <= int(raw) <= 365:
-            return Response(
-                {"detail": "Parametr days musi być liczbą od 1 do 365."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        data = build_stats(request.user, int(raw), is_manager(request.user))
+        """Lejek leadów, skuteczność agentów i rozmowy dzień po dniu.
+
+        Okres: `days` (ostatnie N dni) albo zakres `date_from` + `date_to` (do 365 dni).
+        """
+        params = request.query_params
+        manager = is_manager(request.user)
+        if "date_from" in params or "date_to" in params:
+            try:
+                date_from = date.fromisoformat(params.get("date_from", ""))
+                date_to = date.fromisoformat(params.get("date_to", ""))
+            except ValueError:
+                return Response(
+                    {"detail": "Podaj obie daty w formacie RRRR-MM-DD (date_from i date_to)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if date_from > date_to:
+                return Response(
+                    {"detail": "Data początkowa nie może być późniejsza niż końcowa."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if (date_to - date_from).days + 1 > 365:
+                return Response(
+                    {"detail": "Zakres może mieć maksymalnie 365 dni."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            data = build_stats(request.user, 0, manager, date_from, date_to)
+        else:
+            raw = params.get("days", "7")
+            if not raw.isdigit() or not 1 <= int(raw) <= 365:
+                return Response(
+                    {"detail": "Parametr days musi być liczbą od 1 do 365."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            data = build_stats(request.user, int(raw), manager)
         return Response(StatsSerializer(data).data)

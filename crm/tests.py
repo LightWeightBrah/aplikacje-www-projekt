@@ -338,6 +338,38 @@ class ActivityEffectTests(CrmTestBase):
         self.assertEqual(activity.agent, self.agent1)
 
 
+class SoldOutcomeTests(CrmTestBase):
+    """Wynik rozmowy „Sprzedane”: lead jest wygrany i zamknięty."""
+
+    def test_sold_closes_lead_as_won_and_clears_next_contact(self):
+        lead = self.make_lead(
+            owner=self.agent1,
+            status=Lead.Status.INTERESTED,
+            next_contact_at=timezone.now() + timedelta(days=1),
+            next_contact_note="oferta",
+        )
+        response = self.api(self.agent1).post(
+            "/api/activities/", {"lead": lead.id, "outcome": "sold"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        lead.refresh_from_db()
+        self.assertEqual(lead.status, Lead.Status.WON)
+        self.assertIsNone(lead.next_contact_at)
+        self.assertEqual(lead.next_contact_note, "")
+        self.assertEqual(lead.attempts_count, 1)
+
+    def test_sold_is_counted_in_stats_as_answered_call(self):
+        lead = self.make_lead(owner=self.agent1)
+        self.api(self.agent1).post(
+            "/api/activities/", {"lead": lead.id, "outcome": "sold"}, format="json"
+        )
+        data = self.api(self.agent1).get("/api/stats/?days=1").data
+        self.assertEqual(data["outcomes"]["sold"], 1)
+        self.assertEqual(data["agents"][0]["sold"], 1)
+        self.assertEqual(data["agents"][0]["answered"], 1)
+        self.assertEqual(data["leads_by_status"]["won"], 1)
+
+
 class MyLeadsDueTests(CrmTestBase):
     """Endpoint my-leads/due."""
 
@@ -737,6 +769,38 @@ class StatsTests(CrmTestBase):
         self.assertEqual(daily[-1]["calls"], 3)
         self.assertEqual(daily[0]["calls"], 0)
 
+    # Okres jednodniowy dostaje rozbicie na godziny (24 pozycje), dłuższy – pustą listę
+    def test_hourly_calls_only_for_single_day(self):
+        today = self.api(self.manager).get("/api/stats/?days=1").data
+        hours = today["hourly_calls"]
+        self.assertEqual(len(hours), 24)
+        self.assertEqual([h["hour"] for h in hours], list(range(24)))
+        self.assertEqual(sum(h["calls"] for h in hours), 3)  # notatka nie jest rozmową
+
+        week = self.api(self.manager).get("/api/stats/?days=7").data
+        self.assertEqual(week["hourly_calls"], [])
+
+    # Rozbicie godzinowe działa też dla jednodniowego zakresu dat i uwzględnia strefę czasową
+    def test_hourly_calls_for_single_day_range_uses_local_time(self):
+        today = timezone.localdate()
+        ten_local = timezone.make_aware(datetime.combine(today, time(10, 15)))
+        Activity.objects.update(created_at=ten_local)
+
+        response = self.api(self.manager).get(f"/api/stats/?date_from={today}&date_to={today}")
+
+        hours = response.data["hourly_calls"]
+        self.assertEqual(hours[10]["calls"], 3)
+        self.assertEqual(sum(h["calls"] for h in hours), 3)
+
+    # Agent w rozbiciu godzinowym widzi tylko własne rozmowy
+    def test_hourly_calls_for_agent_are_own_only(self):
+        lead = Lead.objects.filter(owner=self.agent1).first()
+        Activity.objects.create(lead=lead, agent=self.agent2, outcome="refused")
+
+        mine = self.api(self.agent1).get("/api/stats/?days=1").data["hourly_calls"]
+
+        self.assertEqual(sum(h["calls"] for h in mine), 3)
+
     # Rozmowy sprzed okna nie są liczone
     def test_old_activities_are_outside_window(self):
         Activity.objects.update(created_at=timezone.now() - timedelta(days=10))
@@ -750,6 +814,79 @@ class StatsTests(CrmTestBase):
         for value in ("0", "abc", "400"):
             response = self.api(self.manager).get(f"/api/stats/?days={value}")
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Rozbicie wyników rozmów w okresie (agent: tylko własne)
+    def test_outcome_breakdown_for_period(self):
+        lead = Lead.objects.filter(owner=self.agent1).first()
+        for outcome in ("callback", "refused", "wrong_number"):
+            Activity.objects.create(lead=lead, agent=self.agent1, outcome=outcome)
+        Activity.objects.create(lead=lead, agent=self.agent2, outcome="refused")
+
+        mine = self.api(self.agent1).get("/api/stats/?days=1").data
+        self.assertEqual(mine["outcomes"]["no_answer"], 2)
+        self.assertEqual(mine["outcomes"]["callback"], 1)
+        self.assertEqual(mine["outcomes"]["interested"], 1)
+        self.assertEqual(mine["outcomes"]["refused"], 1)  # odmowa agent2 nie jest moja
+        self.assertEqual(mine["outcomes"]["wrong_number"], 1)
+        self.assertEqual(mine["outcomes"]["note"], 1)
+
+        team = self.api(self.manager).get("/api/stats/?days=1").data
+        self.assertEqual(team["outcomes"]["refused"], 2)
+        row = next(r for r in team["agents"] if r["username"] == "agent1")
+        self.assertEqual(row["no_answer"], 2)
+        self.assertEqual(row["callbacks"], 1)
+        self.assertEqual(row["wrong_number"], 1)
+
+    # Zaplanowane kontakty: zaległe, dziś, jutro, później
+    def test_scheduled_counts(self):
+        now = timezone.now()
+        local_today = timezone.localtime(now).replace(hour=23, minute=59)
+        Lead.objects.filter(owner=self.agent1).update(next_contact_at=None)
+        self.make_lead(owner=self.agent1, next_contact_at=now - timedelta(hours=2))
+        self.make_lead(owner=self.agent1, next_contact_at=local_today)
+        self.make_lead(owner=self.agent1, next_contact_at=now + timedelta(days=1))
+        self.make_lead(owner=self.agent1, next_contact_at=now + timedelta(days=5))
+        self.make_lead(owner=self.agent1, status=Lead.Status.LOST, next_contact_at=now + timedelta(days=5))
+
+        scheduled = self.api(self.agent1).get("/api/stats/").data["scheduled"]
+        self.assertEqual(scheduled["overdue"], 1)
+        self.assertEqual(scheduled["later"], 1)
+        self.assertEqual(sum(scheduled.values()), 4)  # przegrany lead się nie liczy
+
+    # Zakres dat: tylko wybrane dni, włącznie z obiema datami
+    def test_date_range_selects_days(self):
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+        old = Activity.objects.get(agent=self.agent1, outcome="interested")
+        Activity.objects.filter(pk=old.pk).update(created_at=timezone.now() - timedelta(days=1))
+
+        response = self.api(self.agent1).get(
+            f"/api/stats/?date_from={yesterday.isoformat()}&date_to={yesterday.isoformat()}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["days"], 1)
+        self.assertEqual(response.data["date_from"], yesterday.isoformat())
+        self.assertEqual(response.data["agents"][0]["calls"], 1)
+        self.assertEqual(response.data["daily_calls"][0]["calls"], 1)
+
+        today_only = self.api(self.agent1).get(
+            f"/api/stats/?date_from={today.isoformat()}&date_to={today.isoformat()}"
+        )
+        self.assertEqual(today_only.data["agents"][0]["calls"], 2)
+
+    # Zły zakres dat daje 400
+    def test_invalid_date_range_returns_400(self):
+        today = timezone.localdate()
+        bad = (
+            "date_from=2026-10-10",
+            "date_from=abc&date_to=2026-10-10",
+            f"date_from={today.isoformat()}&date_to={(today - timedelta(days=1)).isoformat()}",
+            "date_from=2024-01-01&date_to=2026-01-01",
+        )
+        for query in bad:
+            response = self.api(self.manager).get(f"/api/stats/?{query}")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, query)
 
     # Statystyki wymagają logowania i roli
     def test_stats_require_login_and_role(self):

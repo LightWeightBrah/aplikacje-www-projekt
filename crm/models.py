@@ -78,8 +78,8 @@ class Lead(models.Model):
         CALLBACK = "callback", "Do oddzwonienia"
         INTERESTED = "interested", "Zainteresowany"
         OFFER = "offer", "Oferta wysłana"
-        WON = "won", "Wygrany"
-        LOST = "lost", "Przegrany"
+        WON = "won", "Sprzedany"
+        LOST = "lost", "Bez sprzedaży"
         DO_NOT_CALL = "do_not_call", "Nie dzwonić"
         UNREACHABLE = "unreachable", "Nieosiągalny"
 
@@ -156,6 +156,7 @@ class Activity(models.Model):
         NO_ANSWER = "no_answer", "Nie odebrał"
         CALLBACK = "callback", "Prosił o oddzwonienie"
         INTERESTED = "interested", "Zainteresowany"
+        SOLD = "sold", "Sprzedane"
         REFUSED = "refused", "Odmowa"
         WRONG_NUMBER = "wrong_number", "Zły numer"
         NOTE = "note", "Notatka"

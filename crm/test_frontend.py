@@ -90,6 +90,30 @@ class ImportPageTests(CrmTestBase):
         self.assertEqual(self.api(self.agent1).post("/api/batches/import/").status_code, 403)
 
 
+class DashboardPeriodTests(CrmTestBase):
+    def test_dashboard_has_today_and_custom_range(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'value="1"')
+        self.assertContains(r, 'id="date-from"')
+        self.assertContains(r, 'id="date-to"')
+        self.assertContains(r, 'id="outcomes"')
+        self.assertContains(r, 'id="scheduled"')
+
+
+    def test_dashboard_defaults_to_today(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, '<option value="1" selected>Dziś</option>')
+        self.assertNotContains(r, '<option value="7" selected>')
+
+    def test_dashboard_uses_plain_language_titles(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, "Wyniki rozmów")
+        self.assertContains(r, "Moi klienci")
+        self.assertContains(r, "Wyniki agentów")
+        self.assertNotContains(r, "Lejek leadów")
+        self.assertNotContains(r, "Jak poszły rozmowy")
+
+
 class AgentListTests(CrmTestBase):
     def test_agents_endpoint_is_manager_only(self):
         self.assertEqual(self.api().get("/api/agents/").status_code, 401)

@@ -11,7 +11,7 @@ CRM.initManager = function initManager() {
 
   const OUTCOME = {
     no_answer: "Nie odebrał", callback: "Prosił o oddzwonienie", interested: "Zainteresowany",
-    refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka",
+    sold: "Sprzedane", refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka",
   };
   const state = { total: null, tab: "all", page: 1, ordering: "", search: "", count: 0, pageSize: 20 };
   let agents = [], leads = [], selected = new Set(), openId = null, searchTimer;

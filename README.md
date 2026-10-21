@@ -17,7 +17,7 @@ Jak to działa:
 - Agent nie wybiera leadów sam. Wywołuje `POST /api/leads/next/` i system **losuje mu leada z puli**. Przypisanie jest atomowe, więc dwóch agentów nie dostanie tego samego kontaktu.
 - Agent, który ma **zaległe oddzwonienia**, nie dostanie nowego leada (odpowiedź 409). Najpierw musi dokończyć obietnice dane klientom.
 - Agent nie dostanie leada, który już wcześniej prowadził.
-- Po każdej rozmowie agent dodaje **aktywność** (`Activity`) z wynikiem: nie odebrał, prosił o oddzwonienie, zainteresowany, odmowa, zły numer, notatka. System sam aktualizuje leada: licznik prób, datę ostatniego kontaktu, status i termin kolejnego kontaktu.
+- Po każdej rozmowie agent dodaje **aktywność** (`Activity`) z wynikiem: nie odebrał, prosił o oddzwonienie, zainteresowany, **sprzedane** (lead zamknięty jako wygrany), odmowa, zły numer, notatka. System sam aktualizuje leada: licznik prób, datę ostatniego kontaktu, status i termin kolejnego kontaktu.
 - Zasada nadrzędna: **lead nigdy nie zostaje bez następnego kroku**. Status „Do oddzwonienia" wymaga terminu i notatki.
 - Agent widzi tylko swoje leady, manager widzi wszystko.
 
@@ -171,7 +171,7 @@ Endpointy poza CRUD (logika biznesowa):
 | `GET /api/my-leads/due/` | leady do zrobienia: zaległe i z terminem w oknie `?minutes=` (domyślnie 15, max 1440) |
 | `GET /api/my-leads/schedule/` | plan dnia: leady z terminem kontaktu w dniu `?date=RRRR-MM-DD` (domyślnie dziś; na dziś także zaległe), posortowane po godzinie |
 | `GET /api/my-leads/calendar/` | plik `.ics` z terminami kontaktów, do zaimportowania w kalendarzu |
-| `GET /api/stats/` | statystyki: lejek leadów wg statusów, skuteczność agentów, rozmowy dzień po dniu (`?days=`, domyślnie 7, max 365); manager widzi cały zespół i pulę, agent tylko siebie |
+| `GET /api/stats/` | statystyki: liczba klientów wg statusów (`leads_by_status`), wyniki agentów, rozmowy dzień po dniu (dla okresu jednodniowego dodatkowo `hourly_calls` – rozmowy godzina po godzinie; rozbicie wyników rozmów `outcomes` i zaplanowane kontakty `scheduled`: zaległe / dziś / jutro / później; okres: `?days=` – ostatnie N dni, domyślnie 7, max 365 – albo zakres `?date_from=RRRR-MM-DD&date_to=RRRR-MM-DD`, max 365 dni); manager widzi cały zespół i pulę, agent tylko siebie |
 
 Excel (`.xlsx`):
 
@@ -238,7 +238,7 @@ Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szabl
 | Adres | Opis |
 |---|---|
 | `/crm/login/` | logowanie (JWT), rola rozpoznawana przez `GET /api/me/` |
-| `/crm/` | dashboard: statystyki, lejek leadów, rozmowy dzień po dniu, skuteczność agentów (manager) |
+| `/crm/` | dashboard: statystyki za wybrany okres (domyślnie dziś – wtedy wykres godzina po godzinie; 7/30/90 dni albo własny zakres dat), wyniki rozmów w okresie, stan klientów na teraz (ilu klientów ma jaki status), rozmowy w czasie, wyniki agentów (manager) |
 | `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
 | `/crm/manager/` | panel managera: tabela wszystkich leadów, filtry, przypisywanie, przepisywanie, pula nieosiągalnych, eksport |
 | `/crm/import/` | import bazy z Excela (wybór pliku, nazwa bazy, produkt) z raportem: zaimportowane, duplikaty i błędne wiersze z numerami; eksport wszystkich leadów (tylko manager) |

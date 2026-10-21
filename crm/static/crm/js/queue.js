@@ -13,6 +13,7 @@
     ["no_answer", "Nie odebrał", "Zaliczy próbę (po 3 nieodebranych lead wraca do puli). Możesz zaplanować ponowną próbę."],
     ["callback", "Oddzwonić", "Lead zostaje u Ciebie do wskazanego terminu."],
     ["interested", "Zainteresowany", "Status „Zainteresowany”. Wpisz, kiedy i w jakiej sprawie ponownie zadzwonić."],
+    ["sold", "Sprzedane", "Lead zostaje zamknięty jako wygrany (sprzedaż). Znika z Twojej kolejki."],
     ["refused", "Odmowa", "Lead zostaje zamknięty jako przegrany."],
     ["wrong_number", "Zły numer", "Lead zostaje zamknięty jako „Nie dzwonić”."],
   ];
@@ -143,7 +144,7 @@
         <h2>Jak poszła rozmowa?</h2>
         <div class="outcomes" role="radiogroup">${OUTCOMES.map(([v, l], i) =>
           `<button type="button" role="radio" data-outcome="${v}" aria-checked="false"><kbd>${i + 1}</kbd>${l}</button>`).join("")}</div>
-        <p class="hint" id="hint">Wybierz wynik (klawisze 1–5). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.</p>
+        <p class="hint" id="hint">Wybierz wynik (klawisze 1–6). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.</p>
         <div id="cb-fields" hidden>
           <div class="field"><label for="cb-at" id="cb-label">Kiedy oddzwonić</label>
             <div class="when-row"><input id="cb-at" autocomplete="off" placeholder="np. jutro 9:30">
@@ -196,7 +197,7 @@
       $("cb-fields").hidden = true;
       ["cb-at", "cb-note", "act-note"].forEach((id) => { $(id).value = ""; });
       updatePreview();
-      $("hint").textContent = "Wybierz wynik (klawisze 1–5). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.";
+      $("hint").textContent = "Wybierz wynik (klawisze 1–6). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.";
       submits().forEach((s) => { s.disabled = true; });
       setArmed(false);
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -304,7 +305,7 @@
     const item = e.target.closest("[data-id]");
     if (item) select(Number(item.dataset.id));
   });
-  /* Skróty: 1–5 wybiera wynik, Ctrl+Enter zapisuje i bierze kolejnego. */
+  /* Skróty: 1–6 wybiera wynik, Ctrl+Enter zapisuje i bierze kolejnego. */
   document.addEventListener("keydown", (e) => {
     const form = $("act-form");
     if (!form) return;
