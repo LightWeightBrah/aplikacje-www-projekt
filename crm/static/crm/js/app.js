@@ -214,18 +214,36 @@ const CRM = (() => {
     } else {
       rows = d.daily_calls.map((r) => {
         const [, m, day] = r.date.split("-");
-        return { label: day + "." + m, tip: r.date, calls: r.calls };
+        const tip = new Date(r.date + "T12:00:00").toLocaleDateString("pl-PL",
+          { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+        return { label: day + "." + m, tip, calls: r.calls };
       });
     }
     $("daily-title").textContent = hourly ? "Rozmowy w ciągu dnia (godzina po godzinie)" : "Rozmowy dzień po dniu";
     const max = Math.max(1, ...rows.map((r) => r.calls));
     const n = rows.length, step = n <= 14 ? 1 : Math.ceil(n / 7);
-    $("daily").style.gap = n > 31 ? "2px" : n > 14 ? "4px" : ".5rem";
-    $("daily").innerHTML = rows.map((r, i) => {
-      const showNum = r.calls > 0 || (n <= 14 && !hourly), showLabel = i % step === 0;
-      return `<div class="bar" title="${esc(r.tip)}: ${r.calls}"><b>${showNum ? r.calls : ""}</b>
-        <i style="height:${(r.calls / max) * 100}%"></i><span>${showLabel ? r.label : ""}</span></div>`;
+    const gap = n > 31 ? "2px" : n > 14 ? "4px" : ".5rem";
+    const rozmow = (k) => k === 1 ? "rozmowa" : (k % 10 >= 2 && k % 10 <= 4 && (k % 100 < 12 || k % 100 > 14)) ? "rozmowy" : "rozmów";
+    let lastNum = -99;
+    const bars = rows.map((r, i) => {
+      let showNum;
+      if (n <= 14 && !hourly) showNum = true;
+      else if (n <= 31) showNum = r.calls > 0;
+      else showNum = r.calls > 0 && i - lastNum >= 3;
+      if (showNum) lastNum = i;
+      const h = r.calls > 0 ? Math.max(2, (r.calls / max) * 100) : 0;
+      return `<div class="bar">
+        <i class="${r.calls > 0 ? "" : "zero"}" style="height:${h}%">${showNum ? `<b>${r.calls}</b>` : ""}</i>
+        <div class="tip"><strong>${esc(r.tip)}</strong><span>${r.calls} ${rozmow(r.calls)}</span></div></div>`;
     }).join("");
+    /* Oś: zawsze pierwsza data z lewej i ostatnia z prawej, w środku co kilka słupków. */
+    const axis = rows.map((r, i) => {
+      const edge = n > 14 && (i === 0 || i === n - 1);
+      const middle = i % step === 0 && i > 0 && i < n - 1 && (n - 1 - i) >= step * 0.6;
+      const cls = n > 14 ? (i === 0 ? "first" : i === n - 1 ? "last" : "") : "";
+      return `<span class="${cls}">${(n <= 14 || edge || middle) ? esc(r.label) : ""}</span>`;
+    }).join("");
+    $("daily").innerHTML = `<div class="bars" style="gap:${gap}">${bars}</div><div class="axis" style="gap:${gap}">${axis}</div>`;
   }
 
   function renderAgents(rows) {
