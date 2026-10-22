@@ -71,6 +71,7 @@ class LeadAssignmentAdmin(admin.ModelAdmin):
 class AgentProfileInline(admin.StackedInline):
     model = AgentProfile
     can_delete = False
+    exclude = ("avatar",)  # długi tekst ze zdjęciem; użytkownik zmienia je sam w menu profilu
 
 
 class UserWithProfileAdmin(UserAdmin):

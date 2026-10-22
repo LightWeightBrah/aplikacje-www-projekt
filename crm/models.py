@@ -232,6 +232,11 @@ class AgentProfile(models.Model):
         default=True,
         help_text="Odznacz, aby ukryć ranking i statystyki innych agentów przed tym agentem.",
     )
+    avatar = models.TextField(
+        "zdjęcie profilowe",
+        blank=True,
+        help_text="Małe zdjęcie jako data URL (przeglądarka zmniejsza je przed wysłaniem).",
+    )
 
     class Meta:
         verbose_name = "Profil agenta"

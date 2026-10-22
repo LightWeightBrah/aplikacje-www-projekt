@@ -284,3 +284,13 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .access-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.2rem}.access-head h2{margin:0}
 .access-bulk{display:flex;gap:.5rem;flex-wrap:wrap}
 #access-msg{min-height:1.2em;margin:.2rem 0 .4rem}
+
+/* Zdjęcie profilowe */
+.avatar{background-size:cover;background-position:center;flex:none}
+.avatar-lg{width:52px;height:52px;font-size:1.2rem;color:#fff}
+.avatar-row{display:flex;align-items:center;gap:.8rem}
+.avatar-actions{display:flex;flex-direction:column;align-items:flex-start;gap:.3rem}
+.btn-mini{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:.3rem .7rem;font:inherit;font-size:.82rem;cursor:pointer}
+.btn-mini:hover{border-color:var(--brand);color:var(--brand)}
+.btn-mini.ghost{border-color:transparent;background:none;color:var(--muted);padding-left:.2rem}
+.avatar-msg{display:block;margin-top:.4rem;color:var(--muted)}.avatar-msg.bad{color:#ef4444}

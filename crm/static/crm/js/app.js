@@ -78,7 +78,68 @@ const CRM = (() => {
     paint();
   }
 
-  /* Aplikacja: menu użytkownika (motyw + wylogowanie) po kliknięciu w profil. */
+  /* Zdjęcie profilowe albo pierwsza litera nazwy (menu boczne i menu profilu). */
+  function paintAvatars(user) {
+    ["user-avatar", "pop-avatar"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      if (user.avatar) { el.style.backgroundImage = `url("${user.avatar}")`; el.textContent = ""; el.classList.add("has-img"); }
+      else { el.style.backgroundImage = ""; el.textContent = user.full_name.charAt(0).toUpperCase(); el.classList.remove("has-img"); }
+    });
+    const rm = $("avatar-remove");
+    if (rm) rm.hidden = !user.avatar;
+  }
+
+  /* Wycina środek zdjęcia do kwadratu 160 px i zapisuje jako JPEG (kilka KB). */
+  function resizeToSquare(file, size = 160) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.width, img.height);
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+        c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("To nie wygląda na zdjęcie.")); };
+      img.src = url;
+    });
+  }
+
+  function initAvatar(user) {
+    const input = $("avatar-file"), msg = $("avatar-msg");
+    const say = (text, bad) => { msg.textContent = text; msg.hidden = !text; msg.classList.toggle("bad", !!bad); };
+    const save = (patch) => {
+      const next = { ...(currentUser() || user), ...patch };
+      store.set("crm_user", JSON.stringify(next));
+      paintAvatars(next);
+    };
+    $("avatar-change").addEventListener("click", () => input.click());
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      say("Wysyłanie…");
+      try {
+        const image = await resizeToSquare(file);
+        const r = await api("/api/me/avatar/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image }),
+        });
+        if (!r.ok) throw new Error(((await r.json()).image || [])[0] || "Nie udało się zapisać zdjęcia.");
+        save({ avatar: image });
+        say("Zapisano.");
+      } catch (ex) { say(ex.message, true); }
+    });
+    $("avatar-remove").addEventListener("click", async () => {
+      const r = await api("/api/me/avatar/", { method: "DELETE" });
+      if (r.ok) { save({ avatar: "" }); say("Usunięto zdjęcie."); } else say("Nie udało się usunąć zdjęcia.", true);
+    });
+  }
+
+  /* Aplikacja: menu użytkownika (zdjęcie, motyw, wylogowanie) po kliknięciu w profil. */
   function initUserMenu(user) {
     const btn = $("user-btn"), pop = $("user-popover");
     const paint = () => document.querySelectorAll("[data-theme-choice]").forEach((b) =>
@@ -137,15 +198,18 @@ const CRM = (() => {
     if (!store.get("crm_access") || !user) { location.href = LOGIN_URL; return; }
     $("user-name").textContent = user.full_name;
     $("user-role").textContent = ROLE[user.role] || "";
-    $("user-avatar").textContent = user.full_name.charAt(0).toUpperCase();
     document.querySelectorAll("[data-manager-only]").forEach((el) => { el.hidden = user.role !== "manager"; });
     applyTeamAccess(user);
     initUserMenu(user);
+    paintAvatars(user);
+    initAvatar(user);
     /* Manager mógł zmienić uprawnienia od logowania, więc odświeżamy je z /api/me/. */
     api("/api/me/").then((r) => (r.ok ? r.json() : null)).then((me) => {
       if (!me || me.role === "none") return;
-      store.set("crm_user", JSON.stringify({ ...user, can_view_team: me.can_view_team }));
+      const fresh = { ...user, can_view_team: me.can_view_team, avatar: me.avatar || "" };
+      store.set("crm_user", JSON.stringify(fresh));
       applyTeamAccess(me);
+      paintAvatars(fresh);
     }).catch(() => { /* zostaje zapamiętana wartość */ });
   }
 

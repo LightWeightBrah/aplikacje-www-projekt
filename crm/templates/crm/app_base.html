@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=24">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=27">
 </head>
 <body>
 <div class="shell">
@@ -23,6 +23,16 @@
         <div class="user-menu">
             <div class="popover" id="user-popover" hidden>
                 <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
+                <div class="pop-label">Zdjęcie profilowe</div>
+                <div class="avatar-row">
+                    <span class="avatar avatar-lg" id="pop-avatar">?</span>
+                    <div class="avatar-actions">
+                        <button type="button" class="btn-mini" id="avatar-change">Zmień zdjęcie</button>
+                        <button type="button" class="btn-mini ghost" id="avatar-remove" hidden>Usuń</button>
+                    </div>
+                    <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+                </div>
+                <small class="avatar-msg" id="avatar-msg" role="status" hidden></small>
                 <div class="pop-label">Motyw</div>
                 <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
                     <button type="button" data-theme-choice="light">Jasny</button>
@@ -42,7 +52,7 @@
         {% block content %}{% endblock %}
     </main>
 </div>
-<script src="{% static 'crm/js/app.js' %}?v=24"></script>
+<script src="{% static 'crm/js/app.js' %}?v=27"></script>
 <script>CRM.initShell();</script>
 {% block scripts %}{% endblock %}
 </body>

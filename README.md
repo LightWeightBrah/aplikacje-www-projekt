@@ -177,6 +177,8 @@ Endpointy poza CRUD (logika biznesowa):
 | `GET /api/stats/?agent=ID` | wyniki wskazanego agenta (bez jego leadów); te same zasady dostępu co ranking (403, gdy manager wyłączył podgląd) |
 | `PATCH /api/agents/{id}/` | tylko manager: `{"can_view_team_stats": true/false}` włącza lub wyłącza jednemu agentowi podgląd rankingu i wyników innych |
 | `POST /api/agents/team-access/` | tylko manager: to samo dla wszystkich agentów naraz (odpowiedź zawiera liczbę zmienionych: `updated`) |
+| `GET /api/me/` | dane zalogowanego (rola, `can_view_team`, `avatar`) |
+| `POST /api/me/avatar/` / `DELETE /api/me/avatar/` | własne zdjęcie profilowe: `{"image": "data:image/...;base64,..."}` (PNG/JPEG/WebP, do 150 KB; przeglądarka zmniejsza zdjęcie do 160 px) albo usunięcie zdjęcia |
 
 Excel (`.xlsx`):
 
@@ -242,7 +244,7 @@ Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szabl
 
 | Adres | Opis |
 |---|---|
-| `/crm/login/` | logowanie (JWT), rola rozpoznawana przez `GET /api/me/` |
+| `/crm/login/` | logowanie (JWT), rola rozpoznawana przez `GET /api/me/`; w menu profilu (lewy dolny róg) można zmienić motyw i zdjęcie profilowe |
 | `/crm/` | dashboard: statystyki za wybrany okres (domyślnie dziś – wtedy wykres godzina po godzinie; 7/30/90 dni albo własny zakres dat), wyniki rozmów w okresie, stan klientów na teraz (ilu klientów ma jaki status), rozmowy w czasie, wyniki agentów (manager) |
 | `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
 | `/crm/manager/` | panel managera: tabela wszystkich leadów, filtry, przypisywanie, przepisywanie, pula nieosiągalnych, eksport |
@@ -259,7 +261,7 @@ Panel managera (`/crm/manager/`, widoczny w menu tylko dla managera): zakładki 
 python manage.py test
 ```
 
-136 testów `APITestCase` (`crm/tests.py`, `crm/test_frontend.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics`, import i eksport Excela, listę agentów, filtr puli oraz stronę panelu managera.
+146 testów `APITestCase` (`crm/tests.py`, `crm/test_frontend.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics`, import i eksport Excela, listę agentów, filtr puli oraz stronę panelu managera.
 
 ## Zrzuty ekranu
 

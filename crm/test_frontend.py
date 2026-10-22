@@ -18,6 +18,65 @@ class MeEndpointTests(CrmTestBase):
         self.assertEqual(self.api(self.no_role).get("/api/me/").data["role"], "none")
 
 
+class AvatarTests(CrmTestBase):
+    # 1x1 piksel PNG
+    PNG = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+        "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+
+    def test_avatar_requires_login(self):
+        r = self.api().post("/api/me/avatar/", {"image": self.PNG}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_me_has_empty_avatar_by_default(self):
+        self.assertEqual(self.api(self.agent1).get("/api/me/").data["avatar"], "")
+
+    def test_agent_can_set_and_remove_avatar(self):
+        api = self.api(self.agent1)
+        r = api.post("/api/me/avatar/", {"image": self.PNG}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(api.get("/api/me/").data["avatar"], self.PNG)
+        self.assertEqual(api.delete("/api/me/avatar/").status_code, 204)
+        self.assertEqual(api.get("/api/me/").data["avatar"], "")
+
+    def test_manager_can_set_avatar(self):
+        r = self.api(self.manager).post("/api/me/avatar/", {"image": self.PNG}, format="json")
+        self.assertEqual(r.status_code, 200)
+
+    def test_avatar_does_not_change_team_access_flag(self):
+        self.api(self.agent1).post("/api/me/avatar/", {"image": self.PNG}, format="json")
+        self.assertTrue(self.api(self.agent1).get("/api/me/").data["can_view_team"])
+
+    def test_avatar_is_per_user(self):
+        self.api(self.agent1).post("/api/me/avatar/", {"image": self.PNG}, format="json")
+        self.assertEqual(self.api(self.agent2).get("/api/me/").data["avatar"], "")
+
+    def test_avatar_rejects_wrong_type(self):
+        for bad in ["data:text/html;base64,PHNjcmlwdD4=", "http://x/y.png", "", None, 5]:
+            r = self.api(self.agent1).post("/api/me/avatar/", {"image": bad}, format="json")
+            self.assertEqual(r.status_code, 400, bad)
+
+    def test_avatar_rejects_fake_image_bytes(self):
+        import base64
+
+        fake = "data:image/png;base64," + base64.b64encode(b"to nie jest obrazek").decode()
+        r = self.api(self.agent1).post("/api/me/avatar/", {"image": fake}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_avatar_rejects_too_big_file(self):
+        import base64
+
+        big = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 200_000).decode()
+        r = self.api(self.agent1).post("/api/me/avatar/", {"image": big}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_user_menu_has_avatar_controls(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'id="avatar-change"')
+        self.assertContains(r, 'id="avatar-file"')
+
+
 class ActivityHistoryTests(CrmTestBase):
     def test_lead_detail_history_shows_who_talked(self):
         lead = self.make_lead(owner=self.agent1)
