@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -34,9 +36,10 @@ from .permissions import (
     IsManager,
     IsManagerOrReadOnly,
 )
-from .roles import can_view_team_stats, is_manager, visible_to
+from .roles import AGENT, can_view_team_stats, is_manager, visible_to
 from .serializers import (
     ActivitySerializer,
+    AgentAccessBulkSerializer,
     AgentAccessSerializer,
     AgentSerializer,
     AssignLeadSerializer,
@@ -348,6 +351,21 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         return Response(
             {"can_view_team_stats": serializer.validated_data["can_view_team_stats"]}
         )
+
+    @extend_schema(request=AgentAccessSerializer, responses=AgentAccessBulkSerializer)
+    @action(detail=False, methods=["post"], url_path="team-access")
+    def team_access(self, request):
+        """Manager włącza lub wyłącza podgląd wyników zespołu wszystkim agentom naraz."""
+        serializer = AgentAccessSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        value = serializer.validated_data["can_view_team_stats"]
+        agents = get_user_model().objects.filter(is_active=True, groups__name=AGENT).distinct()
+        with transaction.atomic():
+            for agent in agents:
+                AgentProfile.objects.update_or_create(
+                    user=agent, defaults={"can_view_team_stats": value}
+                )
+        return Response({"can_view_team_stats": value, "updated": agents.count()})
 
 
 class ActivityViewSet(

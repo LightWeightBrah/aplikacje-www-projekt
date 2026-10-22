@@ -175,6 +175,8 @@ Endpointy poza CRUD (logika biznesowa):
 | `GET /api/stats/` | statystyki: liczba klientów wg statusów (`leads_by_status`), wyniki agentów, rozmowy dzień po dniu (dla okresu jednodniowego dodatkowo `hourly_calls` – rozmowy godzina po godzinie; rozbicie wyników rozmów `outcomes` i zaplanowane kontakty `scheduled`: zaległe / dziś / jutro / później; okres: `?days=` – ostatnie N dni, domyślnie 7, max 365 – albo zakres `?date_from=RRRR-MM-DD&date_to=RRRR-MM-DD`, max 365 dni); manager widzi cały zespół i pulę, agent tylko siebie |
 | `GET /api/leaderboard/` | ranking agentów w okresie (`?days=` albo `?date_from=&date_to=`, `?sort=sold\|calls\|interested`, domyślnie `sold`; remis rozstrzyga liczba rozmów); tylko liczby, bez danych klientów; agent z wyłączonym podglądem dostaje **403** |
 | `GET /api/stats/?agent=ID` | wyniki wskazanego agenta (bez jego leadów); te same zasady dostępu co ranking (403, gdy manager wyłączył podgląd) |
+| `PATCH /api/agents/{id}/` | tylko manager: `{"can_view_team_stats": true/false}` włącza lub wyłącza jednemu agentowi podgląd rankingu i wyników innych |
+| `POST /api/agents/team-access/` | tylko manager: to samo dla wszystkich agentów naraz (odpowiedź zawiera liczbę zmienionych: `updated`) |
 
 Excel (`.xlsx`):
 
@@ -245,7 +247,7 @@ Oprócz REST API projekt ma gotowy interfejs dla agentów i managerów. To szabl
 | `/crm/queue/` | kolejka agenta: leady wg pilności, karta rozmowy, wynik rozmowy, historia kontaktów |
 | `/crm/manager/` | panel managera: tabela wszystkich leadów, filtry, przypisywanie, przepisywanie, pula nieosiągalnych, eksport |
 | `/crm/import/` | import bazy z Excela (wybór pliku, nazwa bazy, produkt) z raportem: zaimportowane, duplikaty i błędne wiersze z numerami; eksport wszystkich leadów (tylko manager) |
-| `/crm/ranking/` | ranking zespołu (zakładki Sprzedane / Rozmowy / Zainteresowani, wybór okresu, domyślnie dziś); manager ma na stronie przełączniki „Kto może widzieć wyniki innych” (`PATCH /api/agents/{id}/`); agent z wyłączonym podglądem nie ma pozycji w menu, a API zwraca mu 403 |
+| `/crm/ranking/` | ranking zespołu (zakładki Sprzedane / Rozmowy / Zainteresowani, wybór okresu, domyślnie dziś); manager ma na stronie przełączniki „Kto może widzieć wyniki innych” (`PATCH /api/agents/{id}/`) i przyciski „Wyłącz / Włącz ranking wszystkim” (`POST /api/agents/team-access/`); agent z wyłączonym podglądem nie ma pozycji w menu, a API zwraca mu 403 |
 
 Funkcje kolejki agenta: przycisk „Daj kolejnego leada”, zapis wyniku z przejściem do następnego leada („Zapisz i weź kolejnego”), skróty klawiszowe (`1`–`5` wybór wyniku, `Enter` / `Ctrl+Enter` zapis) oraz wpisywanie terminu tekstem, np. `jutro 9 55`, `25.10 10 23`, `pon 8`, `za 2h` (rok uzupełnia się sam) albo wybierane z kalendarza. `Esc` (lub ponowne kliknięcie wyniku) czyści formularz i pozwala zacząć od nowa. Motyw jasny / ciemny / auto wybiera się w menu profilu (lewy dolny róg).
 
@@ -257,7 +259,7 @@ Panel managera (`/crm/manager/`, widoczny w menu tylko dla managera): zakładki 
 python manage.py test
 ```
 
-131 testów `APITestCase` (`crm/tests.py`, `crm/test_frontend.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics`, import i eksport Excela, listę agentów, filtr puli oraz stronę panelu managera.
+136 testów `APITestCase` (`crm/tests.py`, `crm/test_frontend.py`) sprawdza: autoryzację JWT i role (401/403), widoczność leadów, walidację, wyszukiwanie po firmie/NIP/KRS, losowanie `leads/next` (w tym 404 i 409), skutki dodania aktywności, `my-leads/due`, cykl życia leada (limit prób, nieosiągalni, zwrot nietkniętych), endpointy managera, statystyki plan dnia i kalendarz `.ics`, import i eksport Excela, listę agentów, filtr puli oraz stronę panelu managera.
 
 ## Zrzuty ekranu
 

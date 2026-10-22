@@ -103,6 +103,27 @@ CRM.initRanking = function initRanking() {
       list.innerHTML = `<p class="form-error">Nie udało się pobrać listy agentów.</p>`;
       return;
     }
+    /* Jeden przycisk dla wszystkich agentów: POST /api/agents/team-access/. */
+    async function setAll(value) {
+      const msg = $("access-msg");
+      if (!value && !confirm("Wyłączyć podgląd rankingu i wyników innych wszystkim agentom?")) return;
+      ["bulk-off", "bulk-on"].forEach((id) => { $(id).disabled = true; });
+      try {
+        const r = await api("/api/agents/team-access/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ can_view_team_stats: value }),
+        });
+        if (!r.ok) throw new Error();
+        list.querySelectorAll("input[type=checkbox]").forEach((b) => { b.checked = value; });
+        msg.textContent = (value ? "Ranking włączony" : "Ranking wyłączony") + " dla wszystkich agentów.";
+      } catch {
+        msg.textContent = "Nie udało się zapisać zmiany.";
+      }
+      ["bulk-off", "bulk-on"].forEach((id) => { $(id).disabled = false; });
+    }
+    $("bulk-off").addEventListener("click", () => setAll(false));
+    $("bulk-on").addEventListener("click", () => setAll(true));
+
     list.addEventListener("change", async (e) => {
       const box = e.target;
       const row = box.closest(".access-row");

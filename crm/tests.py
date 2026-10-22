@@ -1425,3 +1425,43 @@ class LeaderboardTests(CrmTestBase):
             f"/api/agents/{self.agent1.pk}/", {"can_view_team_stats": True}, format="json"
         )
         self.assertEqual(self.ranking(self.agent1).status_code, status.HTTP_200_OK)
+
+
+class BulkTeamAccessTests(CrmTestBase):
+    """Jeden przycisk managera: włączenie lub wyłączenie rankingu wszystkim agentom naraz."""
+
+    def bulk(self, user, value):
+        return self.api(user).post(
+            "/api/agents/team-access/", {"can_view_team_stats": value}, format="json"
+        )
+
+    def test_manager_disables_ranking_for_all_agents(self):
+        response = self.bulk(self.manager, False)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["can_view_team_stats"])
+        self.assertEqual(response.data["updated"], 2)
+        self.assertFalse(can_view_team_stats(self.agent1))
+        self.assertFalse(can_view_team_stats(self.agent2))
+        self.assertEqual(
+            self.api(self.agent1).get("/api/leaderboard/").status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(self.api(self.manager).get("/api/leaderboard/").status_code, 200)
+
+    def test_manager_enables_ranking_again_for_all(self):
+        self.bulk(self.manager, False)
+        self.bulk(self.manager, True)
+        self.assertTrue(can_view_team_stats(self.agent1))
+        self.assertTrue(can_view_team_stats(self.agent2))
+        self.assertEqual(self.api(self.agent2).get("/api/leaderboard/").status_code, 200)
+
+    def test_agent_cannot_use_bulk_switch(self):
+        self.assertEqual(self.bulk(self.agent1, False).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(can_view_team_stats(self.agent2))
+
+    def test_anonymous_gets_401(self):
+        self.assertEqual(self.bulk(None, False).status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_bulk_requires_boolean_value(self):
+        response = self.api(self.manager).post("/api/agents/team-access/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

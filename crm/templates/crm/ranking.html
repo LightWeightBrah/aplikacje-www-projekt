@@ -44,10 +44,17 @@
 </div>
 
 <section class="card" id="access-card" hidden>
-    <h2>Kto może widzieć wyniki innych</h2>
+    <div class="access-head">
+        <h2>Kto może widzieć wyniki innych</h2>
+        <div class="access-bulk">
+            <button type="button" class="btn btn-secondary" id="bulk-off">Wyłącz ranking wszystkim</button>
+            <button type="button" class="btn btn-secondary" id="bulk-on">Włącz ranking wszystkim</button>
+        </div>
+    </div>
+    <p id="access-msg" class="small muted" aria-live="polite"></p>
     <p class="card-desc">Wyłącz podgląd np. nowym agentom, żeby nie porównywali się od razu z doświadczonymi. Wyłączony agent nadal widzi własne wyniki, a inni nadal widzą jego w rankingu.</p>
     <div id="access-list"></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=24"></script>
+{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=25"></script>
 <script>CRM.initRanking();</script>{% endblock %}

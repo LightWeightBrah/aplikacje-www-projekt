@@ -170,6 +170,13 @@ class AgentSerializer(serializers.Serializer):
     can_view_team_stats = serializers.BooleanField()
 
 
+class AgentAccessBulkSerializer(serializers.Serializer):
+    """Odpowiedź POST /api/agents/team-access/: ustawiona wartość i liczba zmienionych agentów."""
+
+    can_view_team_stats = serializers.BooleanField()
+    updated = serializers.IntegerField()
+
+
 class AgentAccessSerializer(serializers.Serializer):
     """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager)."""
 
