@@ -2,6 +2,8 @@ import re
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .excel import MAX_IMPORT_BYTES
@@ -56,6 +58,7 @@ class ActivitySerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("agent", "created_at")
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_agent_name(self, obj):
         return obj.agent.username if obj.agent else None
 
@@ -115,6 +118,7 @@ class LeadSerializer(serializers.ModelSerializer):
             "created_at",
         )
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_transferred_from(self, obj):
         return getattr(obj, "transferred_from_name", None)
 
@@ -316,6 +320,7 @@ class LeaderboardRowSerializer(serializers.Serializer):
     agent = serializers.IntegerField()
     username = serializers.CharField()
     full_name = serializers.CharField()
+    avatar = serializers.CharField(help_text="Zdjęcie profilowe (data URL) albo pusty tekst.")
     sold = serializers.IntegerField()
     calls = serializers.IntegerField()
     answered = serializers.IntegerField()

@@ -35,6 +35,11 @@ CRM.initRanking = function initRanking() {
       : `${when} nikt jeszcze nie ma wyniku w tej kategorii. Pierwszy wpis zajmie pierwsze miejsce.`;
   }
 
+  function avatarHtml(r) {
+    const style = r.avatar ? ` style="background-image:url('${esc(r.avatar)}')"` : "";
+    return `<span class="avatar av-rank${r.avatar ? " has-img" : ""}"${style} aria-hidden="true">${r.avatar ? "" : esc(r.full_name.charAt(0).toUpperCase())}</span>`;
+  }
+
   function renderTable(rows, d) {
     const col = (key, label) => `<th class="num${d.sort === key ? " sorted" : ""}">${label}</th>`;
     const cell = (r, key) => `<td class="num${d.sort === key ? " sorted" : ""}">${key === "answer_rate" ? pct(r[key]) : r[key]}</td>`;
@@ -44,7 +49,7 @@ CRM.initRanking = function initRanking() {
       (rows.length ? rows.map((r) => {
         const medal = r.rank <= 3 && r[d.sort] > 0 ? ` medal m${r.rank}` : "";
         return `<tr class="${r.is_me ? "me" : ""}"><td><span class="place${medal}">${r.rank}</span></td>
-          <td><strong>${esc(r.full_name)}</strong>${r.is_me ? ' <small class="you">to Ty</small>' : ""}</td>
+          <td><span class="who-cell">${avatarHtml(r)}<strong>${esc(r.full_name)}</strong>${r.is_me ? ' <small class="you">to Ty</small>' : ""}</span></td>
           ${cell(r, "sold")}${cell(r, "calls")}${cell(r, "interested")}${cell(r, "answer_rate")}</tr>`;
       }).join("") : `<tr><td colspan="6" class="muted">Brak agentów do pokazania.</td></tr>`) + "</tbody>";
   }

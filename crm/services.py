@@ -14,7 +14,7 @@ from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from rest_framework.renderers import BaseRenderer
 
-from .models import Activity, Lead, LeadAssignment
+from .models import Activity, AgentProfile, Lead, LeadAssignment
 from .roles import AGENT
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
@@ -669,11 +669,15 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
         .distinct()
         .order_by("username")
     )
+    avatars = dict(
+        AgentProfile.objects.filter(user__in=users).exclude(avatar="").values_list("user_id", "avatar")
+    )
     rows = [
         {
             "agent": row["agent"],
             "username": row["username"],
             "full_name": user.get_full_name() or user.username,
+            "avatar": avatars.get(user.pk, ""),
             "sold": row["sold"],
             "calls": row["calls"],
             "answered": row["answered"],

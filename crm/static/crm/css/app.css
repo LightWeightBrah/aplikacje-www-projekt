@@ -294,3 +294,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .btn-mini:hover{border-color:var(--brand);color:var(--brand)}
 .btn-mini.ghost{border-color:transparent;background:none;color:var(--muted);padding-left:.2rem}
 .avatar-msg{display:block;margin-top:.4rem;color:var(--muted)}.avatar-msg.bad{color:#ef4444}
+
+/* Zdjęcia w rankingu */
+.who-cell{display:inline-flex;align-items:center;gap:.6rem}
+.av-rank{width:30px;height:30px;font-size:.8rem;color:#fff}

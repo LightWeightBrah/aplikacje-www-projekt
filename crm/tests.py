@@ -1312,6 +1312,16 @@ class LeaderboardTests(CrmTestBase):
         self.assertEqual(rows[0]["sold"], 1)
         self.assertEqual(rows[0]["calls"], 4)
 
+    # Ranking zwraca zdjęcie profilowe agenta (albo pusty tekst, gdy go nie ma)
+    def test_ranking_rows_include_avatar(self):
+        from .models import AgentProfile
+
+        png = "data:image/png;base64,AAAA"
+        AgentProfile.objects.create(user=self.agent1, avatar=png)
+        rows = {r["username"]: r for r in self.ranking(self.manager, "?days=1").data["results"]}
+        self.assertEqual(rows["agent1"]["avatar"], png)
+        self.assertEqual(rows["agent2"]["avatar"], "")
+
     # Taki sam wynik i liczba rozmów dają to samo miejsce
     def test_equal_scores_share_rank(self):
         self.add_calls(self.agent1, Activity.Outcome.SOLD, 1)

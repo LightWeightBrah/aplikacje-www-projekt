@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=27">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=28">
 </head>
 <body>
 <div class="shell">
@@ -52,7 +52,7 @@
         {% block content %}{% endblock %}
     </main>
 </div>
-<script src="{% static 'crm/js/app.js' %}?v=27"></script>
+<script src="{% static 'crm/js/app.js' %}?v=28"></script>
 <script>CRM.initShell();</script>
 {% block scripts %}{% endblock %}
 </body>
