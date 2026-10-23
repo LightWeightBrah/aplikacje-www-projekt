@@ -8,6 +8,10 @@
         <p class="muted" id="subtitle">Ładowanie danych…</p>
     </div>
     <div class="period">
+        <div class="tabs scope-tabs" id="scope-tabs" role="tablist" aria-label="Zakres" hidden>
+            <button type="button" role="tab" data-scope="team" aria-selected="true">Cały zespół</button>
+            <button type="button" role="tab" data-scope="me" aria-selected="false">Moja praca</button>
+        </div>
         <select id="days" class="select" aria-label="Okres">
             <option value="1" selected>Dziś</option>
             <option value="7">Ostatnie 7 dni</option>

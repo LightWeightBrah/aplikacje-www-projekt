@@ -1,0 +1,149 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Użytkownicy – LeadCRM{% endblock %}
+{% block nav_users %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Użytkownicy</h1>
+        <p class="muted" id="subtitle">Ładowanie…</p>
+    </div>
+    <div class="head-actions">
+        <button type="button" class="btn btn-primary" id="add-open">+ Dodaj użytkownika</button>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="users-area">
+    <section class="card">
+        <div class="table-wrap">
+            <table class="table users-table" id="users-table"></table>
+        </div>
+        <p class="card-desc rank-note">Konta nie są usuwane, tylko dezaktywowane: historia rozmów zostaje, a użytkownik nie może się zalogować. Dezaktywowane konto można w każdej chwili włączyć z powrotem. „Usuń” pojawia się tylko przy kontach bez historii (np. testowych).</p>
+    </section>
+</div>
+
+<dialog id="add-dialog" class="dialog">
+    <form id="add-form" novalidate>
+        <h2>Dodaj użytkownika</h2>
+        <label class="field">Imię<input id="add-first" class="select" maxlength="150" autocomplete="off" required></label>
+        <label class="field">Nazwisko<input id="add-last" class="select" maxlength="150" autocomplete="off" required></label>
+        <label class="field">Login
+            <input id="add-username" class="select" maxlength="150" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+            <small class="muted">Uzupełnia się z imienia i nazwiska, możesz go zmienić. Bez spacji, np. jan.kowalski</small>
+        </label>
+        <label class="field">Rola
+            <select id="add-role" class="select">
+                <option value="agent">Agent</option>
+                <option value="manager">Manager</option>
+            </select>
+        </label>
+        <label class="field">Hasło tymczasowe (opcjonalnie)
+            <input id="add-password" class="select" autocomplete="new-password" placeholder="puste = system wygeneruje hasło">
+            <small class="muted">Nowa osoba ustawi własne hasło przy pierwszym logowaniu.</small>
+        </label>
+        <p class="form-error" id="add-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="add-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="add-ok">Dodaj</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="edit-dialog" class="dialog">
+    <form id="edit-form" novalidate>
+        <h2 id="edit-title">Edytuj konto</h2>
+        <div class="avatar-row edit-avatar">
+            <span class="avatar avatar-lg" id="edit-avatar">?</span>
+            <div class="avatar-actions">
+                <button type="button" class="btn-mini" id="edit-avatar-change">Zmień zdjęcie</button>
+                <button type="button" class="btn-mini ghost" id="edit-avatar-remove" hidden>Usuń zdjęcie</button>
+            </div>
+            <input type="file" id="edit-avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+        </div>
+        <small class="avatar-msg muted" id="edit-avatar-msg" role="status">Zdjęcie zapisuje się od razu, niezależnie od przycisku „Zapisz”.</small>
+        <label class="field">Imię<input id="edit-first" class="select" maxlength="150" autocomplete="off"></label>
+        <label class="field">Nazwisko<input id="edit-last" class="select" maxlength="150" autocomplete="off"></label>
+        <label class="field">Login
+            <input id="edit-username" class="select" maxlength="150" autocomplete="off" autocapitalize="none" spellcheck="false">
+            <small class="muted" id="edit-login-hint">Po zmianie loginu osoba loguje się już nowym. Hasło zostaje to samo.</small>
+        </label>
+        <label class="field">Rola
+            <select id="edit-role" class="select">
+                <option value="agent">Agent</option>
+                <option value="manager">Manager</option>
+            </select>
+            <small class="muted" id="edit-role-hint"></small>
+        </label>
+        <p class="form-error" id="edit-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="edit-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="edit-ok">Zapisz</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="reset-dialog" class="dialog">
+    <form id="reset-form" novalidate>
+        <h2>Reset hasła</h2>
+        <p class="muted small" id="reset-intro"></p>
+        <label class="field" id="reset-field">Nowe hasło (opcjonalnie)
+            <input id="reset-password" class="select" autocomplete="new-password" placeholder="puste = system wygeneruje hasło">
+        </label>
+        <p class="form-error" id="reset-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="reset-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="reset-ok">Zresetuj hasło</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="deact-dialog" class="dialog">
+    <form id="deact-form" novalidate>
+        <h2>Dezaktywuj konto</h2>
+        <p class="muted small" id="deact-intro"></p>
+        <fieldset class="handover" id="deact-handover" hidden>
+            <legend>Co zrobić z aktywnymi leadami?</legend>
+            <label class="radio"><input type="radio" name="handover" value="pool" checked> Zwróć je do puli (wrócą jako nowe, historia kontaktów zostaje)</label>
+            <label class="radio"><input type="radio" name="handover" value="agent"> Przekaż innej osobie</label>
+            <select id="deact-to" class="select" aria-label="Komu przekazać leady" hidden></select>
+        </fieldset>
+        <p class="form-error" id="deact-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="deact-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-danger" id="deact-ok">Dezaktywuj</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="del-dialog" class="dialog">
+    <form id="del-form" novalidate>
+        <h2>Usuń konto</h2>
+        <p class="muted small" id="del-intro"></p>
+        <p class="form-error" id="del-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="del-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-danger" id="del-ok">Usuń trwale</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="secret-dialog" class="dialog">
+    <form method="dialog">
+        <h2 id="secret-title">Hasło</h2>
+        <p class="muted small" id="secret-intro"></p>
+        <dl class="secret-box">
+            <dt>Login</dt><dd id="secret-login"></dd>
+            <dt>Hasło</dt><dd><code id="secret-password"></code></dd>
+        </dl>
+        <p class="form-error warn" id="secret-warn">To hasło widać tylko teraz. Przekaż je użytkownikowi, a on przy pierwszym logowaniu ustawi własne. Jeśli się zgubi, zrób reset hasła.</p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="secret-copy">Kopiuj hasło</button>
+            <button type="submit" class="btn btn-primary">Gotowe</button>
+        </div>
+    </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/users.js' %}?v=36"></script>
+<script>CRM.initUsers();</script>{% endblock %}

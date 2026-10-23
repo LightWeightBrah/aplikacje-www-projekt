@@ -1,0 +1,36 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Plan dnia – LeadCRM{% endblock %}
+{% block nav_plan %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Plan dnia</h1>
+        <p class="muted" id="subtitle">Ładowanie…</p>
+    </div>
+    <div class="period plan-nav">
+        <div class="day-nav" role="group" aria-label="Wybór dnia">
+            <button type="button" class="btn-mini" id="day-prev" aria-label="Poprzedni dzień">&lsaquo;</button>
+            <button type="button" class="btn-mini" id="day-today">Dziś</button>
+            <button type="button" class="btn-mini" id="day-next" aria-label="Następny dzień">&rsaquo;</button>
+        </div>
+        <input type="date" id="day-input" class="select" aria-label="Dzień">
+        <button type="button" class="btn btn-secondary" id="ics-btn" title="Terminy kontaktów do kalendarza (Google, Outlook, telefon)">Pobierz kalendarz (.ics)</button>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<section class="card" id="overdue-card" hidden>
+    <h2 class="late">Zaległe <small class="muted" id="overdue-count"></small></h2>
+    <p class="card-desc">Termin tych kontaktów już minął, zadzwoń do nich w pierwszej kolejności.</p>
+    <div id="overdue-list" class="plan-list"></div>
+</section>
+
+<section class="card">
+    <h2 id="day-title">Zaplanowane kontakty</h2>
+    <div id="plan-list" class="plan-list"></div>
+</section>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=36"></script>
+<script>CRM.initPlan();</script>{% endblock %}

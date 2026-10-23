@@ -163,3 +163,9 @@ SPECTACULAR_SETTINGS = {
 
 # Strony HTML wymagające logowania przekierowują na logowanie z panelu admina
 LOGIN_URL = 'admin:login'
+
+# Zmiana hasła (reset przez managera) unieważnia wcześniej wydane tokeny tego użytkownika
+SIMPLE_JWT = {
+    "CHECK_REVOKE_TOKEN": True,
+    "UPDATE_LAST_LOGIN": True,  # panel użytkowników pokazuje ostatnie logowanie
+}

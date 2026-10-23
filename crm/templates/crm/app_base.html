@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=28">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=36">
 </head>
 <body>
 <div class="shell">
@@ -15,9 +15,11 @@
         <nav>
             <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
             <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Moja kolejka</a>
+            <a href="{% url 'crm:plan' %}" class="{% block nav_plan %}{% endblock %}">Plan dnia</a>
             <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
             <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Panel managera</a>
             <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport</a>
+            <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
             <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
         </nav>
         <div class="user-menu">
@@ -39,6 +41,7 @@
                     <button type="button" data-theme-choice="dark">Ciemny</button>
                     <button type="button" data-theme-choice="auto">Auto</button>
                 </div>
+                <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
                 <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
             </div>
             <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
@@ -52,7 +55,21 @@
         {% block content %}{% endblock %}
     </main>
 </div>
-<script src="{% static 'crm/js/app.js' %}?v=28"></script>
+<dialog id="pw-dialog" class="dialog">
+    <form id="pw-form" novalidate>
+        <h2 id="pw-title">Zmiana hasła</h2>
+        <p class="muted small" id="pw-intro"></p>
+        <label class="field" id="pw-current-field">Obecne hasło<input type="password" id="pw-current" class="select" autocomplete="current-password"></label>
+        <label class="field">Nowe hasło<input type="password" id="pw-new" class="select" autocomplete="new-password"></label>
+        <label class="field">Powtórz nowe hasło<input type="password" id="pw-repeat" class="select" autocomplete="new-password"></label>
+        <p class="form-error" id="pw-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="pw-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="pw-ok">Zapisz hasło</button>
+        </div>
+    </form>
+</dialog>
+<script src="{% static 'crm/js/app.js' %}?v=36"></script>
 <script>CRM.initShell();</script>
 {% block scripts %}{% endblock %}
 </body>

@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import views
+from . import users_api, views
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -12,6 +12,7 @@ router.register("my-leads", views.MyLeadsViewSet, basename="my-lead")
 router.register("activities", views.ActivityViewSet)
 router.register("assignments", views.LeadAssignmentViewSet)
 router.register("agents", views.AgentViewSet, basename="agent")
+router.register("users", users_api.UserViewSet, basename="user")
 router.register("stats", views.StatsViewSet, basename="stats")
 
 urlpatterns = [

@@ -542,7 +542,16 @@ class StatsViewSet(viewsets.ViewSet):
                     "Id agenta, którego wyniki chcesz zobaczyć (tylko liczby, bez leadów). "
                     "Agent może to robić, dopóki manager mu nie wyłączy podglądu (403)."
                 ),
-            )
+            ),
+            OpenApiParameter(
+                "scope",
+                str,
+                enum=["team", "me"],
+                description=(
+                    "Tylko dla managera: `team` (domyślnie) = cały zespół i pula, "
+                    "`me` = wyłącznie jego własna praca. Dla agenta bez znaczenia."
+                ),
+            ),
         ],
     )
     def list(self, request):
@@ -555,9 +564,16 @@ class StatsViewSet(viewsets.ViewSet):
         if error:
             return error
         manager = is_manager(request.user)
+        if request.query_params.get("scope") not in (None, "", "team", "me"):
+            return Response(
+                {"detail": "Parametr scope przyjmuje wartości: team, me."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         raw_agent = request.query_params.get("agent")
         if raw_agent is None or raw_agent == str(request.user.pk):
+            if request.query_params.get("scope") == "me":
+                manager = False  # manager ogląda tylko własną pracę, jak agent
             data = build_stats(request.user, 0, manager, date_from, date_to)
             return Response(StatsSerializer(data).data)
 

@@ -42,3 +42,13 @@ def import_page(request):
 def ranking_page(request):
     """Szkielet rankingu zespołu. Dane idą z /api/leaderboard/ (403, gdy manager wyłączył podgląd)."""
     return render(request, "crm/ranking.html")
+
+
+def users_page(request):
+    """Szkielet zarządzania użytkownikami (tylko manager). Dane idą z /api/users/."""
+    return render(request, "crm/users.html")
+
+
+def plan_page(request):
+    """Szkielet planu dnia. Dane idą z /api/my-leads/schedule/ (token JWT)."""
+    return render(request, "crm/plan.html")

@@ -320,7 +320,12 @@
     const o = OUTCOMES[Number(e.key) - 1];
     if (o) { e.preventDefault(); form.querySelector(`[data-outcome="${o[0]}"]`).click(); }   // preventDefault: cyfra nie wpisze się w pole, na które przeskoczy kursor
   });
-  loadLeads().then(() => (leads.length ? select(leads[0].id) : emptyPane())).catch(() => {
+  /* /crm/queue/?lead=ID (link z planu dnia) otwiera od razu wskazanego leada */
+  const wanted = Number(new URLSearchParams(location.search).get("lead"));
+  loadLeads().then(() => {
+    const first = leads.find((l) => l.id === wanted) || leads[0];
+    return first ? select(first.id) : emptyPane();
+  }).catch(() => {
     $("lead-list").innerHTML = '<p class="form-error">Nie udało się wczytać leadów. Odśwież stronę (Ctrl+F5).</p>';
   });
 })();

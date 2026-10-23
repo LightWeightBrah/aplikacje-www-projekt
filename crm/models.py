@@ -232,6 +232,11 @@ class AgentProfile(models.Model):
         default=True,
         help_text="Odznacz, aby ukryć ranking i statystyki innych agentów przed tym agentem.",
     )
+    must_change_password = models.BooleanField(
+        "musi ustawić nowe hasło",
+        default=False,
+        help_text="Włączane po założeniu konta lub resecie hasła przez managera; zdejmowane po zmianie hasła przez użytkownika.",
+    )
     avatar = models.TextField(
         "zdjęcie profilowe",
         blank=True,

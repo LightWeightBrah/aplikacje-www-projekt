@@ -311,3 +311,87 @@ class RankingPageTests(CrmTestBase):
         r = self.api(self.agent1).get("/api/leaderboard/?days=1")
         self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.api(self.agent2).get("/api/leaderboard/?days=1").status_code, 200)
+
+
+class UsersPageTests(CrmTestBase):
+    def test_users_page_renders(self):
+        r = self.client.get("/crm/users/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "users-table")
+        self.assertContains(r, "CRM.initUsers")
+
+    def test_menu_links_to_users_page_for_managers_only(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/users/" data-manager-only')
+
+    def test_users_api_used_by_page_is_manager_only(self):
+        self.assertEqual(self.api().get("/api/users/").status_code, 401)
+        self.assertEqual(self.api(self.agent1).get("/api/users/").status_code, 403)
+
+
+class ManagerScopeTests(CrmTestBase):
+    """Manager może na dashboardzie przełączyć się z całego zespołu na własną pracę."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import Activity, Lead
+
+        self.mine = Lead.objects.create(contact_name="Moj", phone="500100900", owner=self.manager)
+        theirs = Lead.objects.create(contact_name="Cudzy", phone="500100901", owner=self.agent1)
+        Lead.objects.create(contact_name="Pula", phone="500100902")
+        Activity.objects.create(lead=self.mine, agent=self.manager, outcome="interested")
+        Activity.objects.create(lead=theirs, agent=self.agent1, outcome="sold")
+        Activity.objects.create(lead=theirs, agent=self.agent1, outcome="sold")
+
+    def test_dashboard_has_scope_switch(self):
+        self.assertContains(self.client.get("/crm/"), 'id="scope-tabs"')
+
+    def test_default_scope_is_whole_team(self):
+        d = self.api(self.manager).get("/api/stats/?days=1").data
+        self.assertEqual(d["outcomes"]["sold"], 2)
+        self.assertEqual(d["pool_leads"], 1)
+        self.assertEqual(d["total_leads"], 3)
+
+    def test_me_scope_shows_only_managers_own_work(self):
+        d = self.api(self.manager).get("/api/stats/?days=1&scope=me").data
+        self.assertEqual(d["outcomes"]["sold"], 0)
+        self.assertEqual(d["outcomes"]["interested"], 1)
+        self.assertEqual(d["total_leads"], 1)
+        self.assertIsNone(d["pool_leads"])
+        self.assertEqual([a["username"] for a in d["agents"]], ["manager1"])
+
+    def test_team_scope_explicit_equals_default(self):
+        api = self.api(self.manager)
+        self.assertEqual(
+            api.get("/api/stats/?days=1&scope=team").data["outcomes"],
+            api.get("/api/stats/?days=1").data["outcomes"],
+        )
+
+    def test_agent_cannot_widen_scope(self):
+        d = self.api(self.agent1).get("/api/stats/?days=1&scope=team").data
+        self.assertEqual(d["outcomes"]["sold"], 2)
+        self.assertIsNone(d["pool_leads"])
+        self.assertEqual(d["total_leads"], 1)
+
+    def test_invalid_scope(self):
+        self.assertEqual(self.api(self.manager).get("/api/stats/?days=1&scope=x").status_code, 400)
+
+
+class PlanPageTests(CrmTestBase):
+    def test_plan_page_renders(self):
+        r = self.client.get("/crm/plan/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "plan-list")
+        self.assertContains(r, "CRM.initPlan")
+
+    def test_menu_links_to_plan_for_everyone(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/plan/"')
+        self.assertNotContains(r, 'href="/crm/plan/" data-manager-only')
+
+    def test_queue_page_supports_lead_link(self):
+        self.assertContains(self.client.get("/crm/queue/?lead=1"), "queue.js")
+
+    def test_schedule_and_calendar_need_login(self):
+        self.assertEqual(self.api().get("/api/my-leads/schedule/").status_code, 401)
+        self.assertEqual(self.api().get("/api/my-leads/calendar/").status_code, 401)

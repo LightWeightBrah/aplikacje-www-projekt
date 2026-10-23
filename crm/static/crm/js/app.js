@@ -160,6 +160,65 @@ const CRM = (() => {
     paint();
   }
 
+  /* Zmiana hasła: dobrowolna (menu profilu) albo wymuszona po haśle tymczasowym od managera. */
+  function initPassword(user) {
+    const dlg = $("pw-dialog");
+    let forced = false;
+    const err = (msg) => { $("pw-error").textContent = msg || ""; $("pw-error").hidden = !msg; };
+    function open(isForced) {
+      forced = isForced;
+      $("pw-form").reset();
+      err("");
+      $("pw-title").textContent = forced ? "Ustaw swoje hasło" : "Zmiana hasła";
+      $("pw-intro").textContent = forced
+        ? "Zalogowano hasłem tymczasowym od managera. Wybierz własne hasło, żeby korzystać z aplikacji."
+        : "Wpisz obecne hasło i wybierz nowe.";
+      $("pw-current-field").hidden = forced;  // hasło tymczasowe już wpisano przy logowaniu
+      $("pw-cancel").textContent = forced ? "Wyloguj" : "Anuluj";
+      if (!dlg.open) dlg.showModal();
+      (forced ? $("pw-new") : $("pw-current")).focus();
+    }
+    dlg.addEventListener("cancel", (e) => { if (forced) e.preventDefault(); });
+    $("pw-cancel").addEventListener("click", () => { if (forced) logout(); else dlg.close(); });
+    $("change-pw-btn").addEventListener("click", () => {
+      $("user-popover").hidden = true;
+      $("user-btn").setAttribute("aria-expanded", "false");
+      open(false);
+    });
+    $("pw-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err("");
+      const current = forced ? "" : $("pw-current").value, next = $("pw-new").value;
+      if ((!forced && !current) || !next) { err("Wypełnij wszystkie pola."); return; }
+      if (next !== $("pw-repeat").value) { err("Nowe hasła nie są takie same."); return; }
+      $("pw-ok").disabled = true;
+      try {
+        const r = await api("/api/me/password/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ current_password: current, new_password: next }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const parts = Object.values(data).map((v) => (Array.isArray(v) ? v.join(" ") : String(v)));
+          err(parts.join(" ") || "Nie udało się zmienić hasła.");
+          return;
+        }
+        store.set("crm_access", data.access);
+        store.set("crm_refresh", data.refresh);
+        const me = currentUser() || {};
+        store.set("crm_user", JSON.stringify({ ...me, must_change_password: false }));
+        forced = false;
+        dlg.close();
+      } catch (ex) {
+        err(ex.message);
+      } finally {
+        $("pw-ok").disabled = false;
+      }
+    });
+    if (user.must_change_password) open(true);
+    return { open };
+  }
+
   function initLogin() {
     initTheme();
     if (store.get("crm_access") && currentUser()) { location.href = HOME_URL; return; }
@@ -203,10 +262,17 @@ const CRM = (() => {
     initUserMenu(user);
     paintAvatars(user);
     initAvatar(user);
+    const password = initPassword(user);
     /* Manager mógł zmienić uprawnienia od logowania, więc odświeżamy je z /api/me/. */
     api("/api/me/").then((r) => (r.ok ? r.json() : null)).then((me) => {
       if (!me || me.role === "none") return;
-      const fresh = { ...user, can_view_team: me.can_view_team, avatar: me.avatar || "" };
+      if (me.role !== user.role) {  // manager zmienił rolę w trakcie sesji
+        store.set("crm_user", JSON.stringify({ ...user, ...me }));
+        location.reload();
+        return;
+      }
+      const fresh = { ...user, full_name: me.full_name, username: me.username, can_view_team: me.can_view_team, avatar: me.avatar || "", must_change_password: !!me.must_change_password };
+      if (me.must_change_password && !user.must_change_password) password.open(true);
       store.set("crm_user", JSON.stringify(fresh));
       applyTeamAccess(me);
       paintAvatars(fresh);
@@ -336,10 +402,26 @@ const CRM = (() => {
   function initDashboard() {
     const user = currentUser();
     if (!user) return;
-    const manager = user.role === "manager";
+    const isManager = user.role === "manager";
+    /* Manager przełącza widok: cały zespół albo tylko jego własna praca (pamiętane w przeglądarce). */
+    let manager = isManager && store.get("crm_scope") !== "me";
     $("greeting").textContent = "Dzień dobry, " + user.full_name.split(" ")[0];
-    $("agents-card").hidden = !manager;
-    $("funnel-title").textContent = manager ? "Wszyscy klienci" : "Moi klienci";
+    function applyScope() {
+      $("agents-card").hidden = !manager;
+      $("funnel-title").textContent = manager ? "Wszyscy klienci" : "Moi klienci";
+      document.querySelectorAll("#scope-tabs button").forEach((b) =>
+        b.setAttribute("aria-selected", String((b.dataset.scope === "team") === manager)));
+    }
+    if (isManager) {
+      $("scope-tabs").hidden = false;
+      document.querySelectorAll("#scope-tabs button").forEach((b) => b.addEventListener("click", () => {
+        manager = b.dataset.scope === "team";
+        store.set("crm_scope", manager ? "team" : "me");
+        applyScope();
+        load();
+      }));
+    }
+    applyScope();
     const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     $("date-to").value = iso(new Date());
     $("date-from").value = iso(new Date());
@@ -352,13 +434,13 @@ const CRM = (() => {
       $("range").hidden = $("days").value !== "custom";
       if ($("days").value === "custom" && !($("date-from").value && $("date-to").value)) return;
       try {
-        const r = await api("/api/stats/?" + periodQuery());
+        const r = await api("/api/stats/?" + periodQuery() + (isManager && !manager ? "&scope=me" : ""));
         if (!r.ok) throw new Error("Nie udało się pobrać statystyk (" + r.status + ").");
         const d = await r.json();
         const day = (v) => new Date(v + "T12:00:00").toLocaleDateString("pl-PL");
         const period = d.days === 1 && d.date_from === iso(new Date()) ? "dziś"
           : d.date_from === d.date_to ? day(d.date_from) : day(d.date_from) + " – " + day(d.date_to);
-        $("subtitle").textContent = (manager ? "Praca całego zespołu" : "Twoje wyniki i klienci") + " · rozmowy: " + period;
+        $("subtitle").textContent = (manager ? "Praca całego zespołu" : isManager ? "Twoja własna praca" : "Twoje wyniki i klienci") + " · rozmowy: " + period;
         renderKpis(d, manager);
         $("outcomes-period").textContent = "· " + period;
         $("agents-period").textContent = "· " + period;
@@ -376,5 +458,5 @@ const CRM = (() => {
     load();
   }
 
-  return { initLogin, initShell, initDashboard, api, esc, STATUS, $, currentUser };
+  return { initLogin, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser };
 })();

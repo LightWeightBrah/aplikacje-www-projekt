@@ -695,3 +695,19 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
             rank, previous = position, score
         row["rank"] = rank
     return rows
+
+
+def release_agent_leads(agent, reason=""):
+    """Zwraca do puli wszystkie aktywne leady agenta (np. przy dezaktywacji konta).
+
+    W przeciwieństwie do `assign_lead(lead, None)` zwraca także leady z terminem
+    kontaktu (oddzwonienia, zainteresowani): wracają do puli jako nowe, a historia
+    kontaktów zostaje. Zwraca liczbę zwróconych leadów.
+    """
+    reason = reason or "Zwrot do puli: konto agenta zostało zdezaktywowane"
+    count = 0
+    with transaction.atomic():
+        for lead in Lead.objects.filter(owner=agent, status__in=ACTIVE_STATUSES):
+            if _return_to_pool(lead, Lead.Status.NEW, reason):
+                count += 1
+    return count

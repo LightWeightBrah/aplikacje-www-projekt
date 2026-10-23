@@ -3,6 +3,7 @@ from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .avatar import validate_avatar
 from .models import AgentProfile
@@ -21,6 +22,9 @@ class MeSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=["manager", "agent", "none"])
     can_view_team = serializers.BooleanField()
     avatar = serializers.CharField(help_text="Zdjęcie jako data URL albo pusty tekst.")
+    must_change_password = serializers.BooleanField(
+        help_text="Tak, gdy użytkownik loguje się hasłem tymczasowym od managera."
+    )
 
 
 class AvatarSerializer(serializers.Serializer):
@@ -49,6 +53,9 @@ class MeView(APIView):
                 "role": role,
                 "can_view_team": can_view_team_stats(user),
                 "avatar": _avatar_of(user),
+                "must_change_password": AgentProfile.objects.filter(
+                    user=user, must_change_password=True
+                ).exists(),
             }
         )
 
@@ -71,3 +78,49 @@ class MeAvatarView(APIView):
     def delete(self, request):
         AgentProfile.objects.filter(user=request.user).update(avatar="")
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(
+        trim_whitespace=False,
+        required=False,
+        allow_blank=True,
+        help_text="Wymagane, chyba że konto ma hasło tymczasowe od managera (wtedy pomijane).",
+    )
+    new_password = serializers.CharField(trim_whitespace=False)
+
+
+class TokenPairSerializer(serializers.Serializer):
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+
+
+class MePasswordView(APIView):
+    """Użytkownik sam zmienia hasło. Stare logowania wygasają, więc odpowiedź zawiera nowe tokeny."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ChangePasswordSerializer, responses=TokenPairSerializer)
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        forced = AgentProfile.objects.filter(user=user, must_change_password=True).exists()
+        current = serializer.validated_data.get("current_password", "")
+        new = serializer.validated_data["new_password"]
+        # Po haśle tymczasowym użytkownik już się nim zalogował, więc nie pytamy o nie drugi raz
+        if not forced and not user.check_password(current):
+            return Response(
+                {"current_password": ["Obecne hasło jest nieprawidłowe."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if user.check_password(new):
+            return Response(
+                {"new_password": ["Wybierz inne hasło niż obecne."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(new)
+        user.save(update_fields=["password"])
+        AgentProfile.objects.filter(user=user).update(must_change_password=False)
+        refresh = RefreshToken.for_user(user)
+        return Response({"access": str(refresh.access_token), "refresh": str(refresh)})
