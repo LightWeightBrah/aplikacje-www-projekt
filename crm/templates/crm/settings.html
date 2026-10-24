@@ -1,0 +1,33 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Ustawienia zespołu – LeadCRM{% endblock %}
+{% block nav_settings %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Ustawienia zespołu</h1>
+        <p class="muted">Zasady pracy z leadami dla wszystkich agentów. Zmiany działają od razu dla nowych rozmów.</p>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="settings-area" hidden>
+    <section class="card rules-summary" aria-live="polite">
+        <h2>Tak to działa teraz</h2>
+        <ul id="rules-summary"></ul>
+    </section>
+
+    <form id="rules-form" novalidate>
+        <div id="rules-groups"></div>
+        <p id="rules-error" class="form-error" hidden></p>
+        <div class="actions rules-actions">
+            <button type="submit" class="btn btn-primary" id="rules-save" disabled>Zapisz ustawienia</button>
+            <button type="button" class="btn btn-secondary" id="rules-undo" disabled>Cofnij zmiany</button>
+            <button type="button" class="link-btn" id="rules-reset">Przywróć ustawienia domyślne</button>
+            <span class="muted small" id="rules-meta"></span>
+        </div>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=51"></script>
+<script>CRM.initSettings();</script>{% endblock %}

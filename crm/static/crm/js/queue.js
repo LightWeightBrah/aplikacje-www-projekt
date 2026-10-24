@@ -10,7 +10,7 @@
   const REQUIRED = ["callback", "interested"];   // te wyniki wymagają terminu (sprawa jest opcjonalna)
   const { parseWhen, fmtInput, fmtLong, fmtNative } = WHEN;
   const OUTCOMES = [
-    ["no_answer", "Nie odebrał", "Zaliczy próbę (po 3 nieodebranych lead wraca do puli). Możesz zaplanować ponowną próbę."],
+    ["no_answer", "Nie odebrał", "Zaliczy próbę. Po wyczerpaniu limitu prób lead wraca do puli. Możesz zaplanować ponowną próbę."],
     ["callback", "Oddzwonić", "Lead zostaje u Ciebie do wskazanego terminu."],
     ["interested", "Zainteresowany", "Status „Zainteresowany”. Wpisz, kiedy ponownie zadzwonić (sprawa jest opcjonalna)."],
     ["sold", "Sprzedane", "Lead zostaje zamknięty jako wygrany (sprzedaż). Znika z Twojej kolejki."],
@@ -19,20 +19,43 @@
   ];
   const OUT_LABEL = { ...Object.fromEntries(OUTCOMES.map((o) => [o[0], o[1]])), note: "Notatka" };
   const CLOSED = ["won", "lost", "do_not_call", "unreachable"];
-  const GROUPS = ["Zaległe – oddzwoń teraz", "Dziś", "Zaplanowane", "Bez terminu"];
+  const GROUPS = ["Zaległe – oddzwoń teraz", "Dziś", "Ponowne próby – jeszcze nie odebrali", "Zaplanowane", "Do pierwszego telefonu", "Bez terminu"];
   const fmt = (iso) => (iso ? new Date(iso).toLocaleString("pl-PL",
     { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–");
   const chip = (code) => { const [l, c] = STATUS[code] || [code, "#64748b"]; return `<span class="chip" style="--c:${c}">${esc(l)}</span>`; };
   const cache = { companies: {}, products: {} };
-  let leads = [], selectedId = null, outcome = null, resetForm = null, current = null, lastListHtml = "";
+  let leads = [], selectedId = null, outcome = null, resetForm = null, current = null, lastListHtml = "", savedNote = "", rules = { max_attempts_per_agent: 3 }, autoRetry = false;
   const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e",
     refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8" };
   const MISSED_WINDOW_MS = 5 * 60000;
   /* Umówiony kontakt, którego termin minął albo właśnie nadszedł (nieodebrany telefon liczy się wtedy jako „nie w terminie”) */
   const isDue = (l) => !!l && !!l.next_contact_at && new Date(l.next_contact_at).getTime() <= Date.now() + MISSED_WINDOW_MS;
+  const PROMISED = ["callback", "interested", "offer"];
+  /* Umówiony kontakt (obiecany klientowi), którego termin minął lub właśnie nadszedł; zwykła ponowna próba po nieodebraniu się nie liczy */
+  const isMissable = (l) => isDue(l) && PROMISED.includes(l.status);
+  const isFresh = (l) => !!l && l.status === "new" && !!l.owner;   // nikt jeszcze z tym leadem nie rozmawiał
+  const triesOf = (l) => (l && l.owner_no_answers) || 0;
+  const maxTries = () => rules.max_attempts_per_agent || 3;
+  const isLastTry = (l) => isFresh(l) && triesOf(l) + 1 >= maxTries();
+  const raz = (n) => (n === 1 ? "raz" : "razy");
+  /* Plakietka statusu: „Nowy” rozbijamy na „jeszcze nie dzwoniłeś” i „nie odbiera – próba N z M”, żeby było widać, na czym stoi lead */
+  function statusChip(l) {
+    if (!isFresh(l)) return chip(l.status);
+    const n = triesOf(l);
+    return n === 0
+      ? `<span class="try-chip fresh" title="Nikt jeszcze nie dzwonił do tego leada">Nowy · nie dzwoniłeś</span>`
+      : `<span class="try-chip" title="Jeszcze z nim nie rozmawiałeś. Po ${maxTries()} nieodebranych próbach lead wraca do puli.">Nie odbiera · ${n} z ${maxTries()}</span>`;
+  }
+  const longDate = (d) => d.toLocaleString("pl-PL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
   const missedChip = (l) => (l.missed_calls > 0 ? `<span class="missed-chip">Nie odebrał w terminie${l.missed_calls > 1 ? " ×" + l.missed_calls : ""}</span>` : "");
   const ICON_NOTE = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
   const refreshReminders = () => { if (CRM.refreshReminders) CRM.refreshReminders(); };
+  const plOverdue = (n) => (n === 1 ? "kontakt do wykonania" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "kontakty do wykonania" : "kontaktów do wykonania");
+  /* Inni zaległi (najstarszy pierwszy): „Zapisz i weź kolejnego” najpierw prowadzi do nich, dopiero potem do puli */
+  /* Inne kontakty z minionym terminem: najpierw obiecane oddzwonienia, potem ponowne próby (najstarsze pierwsze) */
+  const otherOverdue = (leadId) => leads
+    .filter((l) => l.id !== leadId && l.next_contact_at && new Date(l.next_contact_at) < new Date())
+    .sort((a, b) => (isFresh(a) - isFresh(b)) || (new Date(a.next_contact_at) - new Date(b.next_contact_at)));
 
   function rel(iso) {
     const m = Math.round((new Date(iso) - Date.now()) / 60000), a = Math.abs(m);
@@ -41,9 +64,20 @@
     return m < 0 ? `${t} temu` : `za ${t}`;
   }
   function groupOf(l) {
-    if (!l.next_contact_at) return 3;
+    const retry = isFresh(l) && triesOf(l) > 0;   // do tego leada już dzwoniono, ale nikt nie odebrał
+    if (!l.next_contact_at) return retry ? 2 : isFresh(l) ? 4 : 5;
     const t = new Date(l.next_contact_at), now = new Date();
-    return t < now ? 0 : t.toDateString() === now.toDateString() ? 1 : 2;
+    if (retry) return 2;   // ponowna próba to zadanie miękkie: nigdy „zaległe – oddzwoń teraz”
+    if (t < now) return 0;
+    return t.toDateString() === now.toDateString() ? 1 : 3;
+  }
+  /* Kolejność: grupa, w zaległych najpierw obiecane oddzwonienia, potem ponowne próby; w grupie po terminie */
+  const timeKey = (l) => (l.next_contact_at ? new Date(l.next_contact_at).getTime() : Infinity);
+  function byUrgency(a, b) {
+    const ga = groupOf(a), gb = groupOf(b);
+    if (ga !== gb) return ga - gb;
+    if (ga === 0 && isFresh(a) !== isFresh(b)) return isFresh(a) ? 1 : -1;
+    return timeKey(a) - timeKey(b);
   }
   async function ref(kind, id) {
     if (!id) return null;
@@ -65,16 +99,15 @@
       all = all.concat(d.results);
       url = d.next ? d.next.replace(location.origin, "") : null;
     }
-    const key = (l) => (l.next_contact_at ? new Date(l.next_contact_at).getTime() : Infinity);
-    leads = all.filter((l) => !CLOSED.includes(l.status)).sort((a, b) => key(a) - key(b));
+    leads = all.filter((l) => !CLOSED.includes(l.status)).sort(byUrgency);
     renderList();
   }
 
   /* Jeden wiersz listy; extra = dodatkowa linia (np. „Pasuje numer telefonu”) pod numerem */
   function leadItem(l, g, extra = "") {
-    const when = l.next_contact_at ? `<small class="when${g === 0 ? " late" : ""}" title="${fmt(l.next_contact_at)}">${rel(l.next_contact_at)} · ${fmt(l.next_contact_at)}</small>` : "";
+    const when = l.next_contact_at ? `<small class="when${g === 0 ? " late" : g === 2 && new Date(l.next_contact_at) < new Date() ? " soft" : ""}" title="${fmt(l.next_contact_at)}">${rel(l.next_contact_at)} · ${fmt(l.next_contact_at)}</small>` : "";
     return `<button type="button" class="lead-item${l.id === selectedId ? " active" : ""}" data-id="${l.id}">
-        <div><strong>${esc(l.contact_name)}</strong>${chip(l.status)}</div><small>${esc(l.phone)}</small>${extra}${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why" title="Sprawa">${ICON_NOTE}<span>${esc(l.next_contact_note)}</span></small>` : ""}${l.missed_calls > 0 ? `<small>${missedChip(l)}</small>` : ""}</button>`;
+        <div><strong>${esc(l.contact_name)}</strong>${statusChip(l)}</div><small>${esc(l.phone)}</small>${extra}${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why" title="Sprawa">${ICON_NOTE}<span>${esc(l.next_contact_note)}</span></small>` : ""}${l.missed_calls > 0 ? `<small>${missedChip(l)}</small>` : ""}</button>`;
   }
 
   function renderList() {
@@ -83,6 +116,7 @@
     if (found !== null) { renderFound(); return; }
     $("lead-count").textContent = leads.length ? `(${leads.length})` : "";
     if (!leads.length) { lastListHtml = ""; $("lead-list").innerHTML = `<p class="muted">Brak aktywnych leadów. Kliknij „Daj kolejnego leada”.</p>`; return; }
+    leads.sort(byUrgency);   // pilność zmienia się z czasem (termin mija), więc sortujemy przy każdym rysowaniu
     let html = "", last = -1;
     leads.forEach((l) => {
       const g = groupOf(l);
@@ -165,9 +199,18 @@
     if (!r.ok) { toast("Nie udało się wczytać leada.", true); return; }
     const d = await r.json();
     const [company, product] = await Promise.all([ref("companies", d.company), ref("products", d.product)]);
-    outcome = null; current = d;
+    outcome = null; current = d; autoRetry = false;
     renderCard(d, company, product);
   }
+
+  /* Otwarcie leada z zewnątrz (karta przypomnienia, powiadomienie) bez przeładowania strony */
+  CRM.openLead = async (id) => {
+    clearSearch();
+    if (!leads.some((l) => l.id === id)) await loadLeads();
+    await select(id);
+    window.scrollTo({ top: 0, behavior: "auto" });
+    return !!current && current.id === id;
+  };
 
   /* Historia: najpierw godzina, potem wynik i kto dzwonił, notatka pod spodem; wpisy pogrupowane dniami */
   const HIST_SHORT = 6;
@@ -178,48 +221,116 @@
     return d.toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" });
   }
   const spanText = (m) => (m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}` : `${Math.floor(m / 1440)} d`);
-  /* Linia „Umówiony na … · zadzwoniono … (10 min po terminie)” oraz „Następny kontakt: …” */
-  function timeline(a) {
-    let html = "";
-    if (a.planned_at) {
-      const diff = Math.round((new Date(a.created_at) - new Date(a.planned_at)) / 60000);
-      const t = new Date(a.created_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-      const how = Math.abs(diff) < 2 ? "w terminie"
-        : diff > 0 ? `<span class="over">${spanText(diff)} po terminie</span>` : `${spanText(-diff)} przed terminem`;
-      html += `<div class="h-plan">Umówiony na <b>${fmt(a.planned_at)}</b> · zadzwoniono <b>${t}</b> (${how})</div>`;
+  /* Data z dniem tygodnia: „pt 31.10, 09:00” */
+  const wd = (iso) => { const d = new Date(iso); return `${d.toLocaleDateString("pl-PL", { weekday: "short" }).replace(".", "")} ${d.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })}, ${d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`; };
+  const sameMinute = (x, y) => Math.abs(new Date(x) - new Date(y)) < 60000;
+  /* Co dalej po tym kontakcie: jedna wyraźna linia (nowy termin, ponowna próba albo zamknięcie leada) */
+  const CLOSING = { sold: "Lead zamknięty: sprzedane", refused: "Lead zamknięty: odmowa", wrong_number: "Lead zamknięty: zły numer" };
+  function nextStep(a) {
+    if (CLOSING[a.outcome]) return `<div class="h-next closed">${CLOSING[a.outcome]}</div>`;
+    if (!a.rescheduled_to) return "";
+    const label = a.outcome === "no_answer" ? "Ponowna próba" : "Następny kontakt";
+    let tag = "";
+    if (a.outcome !== "no_answer" && a.planned_at) {
+      tag = sameMinute(a.planned_at, a.rescheduled_to)
+        ? `<span class="h-tag same">termin bez zmian</span>`
+        : `<span class="h-tag">termin zmieniony (był ${esc(wd(a.planned_at))})</span>`;
     }
-    if (a.rescheduled_to) html += `<div class="h-plan">&rarr; Następny kontakt: <b>${fmt(a.rescheduled_to)}</b></div>`;
-    return html;
+    return `<div class="h-next">${label}: <b>${esc(wd(a.rescheduled_to))}</b> ${tag}</div>`;
   }
-  function historyHtml(acts, all) {
-    if (!acts.length) return `<li class="muted">Brak historii kontaktów.</li>`;
-    const shown = all ? acts : acts.slice(0, HIST_SHORT);
+  /* Czy kontakt odbył się w umówionym terminie: pokazujemy tylko, gdy różnica jest zauważalna (≥ 5 min) */
+  function punctuality(a) {
+    if (!a.planned_at || a.outcome === "note") return "";
+    const diff = Math.round((new Date(a.created_at) - new Date(a.planned_at)) / 60000);
+    if (Math.abs(diff) < 5) return "";
+    return diff > 0 ? `<div class="h-punct late">Spóźniony kontakt: ${spanText(diff)} po umówionym terminie (${esc(wd(a.planned_at))})</div>` : "";   // wcześniejszy telefon nie jest problemem, więc go nie pokazujemy
+  }
+  /* Numer kontaktu z leadem (1 = pierwszy), liczony od najstarszego; notatki nie mają numeru */
+  let histNums = new Map();
+  function numberCalls(acts) {
+    histNums = new Map();
+    let n = 0;
+    acts.slice().reverse().forEach((a) => { if (a.outcome !== "note") histNums.set(a.id, ++n); });
+  }
+  const HIST_FILTERS = { all: () => true, talked: (a) => a.outcome !== "note" && a.outcome !== "no_answer", noans: (a) => a.outcome === "no_answer", notes: (a) => a.outcome === "note" };
+  function histStats(acts) {
+    const talked = acts.filter(HIST_FILTERS.talked).length, noans = acts.filter(HIST_FILTERS.noans).length;
+    const first = acts.length ? acts[acts.length - 1].created_at : null;
+    return { talked, noans, calls: talked + noans, first, last: acts[0] || null };
+  }
+  /* Jeden wpis historii; ten sam wygląd w panelu „Ostatnie kontakty” i w pełnej historii */
+  function contactRow(a, whenHtml) {
+    const who = a.agent_name ? (a.agent === me.id ? "Ty" : esc(a.agent_name)) : "–";
+    const num = histNums.get(a.id);
+    return `<li class="h-row" style="--oc:${OUT_COLOR[a.outcome] || "#64748b"}"><div class="h-when">${whenHtml}</div>
+      <div class="h-main"><div class="h-head"><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="who">${who}</span>${num ? `<span class="h-n" title="Który to kontakt z tym leadem">kontakt ${num}</span>` : ""}</div>
+      ${a.note ? `<p class="h-note">${esc(a.note)}</p>` : ""}${nextStep(a)}${punctuality(a)}</div></li>`;
+  }
+  const hhmm = (iso) => new Date(iso).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+  function historyHtml(acts, all, filter = "all") {
+    const list = acts.filter(HIST_FILTERS[filter] || HIST_FILTERS.all);
+    if (!list.length) return `<li class="muted">${acts.length ? "Brak wpisów tego rodzaju." : "Brak historii kontaktów."}</li>`;
+    const shown = all ? list : list.slice(0, HIST_SHORT);
     let html = "", lastDay = "";
     shown.forEach((a) => {
       const day = dayLabel(a.created_at);
       if (day !== lastDay) { html += `<li class="h-day" role="presentation">${esc(day)}</li>`; lastDay = day; }
-      const who = a.agent_name ? (a.agent === me.id ? "Ty" : esc(a.agent_name)) : "–";
-      const time = new Date(a.created_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-      html += `<li class="h-row" style="--oc:${OUT_COLOR[a.outcome] || "#64748b"}"><span class="h-time">${time}</span>
-        <div class="h-main"><div class="h-head"><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="who">${who}</span></div>
-        ${timeline(a)}${a.note ? `<p>${esc(a.note)}</p>` : ""}</div></li>`;
+      html += contactRow(a, `<b>${hhmm(a.created_at)}</b>`);
     });
     return html;
+  }
+  /* Krótki dzień + godzina: „dziś 22:01”, „wczoraj 14:10”, „23.10, 10:05” */
+  function shortWhen(iso) {
+    const d = new Date(iso), t = hhmm(iso), day = dayLabel(iso);
+    return day === "Dziś" ? `dziś ${t}` : day === "Wczoraj" ? `wczoraj ${t}` : `${d.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })}, ${t}`;
+  }
+  const whenCell = (iso) => { const d = dayLabel(iso), day = d === "Dziś" ? "dziś" : d === "Wczoraj" ? "wczoraj" : wd(iso).replace(/, .*/, ""); return `<b>${hhmm(iso)}</b><small>${esc(day)}</small>`; };
+  const plKontakt = (n) => (n === 1 ? "kontakt" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "kontakty" : "kontaktów");
+  /* Podsumowanie w trzech kafelkach: ile było kontaktów, jaki był ostatni, od kiedy trwa */
+  function summaryTiles(acts) {
+    const st = histStats(acts), last = st.last;
+    const calls = st.calls ? `<b>${st.calls} ${plKontakt(st.calls)}</b><small>${st.talked} ${st.talked === 1 ? "rozmowa" : "rozmowy"} · ${st.noans} nieodebr.</small>` : `<b>0 kontaktów</b><small>jeszcze nie dzwoniono</small>`;
+    return `<div class="h-tiles">
+      <div><span>Dotychczas</span>${calls}</div>
+      <div><span>Ostatni kontakt</span><b>${esc(shortWhen(last.created_at))}</b><small>${esc(OUT_LABEL[last.outcome] || last.outcome)}</small></div>
+      <div><span>Pierwszy kontakt</span><b>${esc(wd(st.first).replace(/, .*/, ""))}</b><small>${esc(dayLabel(st.first) === "Dziś" ? "dziś" : spanText(Math.max(1, Math.round((Date.now() - new Date(st.first)) / 60000))) + " temu")}</small></div></div>`;
+  }
+  /* Panel pod terminem: podsumowanie + 3 ostatnie kontakty, bez zjeżdżania na dół strony */
+  const RECENT_N = 3;
+  function recentPanel(d) {
+    const acts = d.activities;
+    if (!acts.length) return `<section class="recent"><span class="nc-label">Ostatnie kontakty</span><p class="muted small">To pierwszy kontakt z tym leadem.</p></section>`;
+    const items = acts.slice(0, RECENT_N).map((a) => contactRow(a, whenCell(a.created_at))).join("");
+    return `<section class="recent"><div class="recent-head"><span class="nc-label">Ostatnie kontakty</span>${acts.length > RECENT_N ? `<button type="button" class="link-btn" id="recent-all">Pełna historia (${acts.length}) &darr;</button>` : ""}</div>
+      ${summaryTiles(acts)}<ul class="history rc-list">${items}</ul></section>`;
+  }
+
+  /* Pas „jeszcze z nim nie rozmawiałeś”: widać, ile prób zostało i co się stanie po ostatniej */
+  function freshNote(d) {
+    if (!isFresh(d)) return "";
+    const n = triesOf(d), max = maxTries();
+    if (n === 0) return `<div class="fresh-note"><b>Nowy lead.</b> Nikt jeszcze z nim nie rozmawiał. Masz <b>${max}</b> ${max === 1 ? "próbę" : "próby"} dodzwonienia; jeśli nie odbierze, system sam ustawi ponowną próbę.</div>`;
+    const left = max - n;
+    return `<div class="fresh-note retry"><b>Jeszcze z nim nie rozmawiałeś.</b> Nie odebrał ${n} ${raz(n)} z ${max} dozwolonych prób. ${left <= 1 ? "<b>To ostatnia próba:</b> jeśli znów nie odbierze, lead wróci do wspólnej puli." : `Po ${max}. nieodebranym telefonie lead wróci do wspólnej puli.`}</div>`;
   }
 
   function renderCard(d, company, product) {
     const tel = esc(d.phone.replace(/[^\d+]/g, ""));
-    const hist = historyHtml(d.activities, false);
-    const next = d.next_contact_at ? new Date(d.next_contact_at) : null, late = next && next < new Date();
+    numberCalls(d.activities);
+    const hist = historyHtml(d.activities, false, "all");
+    const st = histStats(d.activities);
+    const next = d.next_contact_at ? new Date(d.next_contact_at) : null, due = next && next < new Date();
+    const soft = isFresh(d), late = due && !soft;   // ponowna próba (nikt jeszcze nie rozmawiał) nie jest „zaległa”, tylko „do ponowienia”
+    const stateText = (isDue_) => (soft ? (isDue_ ? "Czas na ponowną próbę" : "Ponowna próba") : isDue_ ? "Zaległy kontakt" : "Następny kontakt");
     const long = (iso) => new Date(iso).toLocaleString("pl-PL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
     const lastNote = d.activities.find((a) => a.note);
     const who = lastNote ? (lastNote.agent === me.id ? "Ty" : esc(lastNote.agent_name || "–")) : "";
     const agreedLong = d.agreed_contact_at ? long(d.agreed_contact_at) : "";
-    const nextBlock = `<div class="next-card${late ? " late" : ""}"${d.next_contact_at ? ` data-iso="${esc(d.next_contact_at)}"` : ""}>
-      <div class="nc-section"><span class="nc-label nc-state">${late ? "Zaległy kontakt" : "Następny kontakt"}</span>
-        ${next ? `${d.next_contact_note ? `<div class="nc-why"><span class="nc-why-ic">${ICON_NOTE}</span><div><span class="nc-why-l">Sprawa do omówienia</span><span class="nc-why-t">${esc(d.next_contact_note)}</span></div></div>` : ""}
-          <div class="nc-time"><div class="nc-when">${esc(rel(d.next_contact_at))}</div><div class="nc-date">${esc(long(d.next_contact_at))}</div></div>
-          ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}`
+    const nextBlock = `<div class="next-card${late ? " late" : ""}${soft ? " soft" : ""}"${d.next_contact_at ? ` data-iso="${esc(d.next_contact_at)}"` : ""}>
+      <div class="nc-section"><span class="nc-label nc-state">${stateText(due)}</span>
+        ${next ? `<div class="nc-time"><div class="nc-when">${esc(rel(d.next_contact_at))}</div><div class="nc-date">${esc(long(d.next_contact_at))}</div></div>
+          ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}
+          ${d.next_contact_note ? `<div class="nc-why"><span class="nc-why-ic">${ICON_NOTE}</span><div><span class="nc-why-l">Sprawa do omówienia</span><span class="nc-why-t">${esc(d.next_contact_note)}</span></div></div>` : ""}`
           : `<div class="nc-date">Nie zaplanowano</div>`}</div>
       ${lastNote ? `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(lastNote.created_at)}</span><div class="nc-text">${esc(lastNote.note)}</div></div>` : ""}
     </div>`;
@@ -230,19 +341,24 @@
         <span>Kiedy: ${fmt(mv.assigned_at)}</span>
         ${mv.reason ? `<span>Powód: ${esc(mv.reason)}</span>` : ""}
         <small>Wcześniejsze rozmowy widzisz w historii kontaktów na dole.</small></div>` : "";
+    const banner = savedNote ? `<div class="saved-banner" role="status"><span class="sb-ic">✓</span><div>${savedNote}</div></div>` : "";
+    savedNote = "";
     $("lead-pane").innerHTML = `
+      ${banner}
       ${matchBanner(d.id)}
       ${transfer}
       <div class="card">
         <div class="lead-head"><div><h2 class="lead-name">${esc(d.contact_name)}</h2>
-          <p class="muted">${company ? esc(company.name) : "Brak firmy"}${product ? " · " + esc(product.name) : ""}</p></div>${chip(d.status)}</div>
-        ${nextBlock}
-        <div class="facts">
-          <div><span>Telefon</span><a class="big-phone" href="tel:${tel}">${esc(d.phone)}</a></div>
+          <p class="muted">${company ? esc(company.name) : "Brak firmy"}${product ? " · " + esc(product.name) : ""}</p></div>${statusChip(d)}</div>
+                <div class="facts facts-top">
+          <div class="f-phone"><span>Telefon</span><a class="big-phone" href="tel:${tel}">${esc(d.phone)}</a></div>
           <div><span>E-mail</span>${d.email ? `<a href="mailto:${esc(d.email)}">${esc(d.email)}</a>` : "–"}</div>
           <div><span>NIP / KRS</span>${company ? esc(company.nip || "–") + " / " + esc(company.krs || "–") : "–"}</div>
-          <div><span>Próby</span>${d.attempts_count}</div>
+          <div class="f-tries" title="Liczba prób kontaktu z tym leadem"><span>Próby</span>${d.attempts_count}</div>
         </div>
+        ${freshNote(d)}
+        ${nextBlock}${recentPanel(d)}
+
       </div>
       <form class="card" id="act-form" novalidate>
         <h2>Jak poszła rozmowa?</h2>
@@ -271,25 +387,62 @@
           <span class="enter-hint">↵ Enter zapisuje i bierze kolejnego</span>
         </div>
       </form>
-      <div class="card"><h2>Historia kontaktów${d.activities.length ? ` <span class="muted small">(${d.activities.length})</span>` : ""}</h2><ul class="history" id="hist">${hist}</ul>
+      <div class="card" id="hist-card"><h2>Historia kontaktów${d.activities.length ? ` <span class="muted small">(${d.activities.length})</span>` : ""}</h2>
+        ${d.activities.length ? `<div class="h-filters" role="group" aria-label="Filtr historii">${[["all", "Wszystko", d.activities.length], ["talked", "Rozmowy", st.talked], ["noans", "Nieodebrane", st.noans], ["notes", "Notatki", d.activities.filter(HIST_FILTERS.notes).length]]
+          .filter(([k, , n]) => k === "all" || n > 0).map(([k, l, n]) => `<button type="button" data-hf="${k}" aria-pressed="${k === "all"}">${l} <small>${n}</small></button>`).join("")}</div>` : ""}
+        <ul class="history" id="hist">${hist}</ul>
         ${d.activities.length > HIST_SHORT ? `<button type="button" class="btn-mini h-more" id="hist-more">Pokaż całą historię (${d.activities.length})</button>` : ""}</div>`;
+    window.scrollTo({ top: 0, behavior: "auto" });   // nowy lead zawsze od góry strony (pasek „Zapisano”, termin, telefon)
+    let histFilter = "all", histAll = false;
+    const paintHistory = () => {
+      $("hist").innerHTML = historyHtml(d.activities, histAll, histFilter);
+      const more = $("hist-more");
+      if (more) more.hidden = histAll || d.activities.filter(HIST_FILTERS[histFilter]).length <= HIST_SHORT;
+    };
     const more = $("hist-more");
-    if (more) more.addEventListener("click", () => { $("hist").innerHTML = historyHtml(d.activities, true); more.remove(); });
+    if (more) more.addEventListener("click", () => { histAll = true; paintHistory(); });
+    document.querySelectorAll("#hist-card [data-hf]").forEach((b) => b.addEventListener("click", () => {
+      histFilter = b.dataset.hf;
+      document.querySelectorAll("#hist-card [data-hf]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      paintHistory();
+    }));
+    const jump = $("recent-all");
+    if (jump) jump.addEventListener("click", () => { histAll = true; paintHistory(); $("hist-card").scrollIntoView({ behavior: "smooth", block: "start" }); });
     wireForm(d.id);
+    const eh = document.querySelector("#act-form .enter-hint");
+    if (eh) {
+      const od = otherOverdue(d.id);
+      eh.textContent = od.length ? `↵ Enter zapisuje i otwiera: ${od[0].contact_name} (${isFresh(od[0]) ? "ponowna próba" : "zaległy"})` : "↵ Enter zapisuje i pobiera nowego leada z puli";
+    }
   }
 
   async function postActivity(body) {
     return api("/api/activities/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
-  async function afterSave(leadId, goNext) {
+  async function afterSave(leadId, goNext, saved) {
     toast("Zapisano.");
     clearSearch();   // po zapisie wracasz do zwykłej kolejki (dane z wyszukiwania byłyby nieaktualne)
+    const name = current && current.contact_name ? current.contact_name : "";
+    const out = saved && saved.outcome ? OUT_LABEL[saved.outcome] || "" : "";
+    const again = saved && saved.rescheduled_to ? ` Następny kontakt: <b>${esc(fmt(saved.rescheduled_to))}</b>.` : "";
+    savedNote = `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}.${again}`;
     await loadLeads();
     refreshReminders();
-    if (goNext && (await claim())) return;
+    if (saved && saved.outcome === "no_answer" && !leads.some((l) => l.id === leadId)) {
+      savedNote += " Limit prób wyczerpany: lead wrócił do wspólnej puli.";
+    }
+    if (goNext) {
+      const od = otherOverdue(leadId);
+      if (od.length) {   // najpierw zaległe, bo przy zaległych backend i tak nie wyda nowego leada (409)
+        savedNote += ` Czeka jeszcze ${od.length} ${plOverdue(od.length)}, otwieram najstarszy.`;
+        select(od[0].id);
+        return;
+      }
+      if (await claim()) return;
+    }
     if (leads.some((l) => l.id === leadId)) select(leadId);
     else if (leads.length) select(leads[0].id);
-    else emptyPane();
+    else { savedNote = ""; emptyPane(); }
   }
 
   function wireForm(leadId) {
@@ -342,20 +495,27 @@
       if (outcome === b.dataset.outcome) { reset(); return; }
       outcome = b.dataset.outcome; err.hidden = true;
       form.querySelectorAll("[data-outcome]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-      const sched = SCHEDULING.includes(outcome), required = REQUIRED.includes(outcome);
+      const fresh = isFresh(current), lastTry = outcome === "no_answer" && isLastTry(current);
+      const sched = SCHEDULING.includes(outcome) && !lastTry, required = REQUIRED.includes(outcome);
+      autoRetry = false;
       $("cb-fields").hidden = !sched;
+      let hintText = OUTCOMES.find((o) => o[0] === outcome)[2];
       if (sched) {
-        const missed = outcome === "no_answer" && isDue(current);
-        $("cb-label").textContent = { callback: "Kiedy oddzwonić", interested: "Kiedy ponownie zadzwonić", no_answer: missed ? "Ponowna próba (nie odebrał w terminie)" : "Ponowna próba (opcjonalnie)" }[outcome];
+        const missed = outcome === "no_answer" && isMissable(current);
+        const autoTerm = outcome === "no_answer" && fresh && !missed && current.suggested_retry_at ? new Date(current.suggested_retry_at) : null;
+        $("cb-label").textContent = { callback: "Kiedy oddzwonić", interested: "Kiedy ponownie zadzwonić", no_answer: missed ? "Ponowna próba (nie odebrał w terminie)" : autoTerm ? "Ponowna próba (ustawiona automatycznie, możesz zmienić)" : "Ponowna próba (opcjonalnie)" }[outcome];
         $("cb-why-label").textContent = "W jakiej sprawie (opcjonalnie)";
         $("cb-note").value = (current && current.next_contact_note) || "";   // podpowiedź: ostatnio wpisana sprawa
-        $("cb-at").value = required ? fmtInput(atNine(1)) : missed ? fmtInput(new Date(Date.now() + 3600e3)) : "";
+        $("cb-at").value = required ? fmtInput(atNine(1)) : missed ? fmtInput(new Date(Date.now() + 3600e3)) : autoTerm ? fmtInput(autoTerm) : "";
+        autoRetry = !!autoTerm;
         updatePreview();
         form.querySelectorAll("[data-preset]").forEach((p) => p.setAttribute("aria-pressed", "false"));
+        if (missed) hintText = "Umówiony kontakt nie doszedł do skutku. Lead zostaje u Ciebie, a ponowna próba trafi do planu dnia na wskazany termin (domyślnie za godzinę).";
+        else if (autoTerm) hintText = `Próba ${triesOf(current) + 1} z ${maxTries()} bez odpowiedzi. Ponowną próbę ustawiłem na ${longDate(autoTerm)}. Zmień termin, jeśli wolisz inny, albo od razu zapisz.`;
+      } else if (lastTry) {
+        hintText = `To ostatnia próba (${triesOf(current) + 1} z ${maxTries()}). Po zapisie lead wróci do wspólnej puli i zniknie z Twojej listy.`;
       }
-      $("hint").textContent = outcome === "no_answer" && isDue(current)
-        ? "Umówiony kontakt nie doszedł do skutku. Lead zostaje u Ciebie, a ponowna próba trafi do planu dnia na wskazany termin (domyślnie za godzinę)."
-        : OUTCOMES.find((o) => o[0] === outcome)[2];
+      $("hint").textContent = hintText;
       submits().forEach((s) => { s.disabled = false; });
       /* Kursor od razu ląduje tam, gdzie agent ma coś wpisać lub zatwierdzić (Enter). */
       const focusOn = { callback: "cb-at", interested: "cb-at", refused: "act-note" }[outcome];
@@ -363,10 +523,11 @@
       if (focusOn === "cb-at") $("cb-at").select();   // od razu można nadpisać domyślny termin
     }));
     const clearPresets = () => form.querySelectorAll("[data-preset]").forEach((p) => p.setAttribute("aria-pressed", "false"));
-    $("cb-at").addEventListener("input", () => { clearPresets(); updatePreview(); });
+    $("cb-at").addEventListener("input", () => { autoRetry = false; clearPresets(); updatePreview(); });
     $("cb-at").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("cb-note").focus(); } });
     form.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
       const was = b.getAttribute("aria-pressed") === "true";
+      autoRetry = false;
       clearPresets();
       if (was && !REQUIRED.includes(outcome)) { $("cb-at").value = ""; updatePreview(); return; }  /* drugie kliknięcie czyści termin */
       b.setAttribute("aria-pressed", "true");
@@ -376,16 +537,20 @@
     $("note-only").addEventListener("click", async () => {
       const note = $("act-note").value.trim();
       if (!note) { fail("Wpisz treść notatki."); return; }
-      const r = await postActivity({ lead: leadId, outcome: "note", note });
+      let r;
+      try { r = await postActivity({ lead: leadId, outcome: "note", note }); } catch { fail("Brak połączenia z serwerem. Spróbuj ponownie."); return; }
       if (!r.ok) { fail(errText(await r.json().catch(() => ({})))); return; }
-      afterSave(leadId, false);
+      const saved = await r.json().catch(() => ({}));
+      try { await afterSave(leadId, false, saved); } catch (ex) { console.error(ex); toast("Zapisano, ale nie udało się odświeżyć widoku. Odśwież stronę (F5).", true); }
     });
+    let saving = false;
     form.addEventListener("submit", async (e) => {
       e.preventDefault(); err.hidden = true;
       if (!outcome) { fail("Wybierz wynik rozmowy."); return; }
       const goNext = e.submitter && e.submitter.dataset.next === "1";
       const body = { lead: leadId, outcome, note: $("act-note").value.trim() };
-      if (SCHEDULING.includes(outcome)) {
+      if (SCHEDULING.includes(outcome) && !$("cb-fields").hidden && !(autoRetry && outcome === "no_answer")) {
+        // (przy nietkniętej automatycznej propozycji nie wysyłamy terminu: serwer policzy go od chwili zapisu)
         const raw = $("cb-at").value.trim(), why = $("cb-note").value.trim();
         const when = raw ? parseWhen(raw) : null;
         if (raw && !when) { fail("Nie rozumiem terminu. Spróbuj np. „jutro 9:30” albo „25.10 10:23”."); return; }
@@ -393,28 +558,38 @@
         if (when && when < new Date()) { fail("Ten termin już minął."); return; }
         if (when) { body.next_contact_at = when.toISOString(); body.next_contact_note = why; }
       }
+      if (saving) return;   // podwójne kliknięcie / Enter nie zapisze drugi raz
+      saving = true;
       submits().forEach((s) => { s.disabled = true; });
-      const r = await postActivity(body);
-      submits().forEach((s) => { s.disabled = false; });
-      if (!r.ok) { fail(errText(await r.json().catch(() => ({})))); return; }
-      afterSave(leadId, goNext);
+      const unlock = () => { saving = false; submits().forEach((s) => { s.disabled = false; }); };
+      let r;
+      try { r = await postActivity(body); } catch { fail("Brak połączenia z serwerem. Spróbuj ponownie."); unlock(); return; }
+      if (!r.ok) { fail(errText(await r.json().catch(() => ({})))); unlock(); return; }
+      const saved = await r.json().catch(() => ({}));
+      try { await afterSave(leadId, goNext, saved); }
+      catch (ex) { console.error(ex); toast("Zapisano, ale nie udało się odświeżyć widoku. Odśwież stronę (F5).", true); }
+      finally { saving = false; }
     });
   }
 
   async function claim() {
     clearSearch();
     const btn = $("claim-btn"); btn.disabled = true;
-    const r = await api("/api/leads/next/", { method: "POST" });
-    btn.disabled = false;
-    const d = await r.json().catch(() => ({}));
-    if (r.status === 409) { toast(`Masz zaległe oddzwonienia (${d.overdue_count}). Zrób je najpierw – są na górze listy.`, true); return false; }
-    if (r.status === 404) { toast("Pula jest pusta – brak leadów do pobrania.", true); return false; }
-    if (!r.ok) { toast(d.detail || "Nie udało się pobrać leada.", true); return false; }
-    await loadLeads(); select(d.id);
-    refreshReminders();
-    return true;
+    try {
+      const r = await api("/api/leads/next/", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 409) { toast(`Masz zaległe oddzwonienia (${d.overdue_count}). Zrób je najpierw – są na górze listy.`, true); return false; }
+      if (r.status === 404) { toast("Pula jest pusta – brak leadów do pobrania.", true); return false; }
+      if (!r.ok) { toast(d.detail || "Nie udało się pobrać leada.", true); return false; }
+      await loadLeads(); select(d.id);
+      refreshReminders();
+      return true;
+    } catch (ex) {
+      console.error(ex); toast("Brak połączenia z serwerem. Spróbuj ponownie.", true); return false;
+    } finally { btn.disabled = false; }
   }
 
+  api("/api/settings/").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { rules = d; renderList(); } }).catch(() => {});
   $("claim-btn").addEventListener("click", claim);
   $("lead-pane").addEventListener("click", (e) => { if (e.target.closest("#banner-clear")) clearSearch(); });
   $("lead-list").addEventListener("click", (e) => {
@@ -443,10 +618,10 @@
     renderList();
     const nc = document.querySelector(".next-card[data-iso]");
     if (!nc) return;
-    const iso = nc.dataset.iso, late = new Date(iso) < new Date();
-    nc.classList.toggle("late", late);
+    const iso = nc.dataset.iso, due = new Date(iso) < new Date(), soft = nc.classList.contains("soft");
+    nc.classList.toggle("late", due && !soft);
     const state = nc.querySelector(".nc-state"), when = nc.querySelector(".nc-when");
-    if (state) state.textContent = late ? "Zaległy kontakt" : "Następny kontakt";
+    if (state) state.textContent = soft ? (due ? "Czas na ponowną próbę" : "Ponowna próba") : due ? "Zaległy kontakt" : "Następny kontakt";
     if (when) when.textContent = rel(iso);
   }, 10000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { renderList(); } });

@@ -419,3 +419,71 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .match-banner{display:flex;align-items:center;gap:.4rem 1rem;flex-wrap:wrap;padding:.65rem .95rem;margin-bottom:.9rem;border-radius:12px;background:color-mix(in srgb,#10b981 11%,transparent);border:1px solid color-mix(in srgb,#10b981 38%,transparent)}
 .match-banner .found-why{font-size:.95rem;color:var(--ink)}.match-n{color:var(--muted);font-size:.85rem}.match-banner .found-clear{margin-left:auto}
 @media(max-width:800px){.topbar{margin:-1.2rem -1.2rem 1rem;padding:.7rem 1.2rem}}
+
+/* v42: kolejność w karcie kontaktu (czas, ostrzeżenie, sprawa) i potwierdzenie zapisu */
+.nc-time~.nc-why{margin:.9rem 0 .2rem;padding-top:.9rem;border-top:1px solid var(--line)}
+.nc-time+.nc-missed{margin-top:.6rem}
+.saved-banner{display:flex;align-items:center;gap:.7rem;padding:.65rem .95rem;margin-bottom:.9rem;border-radius:12px;font-size:.95rem;background:color-mix(in srgb,#10b981 12%,transparent);border:1px solid color-mix(in srgb,#10b981 40%,transparent);color:var(--ink)}
+.saved-banner .sb-ic{flex:none;width:1.6rem;height:1.6rem;border-radius:50%;display:grid;place-items:center;background:#10b981;color:#fff;font-weight:800;font-size:.9rem}
+
+/* v43: strona „Ustawienia zespołu” */
+.rules-summary ul{margin:.4rem 0 0;padding-left:1.2rem;display:grid;gap:.45rem;line-height:1.45}.rules-summary b{color:var(--brand)}
+.rules-group{margin-top:1rem}.rules-group h2{margin-bottom:.2rem}
+.rules-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.1rem 1.6rem;margin-top:.9rem}
+.rule{display:flex;flex-direction:column;gap:.3rem}.rule>label{font-weight:700;font-size:.9rem}
+.rule-input{display:flex;align-items:center;gap:.5rem}.rule-input input.select{width:6.5rem}.rule-input select.select{width:auto}
+.rule small{line-height:1.35}
+.rules-actions{align-items:center;margin-top:1rem}.rules-actions .link-btn{margin-left:.4rem}
+/* v43: plakietki prób i pas „jeszcze nie rozmawiałeś” */
+.try-chip{display:inline-block;border-radius:99px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;white-space:nowrap;background:color-mix(in srgb,#64748b 20%,transparent);color:var(--muted);border:1px solid color-mix(in srgb,#64748b 35%,transparent)}
+.try-chip.fresh{background:color-mix(in srgb,#6366f1 18%,transparent);color:#6366f1;border-color:color-mix(in srgb,#6366f1 40%,transparent)}
+.fresh-note{margin:.7rem 0 0;padding:.65rem .9rem;border-radius:12px;font-size:.92rem;line-height:1.45;background:color-mix(in srgb,#6366f1 10%,transparent);border:1px solid color-mix(in srgb,#6366f1 30%,transparent)}
+.fresh-note.retry{background:color-mix(in srgb,#64748b 12%,transparent);border-color:color-mix(in srgb,#64748b 35%,transparent)}
+.grp.g2{color:#64748b}
+
+/* v44: ponowne próby (lead bez rozmowy) są łagodne: bez czerwieni */
+.next-card.soft{--nc:#64748b}.next-card.soft .nc-when{color:var(--ink)}
+.lead-item .when.soft{color:#6366f1;font-weight:600}
+
+/* v47: czytelna historia kontaktów: kafelki podsumowania, wpisy „kiedy · co się stało · co dalej” */
+.recent{margin-top:1rem;border:1px solid var(--line);border-radius:12px;background:var(--bg);padding:.9rem 1.1rem}
+.recent-head{display:flex;justify-content:space-between;align-items:center;gap:.6rem}
+.h-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.6rem;margin:.6rem 0 .5rem}
+.h-tiles>div{border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem;background:var(--card,transparent);display:flex;flex-direction:column;gap:.05rem}
+.h-tiles span{font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.h-tiles b{font-size:1rem}.h-tiles small{color:var(--muted);font-size:.8rem}
+.history{list-style:none;margin:0;padding:0}
+.history .h-day{margin:.9rem 0 .2rem;padding:0;border:0;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.history .h-day:first-child{margin-top:0}
+.history .h-row{display:grid;grid-template-columns:4rem minmax(0,1fr);gap:.9rem;padding:.65rem 0;border:0;border-bottom:1px solid var(--line)}
+.history .h-day+.h-row,.history .h-row:last-child{border-bottom:0}
+.history .h-when{display:flex;flex-direction:column;font-variant-numeric:tabular-nums;line-height:1.2}
+.history .h-when b{font-size:.98rem}.history .h-when small{color:var(--muted);font-size:.78rem}
+.history .h-main{min-width:0;border-left:3px solid var(--oc,var(--muted));padding-left:.8rem}
+.history .h-head{display:flex;flex-wrap:wrap;align-items:center;gap:.2rem .55rem}
+.history .h-out{font-weight:700;color:var(--oc,var(--ink));font-size:1rem}
+.history .who{color:var(--muted);font-weight:400;font-size:.85rem}
+.history .h-n{margin-left:auto;font-size:.72rem;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:0 .5rem}
+.history .h-note{margin:.25rem 0 0;color:var(--ink);font-size:.93rem;overflow-wrap:anywhere}
+.history .h-next{margin-top:.3rem;font-size:.88rem;color:var(--ink)}.history .h-next b{font-weight:700}
+.history .h-next::before{content:"\2192\00a0";color:var(--oc,var(--muted));font-weight:700}
+.history .h-next.closed{color:var(--muted);font-style:italic}.history .h-next.closed::before{content:""}
+.history .h-tag{display:inline-block;border-radius:99px;padding:0 .5rem;margin-left:.2rem;font-size:.72rem;font-weight:700;background:color-mix(in srgb,#6366f1 16%,transparent);color:#6366f1}
+.history .h-tag.same{background:transparent;color:var(--muted);font-weight:500;border:1px solid var(--line)}
+.history .h-punct{margin-top:.15rem;font-size:.78rem;color:var(--muted)}.history .h-punct.late{color:#d97706}
+.h-filters{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 .8rem}
+.h-filters button{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:99px;padding:.25rem .8rem;font:inherit;font-size:.82rem;cursor:pointer}
+.h-filters button small{color:var(--muted);margin-left:.15rem}
+.h-filters button[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff}.h-filters button[aria-pressed="true"] small{color:#e0e7ff}
+@media(max-width:640px){.h-tiles{grid-template-columns:1fr}.history .h-row{grid-template-columns:3.4rem minmax(0,1fr);gap:.6rem}}
+.next-card{max-width:none}
+/* v47b: dane kontaktowe na samej górze karty leada, pod nazwiskiem */
+.facts.facts-top{grid-template-columns:minmax(210px,1.3fr) minmax(0,1.6fr) minmax(0,1.2fr) auto;align-items:center;gap:.8rem 1.5rem;margin:.9rem 0 .2rem;padding:.8rem 1.1rem;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--brand) 7%,transparent)}
+.facts-top .big-phone{font-size:1.65rem;line-height:1.15}
+.facts-top .f-tries{text-align:right}
+.facts-top a{word-break:normal;overflow-wrap:anywhere}
+@media(max-width:900px){.facts.facts-top{grid-template-columns:1fr 1fr}.facts-top .f-tries{text-align:left}}
+.facts-top .big-phone{white-space:nowrap}
+@media(max-width:900px){.facts-top .f-phone{grid-column:1/-1}}
+/* v48b: wyróżnione liczby w podsumowaniu ustawień: czytelne w obu motywach (kolor tekstu + pastylka zamiast ciemnego indygo) */
+.rules-summary b{color:var(--ink);font-weight:700;background:color-mix(in srgb,var(--ink) 12%,transparent);border-radius:6px;padding:.05rem .4rem;white-space:nowrap}

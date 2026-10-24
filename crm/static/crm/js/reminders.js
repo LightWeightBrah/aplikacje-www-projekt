@@ -20,6 +20,15 @@ CRM.initReminders = function initReminders() {
   const DEFAULTS = { enabled: true, lead: 300, sound: true };   // lead = sekundy przed terminem
   const baseTitle = document.title;
   const box = $("reminders");
+  box.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest('a[href^="/crm/queue/?lead="]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;   // Ctrl/Cmd+klik nadal otwiera nową kartę
+    if (!(location.pathname.startsWith("/crm/queue") && CRM.openLead)) return;   // poza kolejką zwykłe przejście
+    e.preventDefault();
+    goTo(a.getAttribute("href"));
+    const card = a.closest(".reminder");
+    if (card) closeCard(card);
+  });
   let memSeen = {}, memBrowser = null, memCfg = null;   // zapas, gdy localStorage jest niedostępny
   let cache = [];   // ostatnio pobrane leady z terminem (zaległe + w oknie)
 
@@ -72,6 +81,7 @@ CRM.initReminders = function initReminders() {
   const supported = "Notification" in window;
   let swReg = null;
   if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "open-url") goTo(e.data.url); });
     navigator.serviceWorker.register("/crm/sw.js", { scope: "/crm/" })
       .then((reg) => { swReg = reg; }).catch(() => { /* bez SW działa zwykłe Notification */ });
   }
@@ -103,6 +113,16 @@ CRM.initReminders = function initReminders() {
   }
   /* tag jest unikalny (wspólny tag powodował ciche podmienianie kolejnych powiadomień);
      requireInteraction zostawia powiadomienie na ekranie, dopóki go nie klikniesz lub nie zamkniesz */
+  /* Przejście do leada: na stronie kolejki otwieramy go na miejscu (bez przeładowania strony), gdzie indziej zwykła nawigacja */
+  function goTo(url) {
+    const m = /[?&]lead=(\d+)/.exec(url || "");
+    if (m && location.pathname.startsWith("/crm/queue") && CRM.openLead) {
+      const id = Number(m[1]);
+      CRM.openLead(id).then((ok) => { if (ok) history.replaceState(null, "", "/crm/queue/?lead=" + id); else location.href = url; });
+      return;
+    }
+    if (url) location.href = url;
+  }
   async function browserNotify(title, body, url, tag, sticky = true) {
     if (!browserOn()) return false;
     const opts = { body, tag: tag || "leadcrm-" + Date.now(), renotify: true, requireInteraction: sticky, data: { url } };
@@ -111,7 +131,7 @@ CRM.initReminders = function initReminders() {
     } catch { /* spróbuj zwykłego Notification */ }
     try {
       const n = new Notification(title, opts);
-      n.onclick = () => { window.focus(); if (url) location.href = url; n.close(); };
+      n.onclick = () => { window.focus(); goTo(url); n.close(); };
       return true;
     } catch { return false; }
   }
@@ -184,7 +204,8 @@ CRM.initReminders = function initReminders() {
   function paintCard(el, now) {
     const iso = el.dataset.iso;
     if (!iso) return;
-    const late = new Date(iso).getTime() < now;
+    const soft = el.dataset.soft === "1";   // ponowna próba (lead bez rozmowy) nie jest „zaległa” (czerwona)
+    const late = new Date(iso).getTime() < now && !soft;
     const rel = el.querySelector(".rem-rel");
     const text = relText(iso, now);
     if (rel && rel.textContent !== text) rel.textContent = text;
@@ -194,7 +215,7 @@ CRM.initReminders = function initReminders() {
     el.classList.toggle("late", late);
     if (late || !el.dataset.color) { el.style.removeProperty("--rc"); el.style.removeProperty("--rci"); }
     else { el.style.setProperty("--rc", el.dataset.color); el.style.setProperty("--rci", inkFor(el.dataset.color)); }
-    el.querySelector(".rem-kind").textContent = late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie";
+    el.querySelector(".rem-kind").textContent = soft ? (new Date(iso).getTime() < now ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie";
     el.querySelector(".rem-icon").innerHTML = late ? ICON_ALERT : ICON_PHONE;
   }
   function leadCard(l, now) {
@@ -205,6 +226,7 @@ CRM.initReminders = function initReminders() {
     el.className = "reminder";
     el.dataset.lead = l.id;
     el.dataset.iso = l.next_contact_at;
+    if (l.status === "new") el.dataset.soft = "1";
     const st = statusInfo(l.status);
     if (st) el.dataset.color = st[1];
     el.setAttribute("role", "alert");
@@ -250,7 +272,7 @@ CRM.initReminders = function initReminders() {
     if (!fresh.length) return;
     beep();
     if (fresh.length > MAX_CARDS) {   // dużo naraz (np. po zalogowaniu): jedna zbiorcza karta
-      const late = fresh.filter((l) => dueMs(l) < now).length;
+      const late = fresh.filter((l) => dueMs(l) < now && l.status !== "new").length;
       box.appendChild(summaryCard(fresh.length, late));
       browserNotify("Masz oddzwonienia do zrobienia",
         late ? `Zaległe: ${late}, razem: ${fresh.length}.` : `Do zrobienia: ${fresh.length}.`, "/crm/plan/");
@@ -259,7 +281,7 @@ CRM.initReminders = function initReminders() {
     fresh.forEach((l) => {
       box.appendChild(leadCard(l, now));
       const late = dueMs(l) < now;
-      browserNotify(late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie",
+      browserNotify(l.status === "new" ? (late ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie",
         who(l) + " – " + relText(l.next_contact_at, now), "/crm/queue/?lead=" + l.id, "leadcrm-" + keyOf(l));
     });
   }

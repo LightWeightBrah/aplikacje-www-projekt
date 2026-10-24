@@ -13,7 +13,8 @@ self.addEventListener("notificationclick", (event) => {
     for (const w of wins) {
       if (new URL(w.url).origin === self.location.origin) {
         await w.focus();
-        if ("navigate" in w) { try { await w.navigate(target); } catch { /* np. inna karta */ } }
+        // strona sama otwiera leada na miejscu (bez przeładowania); gdy jej nie ma w trybie kolejki, przechodzi zwykłą nawigacją
+        w.postMessage({ type: "open-url", url: new URL(target).pathname + new URL(target).search });
         return;
       }
     }
