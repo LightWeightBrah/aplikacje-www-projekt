@@ -14,4 +14,5 @@ urlpatterns = [
     path("import/", web_views.import_page, name="import"),
     path("users/", web_views.users_page, name="users"),
     path("leads/", web_views.lead_list, name="lead-list"),
+    path("sw.js", web_views.service_worker, name="sw"),
 ]

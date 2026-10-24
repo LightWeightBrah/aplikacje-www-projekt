@@ -1,10 +1,12 @@
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from crm.me_view import MeAvatarView, MePasswordView, MeView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
+    path("", RedirectView.as_view(url="/crm/")),  # goły adres serwera prowadzi do aplikacji
     path("admin/", admin.site.urls),
     path("api/", include("crm.urls")),
     path("crm/", include("crm.web_urls")),

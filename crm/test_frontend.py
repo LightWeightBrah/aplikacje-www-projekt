@@ -395,3 +395,55 @@ class PlanPageTests(CrmTestBase):
     def test_schedule_and_calendar_need_login(self):
         self.assertEqual(self.api().get("/api/my-leads/schedule/").status_code, 401)
         self.assertEqual(self.api().get("/api/my-leads/calendar/").status_code, 401)
+
+
+class ReminderShellTests(CrmTestBase):
+    def test_shell_has_reminder_elements(self):
+        for url in ("/crm/", "/crm/queue/", "/crm/plan/"):
+            r = self.client.get(url)
+            self.assertContains(r, 'id="reminders"', msg_prefix=url)
+            self.assertContains(r, 'id="plan-badge"', msg_prefix=url)
+            self.assertContains(r, 'id="notif-btn"', msg_prefix=url)
+            self.assertContains(r, "CRM.initReminders()", msg_prefix=url)
+
+    def test_reminders_script_is_served(self):
+        self.assertContains(self.client.get("/crm/"), "crm/js/reminders.js")
+
+    def test_due_window_of_five_minutes_used_by_reminders(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        now = timezone.now()
+        soon = self.make_lead(owner=self.agent1, next_contact_at=now + timedelta(minutes=3))
+        late = self.make_lead(owner=self.agent1, next_contact_at=now - timedelta(minutes=20))
+        self.make_lead(owner=self.agent1, next_contact_at=now + timedelta(minutes=30))
+        r = self.api(self.agent1).get("/api/my-leads/due/", {"minutes": 5})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([l["id"] for l in r.data["upcoming"]], [soon.id])
+        self.assertEqual([l["id"] for l in r.data["overdue"]], [late.id])
+
+    def test_due_needs_login(self):
+        self.assertEqual(self.api().get("/api/my-leads/due/").status_code, 401)
+
+
+class ReminderSettingsAndWorkerTests(CrmTestBase):
+    def test_root_redirects_to_app(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r["Location"], "/crm/")
+
+    def test_service_worker_is_served_with_app_scope(self):
+        r = self.client.get("/crm/sw.js")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("javascript", r["Content-Type"])
+        self.assertEqual(r["Service-Worker-Allowed"], "/crm/")
+        self.assertIn("notificationclick", r.content.decode())
+
+    def test_settings_dialog_is_in_the_shell(self):
+        r = self.client.get("/crm/")
+        for element in ("notif-open", "notif-dialog", "notif-enabled", "notif-min", "notif-sec", "notif-sound"):
+            self.assertContains(r, f'id="{element}"')
+
+    def test_plan_page_has_clickable_rows_script(self):
+        self.assertContains(self.client.get("/crm/plan/"), "crm/js/plan.js")

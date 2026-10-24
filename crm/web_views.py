@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse
 from django.shortcuts import render
 
 from .models import Lead
@@ -52,3 +55,17 @@ def users_page(request):
 def plan_page(request):
     """Szkielet planu dnia. Dane idą z /api/my-leads/schedule/ (token JWT)."""
     return render(request, "crm/plan.html")
+
+
+def service_worker(request):
+    """Service worker obsługujący kliknięcia powiadomień systemowych.
+
+    Serwowany spod /crm/sw.js (a nie ze /static/), żeby miał zakres całej aplikacji /crm/.
+    """
+    code = (Path(__file__).parent / "static" / "crm" / "js" / "sw.js").read_text(
+        encoding="utf-8"
+    )
+    response = HttpResponse(code, content_type="application/javascript; charset=utf-8")
+    response["Service-Worker-Allowed"] = "/crm/"
+    response["Cache-Control"] = "no-cache"
+    return response
