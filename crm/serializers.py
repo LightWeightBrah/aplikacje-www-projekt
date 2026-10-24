@@ -53,10 +53,12 @@ class ActivitySerializer(serializers.ModelSerializer):
             "outcome",
             "note",
             "created_at",
+            "planned_at",
+            "rescheduled_to",
             "next_contact_at",
             "next_contact_note",
         )
-        read_only_fields = ("agent", "created_at")
+        read_only_fields = ("agent", "created_at", "planned_at", "rescheduled_to")
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_agent_name(self, obj):
@@ -70,11 +72,10 @@ class ActivitySerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        if attrs["outcome"] == Activity.Outcome.CALLBACK and (
-            not attrs.get("next_contact_at") or not attrs.get("next_contact_note")
-        ):
+        # Termin jest wymagany, a sprawa (next_contact_note) opcjonalna
+        if attrs["outcome"] == Activity.Outcome.CALLBACK and not attrs.get("next_contact_at"):
             raise serializers.ValidationError(
-                "Wynik 'Prosił o oddzwonienie' wymaga next_contact_at i next_contact_note."
+                "Wynik 'Prosił o oddzwonienie' wymaga next_contact_at."
             )
         return attrs
 
@@ -99,6 +100,7 @@ class LeadSerializer(serializers.ModelSerializer):
     # Czytelne nazwy powiązanych obiektów (tabele w panelu nie muszą dopytywać o każdy id)
     company_name = serializers.CharField(source="company.name", read_only=True, allow_null=True)
     company_nip = serializers.CharField(source="company.nip", read_only=True, allow_null=True)
+    company_krs = serializers.CharField(source="company.krs", read_only=True, allow_null=True)
     owner_name = serializers.CharField(source="owner.username", read_only=True, allow_null=True)
     product_name = serializers.CharField(source="product.name", read_only=True, allow_null=True)
     batch_name = serializers.CharField(source="batch.name", read_only=True, allow_null=True)
@@ -116,6 +118,8 @@ class LeadSerializer(serializers.ModelSerializer):
             "claimed_at",
             "last_activity_at",
             "created_at",
+            "agreed_contact_at",
+            "missed_calls",
         )
 
     @extend_schema_field(OpenApiTypes.STR)
@@ -145,13 +149,8 @@ class LeadSerializer(serializers.ModelSerializer):
         next_at = attrs.get(
             "next_contact_at", getattr(self.instance, "next_contact_at", None)
         )
-        note = attrs.get(
-            "next_contact_note", getattr(self.instance, "next_contact_note", "")
-        )
-        if status == Lead.Status.CALLBACK and (not next_at or not note):
-            raise serializers.ValidationError(
-                "Status 'Do oddzwonienia' wymaga terminu i notatki."
-            )
+        if status == Lead.Status.CALLBACK and not next_at:
+            raise serializers.ValidationError("Status 'Do oddzwonienia' wymaga terminu.")
         return attrs
 
 

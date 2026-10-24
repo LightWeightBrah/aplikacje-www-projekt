@@ -59,6 +59,7 @@ from .serializers import (
     assignable_users,
 )
 from .services import (
+    lookup_leads,
     ACTIVE_STATUSES,
     CalendarRenderer,
     InvalidAssignment,
@@ -218,6 +219,30 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
                 {"detail": "Brak leadów w puli."}, status=status.HTTP_404_NOT_FOUND
             )
         return Response(LeadSerializer(lead).data)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "q", str, description="Telefon, NIP, KRS, nazwisko, firma albo e-mail (min. 2 znaki)"
+            ),
+        ],
+        responses=LeadSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="lookup")
+    def lookup(self, request):
+        """Szybkie wyszukiwanie leada (np. po numerze dzwoniącego).
+
+        Agent szuka wśród swoich leadów, manager wśród wszystkich. Wynik to maks. 8 leadów,
+        każdy z polem `match` (exact = dokładne trafienie numeru/NIP/KRS) i `matched_on`
+        (po czym znaleziono: phone, nip, krs, name, company, email)."""
+        found = lookup_leads(self.get_queryset(), request.query_params.get("q", ""))
+        data = []
+        for lead, match, field in found:
+            item = dict(LeadSerializer(lead).data)
+            item["match"] = match
+            item["matched_on"] = field
+            data.append(item)
+        return Response(data)
 
     @extend_schema(responses={(200, XLSX_CONTENT_TYPE): OpenApiTypes.BINARY})
     @action(detail=False, methods=["get"], renderer_classes=[XlsxRenderer])
@@ -395,7 +420,8 @@ class ActivityViewSet(
             outcome=data["outcome"],
             note=data.get("note", ""),
             next_contact_at=data.get("next_contact_at"),
-            next_contact_note=data.get("next_contact_note", ""),
+            # brak pola = zostaje dotychczasowa sprawa; puste pole = agent świadomie ją czyści
+            next_contact_note=data.get("next_contact_note"),
         )
 
 

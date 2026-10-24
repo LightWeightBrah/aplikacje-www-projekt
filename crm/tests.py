@@ -159,14 +159,25 @@ class LeadValidationAndSearchTests(CrmTestBase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("phone", response.data)
 
-    # Status callback wymaga terminu i notatki
-    def test_callback_status_requires_date_and_note(self):
+    # Status callback wymaga terminu, a sprawa (notatka) jest opcjonalna
+    def test_callback_status_requires_date_but_not_note(self):
         response = self.api(self.agent1).post(
             "/api/leads/",
             {"contact_name": "Ktoś", "phone": "500100200", "status": "callback"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.api(self.agent1).post(
+            "/api/leads/",
+            {
+                "contact_name": "Ktoś",
+                "phone": "500100200",
+                "status": "callback",
+                "next_contact_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     # Wyszukiwanie po NIP i KRS firmy
     def test_search_finds_lead_by_company_nip_and_krs(self):
@@ -1477,3 +1488,54 @@ class BulkTeamAccessTests(CrmTestBase):
     def test_bulk_requires_boolean_value(self):
         response = self.api(self.manager).post("/api/agents/team-access/", {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class LeadLookupTests(CrmTestBase):
+    """Wyszukiwarka leadów po numerze telefonu, NIP i nazwisku."""
+
+    def setUp(self):
+        super().setUp()
+        self.company = Company.objects.create(name="Alfa Sp. z o.o.", nip="5250000003")
+        self.mine = self.make_lead(
+            owner=self.agent1, contact_name="Anna Nowak", phone="500 100 200", company=self.company
+        )
+        self.other = self.make_lead(owner=self.agent2, contact_name="Cudzy Lead", phone="600700800")
+
+    def lookup(self, user, q):
+        return self.api(user).get("/api/leads/lookup/", {"q": q})
+
+    def test_finds_lead_by_phone_ignoring_spaces_and_country_prefix(self):
+        for q in ("500100200", "500 100 200", "+48 500-100-200", "0048500100200"):
+            response = self.lookup(self.agent1, q)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual([r["id"] for r in response.data], [self.mine.id], q)
+            self.assertEqual(response.data[0]["match"], "exact")
+            self.assertEqual(response.data[0]["matched_on"], "phone")
+
+    def test_finds_lead_by_company_nip(self):
+        response = self.lookup(self.agent1, "5250000003")
+        self.assertEqual([r["id"] for r in response.data], [self.mine.id])
+        self.assertEqual(response.data[0]["match"], "exact")
+        self.assertEqual(response.data[0]["matched_on"], "nip")
+
+    def test_partial_digits_and_name_search(self):
+        self.assertEqual([r["id"] for r in self.lookup(self.agent1, "100200").data], [self.mine.id])
+        self.assertEqual(self.lookup(self.agent1, "100200").data[0]["match"], "partial")
+        response = self.lookup(self.agent1, "nowak")
+        self.assertEqual([r["id"] for r in response.data], [self.mine.id])
+        self.assertEqual(response.data[0]["matched_on"], "name")
+
+    def test_agent_does_not_find_someone_elses_lead(self):
+        self.assertEqual(self.lookup(self.agent1, "600700800").data, [])
+
+    def test_manager_finds_any_lead(self):
+        self.assertEqual([r["id"] for r in self.lookup(self.manager, "600700800").data], [self.other.id])
+
+    def test_too_short_query_returns_nothing(self):
+        self.assertEqual(self.lookup(self.agent1, "5").data, [])
+        self.assertEqual(self.lookup(self.agent1, "50").data, [])
+
+    def test_requires_role(self):
+        self.assertEqual(self.lookup(self.no_role, "500").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.lookup(None, "500").status_code, status.HTTP_401_UNAUTHORIZED)
+

@@ -129,6 +129,11 @@ class Lead(models.Model):
     )
     next_contact_at = models.DateTimeField(null=True, blank=True, db_index=True)
     next_contact_note = models.CharField(max_length=255, blank=True)
+    # Termin, który klient sam wskazał (oddzwonienie / zainteresowany). Zostaje, gdy agent
+    # nie dodzwoni się w terminie i system przesuwa ponowną próbę, żeby było widać, o co chodziło.
+    agreed_contact_at = models.DateTimeField(null=True, blank=True)
+    # Ile razy z rzędu nie odebrał, gdy był umówiony kontakt (zerowane po rozmowie)
+    missed_calls = models.PositiveIntegerField(default=0)
     attempts_count = models.PositiveIntegerField(default=0)
     claimed_at = models.DateTimeField(null=True, blank=True)
     last_activity_at = models.DateTimeField(null=True, blank=True)
@@ -143,12 +148,9 @@ class Lead(models.Model):
         return f"{self.contact_name} ({self.phone})"
 
     def clean(self):
-        # Zasada: lead do oddzwonienia musi mieć termin i notatkę
-        if self.status == self.Status.CALLBACK:
-            if not self.next_contact_at or not self.next_contact_note:
-                raise ValidationError(
-                    "Status 'Do oddzwonienia' wymaga terminu i notatki."
-                )
+        # Zasada: lead do oddzwonienia musi mieć termin (sprawa jest opcjonalna)
+        if self.status == self.Status.CALLBACK and not self.next_contact_at:
+            raise ValidationError("Status 'Do oddzwonienia' wymaga terminu.")
 
 
 class Activity(models.Model):
@@ -174,6 +176,11 @@ class Activity(models.Model):
     )
     outcome = models.CharField(max_length=20, choices=Outcome.choices)
     note = models.TextField(blank=True)
+    # Na kiedy był zaplanowany ten kontakt (termin leada w chwili rozmowy) i na kiedy ustawiono
+    # kolejny. Razem z created_at pokazują w historii: „miał być o 12:00, zadzwoniono 12:10,
+    # następna próba o 13:10”.
+    planned_at = models.DateTimeField(null=True, blank=True)
+    rescheduled_to = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

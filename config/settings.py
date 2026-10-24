@@ -135,7 +135,8 @@ MAILERS = {
 LEAD_MAX_ATTEMPTS_PER_AGENT = 3        # ile prób dodzwonienia ma jeden agent
 LEAD_UNREACHABLE_AFTER_AGENTS = 5      # ilu różnych agentów musi nie zdołać, by lead był "nieosiągalny"
 LEAD_CLAIM_TIMEOUT_HOURS = 24          # po ilu godzinach nietknięty lead wraca do puli
-LEAD_UNREACHABLE_COOLDOWN_DAYS = 30    # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
+CALLBACK_RETRY_MINUTES = 60            # za ile minut system ponawia kontakt, gdy klient nie odebrał w umówionym terminie
+LEAD_UNREACHABLE_COOLDOWN_DAYS = 30   # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
 
 # --- Django REST Framework ---
 REST_FRAMEWORK = {

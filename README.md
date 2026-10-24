@@ -18,7 +18,7 @@ Jak to działa:
 - Agent, który ma **zaległe oddzwonienia**, nie dostanie nowego leada (odpowiedź 409). Najpierw musi dokończyć obietnice dane klientom.
 - Agent nie dostanie leada, który już wcześniej prowadził.
 - Po każdej rozmowie agent dodaje **aktywność** (`Activity`) z wynikiem: nie odebrał, prosił o oddzwonienie, zainteresowany, **sprzedane** (lead zamknięty jako wygrany), odmowa, zły numer, notatka. System sam aktualizuje leada: licznik prób, datę ostatniego kontaktu, status i termin kolejnego kontaktu.
-- Zasada nadrzędna: **lead nigdy nie zostaje bez następnego kroku**. Status „Do oddzwonienia" wymaga terminu i notatki.
+- Zasada nadrzędna: **lead nigdy nie zostaje bez następnego kroku**. Status „Do oddzwonienia" wymaga terminu (sprawa, której dotyczy kontakt, jest opcjonalna).
 - Agent widzi tylko swoje leady, manager widzi wszystko.
 
 ## Modele

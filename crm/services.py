@@ -3,6 +3,7 @@ i cykl życia leada (limit prób, zwrot do puli, nieosiągalni),
 statystyki oraz plan dnia."""
 
 import json
+import re
 from datetime import datetime, time, timedelta
 from datetime import timezone as dt_timezone
 
@@ -37,6 +38,17 @@ OUTCOME_TO_STATUS = {
 
 # Zamknięte leady nie mają już kolejnego kroku
 CLOSED_STATUSES = (Lead.Status.WON, Lead.Status.LOST, Lead.Status.DO_NOT_CALL)
+
+# Nieodebrany telefon w tym oknie przed terminem też liczy się jako nieodebrany umówiony kontakt
+MISSED_WINDOW = timedelta(minutes=5)
+# Po tych wynikach rozmowa się odbyła, więc licznik nieodebranych umówionych kontaktów wraca do zera
+OUTCOMES_THAT_END_MISSES = (
+    Activity.Outcome.CALLBACK,
+    Activity.Outcome.INTERESTED,
+    Activity.Outcome.SOLD,
+    Activity.Outcome.REFUSED,
+    Activity.Outcome.WRONG_NUMBER,
+)
 
 CLAIM_ATTEMPTS = 5  # tyle razy próbujemy, gdy ktoś inny zdąży przejąć wylosowany lead
 
@@ -131,26 +143,48 @@ def claim_next_lead(user, batch_id=None):
 
 
 def register_activity(
-    lead, agent, outcome, note="", next_contact_at=None, next_contact_note=""
+    lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None
 ):
     """Zapisuje rozmowę (Activity) i od razu aktualizuje lead.
 
     - `last_activity_at` ustawiamy zawsze,
     - `attempts_count` rośnie przy każdym wyniku poza zwykłą notatką,
     - status zmienia się wg OUTCOME_TO_STATUS,
-    - termin i notatka kolejnego kontaktu: ustawiane, gdy zostały podane;
+    - termin i sprawa kolejnego kontaktu: ustawiane, gdy zostały podane (sprawa jest
+      opcjonalna: bez niej zostaje dotychczasowa, pusty tekst ją czyści);
       zamknięty lead (przegrany, nie dzwonić) ich nie ma; po zmianie statusu
       na inny niż "do oddzwonienia" stary termin jest czyszczony,
-      żeby nie blokował agenta jako zaległy.
+      żeby nie blokował agenta jako zaległy,
+    - "nie odebrał" w umówionym terminie (albo po nim) liczy się jako nieodebrany
+      umówiony kontakt: rośnie `missed_calls`, umówiony termin zostaje w
+      `agreed_contact_at`, a jeśli agent nie wskazał nowego terminu, system sam
+      ustawia ponowną próbę za CALLBACK_RETRY_MINUTES minut. Dzięki temu lead
+      nie zostaje "zaległy" w nieskończoność i nie blokuje pobrania kolejnego.
     """
     with transaction.atomic():
-        activity = Activity.objects.create(
-            lead=lead, agent=agent, outcome=outcome, note=note
+        now = timezone.now()
+        before = Lead.objects.values("next_contact_at", "agreed_contact_at").get(
+            pk=lead.pk
         )
-
-        changes = {"last_activity_at": timezone.now()}
+        changes = {"last_activity_at": now}
         if outcome != Activity.Outcome.NOTE:
             changes["attempts_count"] = F("attempts_count") + 1
+
+        # Umówiony kontakt, do którego nie dodzwoniono (termin minął lub właśnie nadszedł)
+        missed = (
+            outcome == Activity.Outcome.NO_ANSWER
+            and before["next_contact_at"] is not None
+            and before["next_contact_at"] <= now + MISSED_WINDOW
+        )
+        if missed:
+            changes["missed_calls"] = F("missed_calls") + 1
+            if before["agreed_contact_at"] is None:
+                changes["agreed_contact_at"] = before["next_contact_at"]
+        elif outcome in OUTCOMES_THAT_END_MISSES:
+            # Rozmowa się odbyła: licznik zerujemy, a nowy umówiony termin zapamiętujemy
+            changes["missed_calls"] = 0
+            agreed = outcome in (Activity.Outcome.CALLBACK, Activity.Outcome.INTERESTED)
+            changes["agreed_contact_at"] = next_contact_at if agreed else None
 
         new_status = OUTCOME_TO_STATUS.get(outcome)
         if new_status:
@@ -161,10 +195,28 @@ def register_activity(
             changes["next_contact_note"] = ""
         elif next_contact_at is not None:
             changes["next_contact_at"] = next_contact_at
-            changes["next_contact_note"] = next_contact_note
+            if next_contact_note is not None:
+                changes["next_contact_note"] = next_contact_note
+        elif missed:
+            # Brak nowego terminu od agenta: ponowna próba za chwilę, sprawa zostaje ta sama
+            changes["next_contact_at"] = now + timedelta(
+                minutes=settings.CALLBACK_RETRY_MINUTES
+            )
         elif new_status and new_status != Lead.Status.CALLBACK:
             changes["next_contact_at"] = None
             changes["next_contact_note"] = ""
+
+        # Do historii: na kiedy był zaplanowany ten kontakt i na kiedy ustawiono następny
+        is_call = outcome != Activity.Outcome.NOTE
+        rescheduled = changes.get("next_contact_at")
+        activity = Activity.objects.create(
+            lead=lead,
+            agent=agent,
+            outcome=outcome,
+            note=note,
+            planned_at=before["next_contact_at"] if is_call else None,
+            rescheduled_to=rescheduled if is_call else None,
+        )
 
         Lead.objects.filter(pk=lead.pk).update(**changes)
 
@@ -711,3 +763,73 @@ def release_agent_leads(agent, reason=""):
             if _return_to_pool(lead, Lead.Status.NEW, reason):
                 count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# Wyszukiwarka leadów (np. gdy ktoś dzwoni: wpisujesz numer albo NIP i od razu masz jego kartę)
+# ---------------------------------------------------------------------------
+def _local_phone(value):
+    """Same cyfry numeru, bez prefiksu kraju (+48 / 0048), żeby „+48 500 100 200” == „500100200”."""
+    digits = re.sub(r"\D", "", value or "")
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if len(digits) == 11 and digits.startswith("48"):
+        digits = digits[2:]
+    return digits
+
+
+def lookup_leads(queryset, query, limit=8):
+    """Zwraca listę (lead, dopasowanie, pole) z podanego querysetu.
+
+    dopasowanie: „exact” (cały numer / NIP / KRS) albo „partial” (fragment);
+    pole: po czym znaleziono („phone”, „nip”, „krs”, „name”, „company”, „email”).
+
+    Zapytanie złożone z cyfr (spacje, +, -, nawiasy są pomijane) szuka po numerze telefonu,
+    NIP i KRS (najpierw dokładne trafienia, potem fragmenty, np. ostatnie cyfry numeru).
+    Inne zapytanie szuka po nazwisku, nazwie firmy i e-mailu."""
+    query = (query or "").strip()
+    if len(query) < 2:
+        return []
+
+    if re.fullmatch(r"[\d\s+\-().]+", query):
+        digits = _local_phone(query)
+        if len(digits) < 3:
+            return []
+        exact, partial = [], []
+        for pk, phone, nip, krs in queryset.values_list("id", "phone", "company__nip", "company__krs"):
+            local = _local_phone(phone)
+            if digits == local:
+                exact.append((pk, "exact", "phone"))
+            elif digits == nip:
+                exact.append((pk, "exact", "nip"))
+            elif digits == krs:
+                exact.append((pk, "exact", "krs"))
+            elif digits in local:
+                partial.append((pk, "partial", "phone"))
+            elif nip and digits in nip:
+                partial.append((pk, "partial", "nip"))
+            elif krs and digits in krs:
+                partial.append((pk, "partial", "krs"))
+        ordered = (exact + partial)[:limit]
+        leads = {lead.pk: lead for lead in queryset.filter(pk__in=[pk for pk, _, _ in ordered])}
+        return [(leads[pk], match, field) for pk, match, field in ordered if pk in leads]
+
+    needle = query.lower()
+    found = (
+        queryset.filter(
+            Q(contact_name__icontains=query)
+            | Q(company__name__icontains=query)
+            | Q(email__icontains=query)
+        )
+        .order_by("contact_name")[:limit]
+    )
+    result = []
+    for lead in found:
+        if needle in lead.contact_name.lower():
+            field = "name"
+        elif lead.company and needle in lead.company.name.lower():
+            field = "company"
+        else:
+            field = "email"
+        result.append((lead, "partial", field))
+    return result
