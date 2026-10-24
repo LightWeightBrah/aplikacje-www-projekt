@@ -138,7 +138,12 @@ class Command(BaseCommand):
 
         lead = new_lead("Ewa Baran", owner=agent1)
         register_activity(
-            lead, agent1, Activity.Outcome.INTERESTED, "Zainteresowana abonamentem"
+            lead,
+            agent1,
+            Activity.Outcome.INTERESTED,
+            "Zainteresowana abonamentem",
+            next_contact_at=now + timedelta(days=1),
+            next_contact_note="Wysłać ofertę abonamentu i dopytać o decyzję",
         )
 
         lead = new_lead("Tomasz Pawlak", owner=agent1)
@@ -157,7 +162,12 @@ class Command(BaseCommand):
 
         lead = new_lead("Magdalena Rutkowska", owner=agent2)
         register_activity(
-            lead, agent2, Activity.Outcome.INTERESTED, "Prosi o ofertę na maila"
+            lead,
+            agent2,
+            Activity.Outcome.INTERESTED,
+            "Prosi o ofertę na maila",
+            next_contact_at=now + timedelta(days=1, hours=2),
+            next_contact_note="Omówić ofertę przesłaną mailem",
         )
 
         # Dzisiejsze sprzedaże, żeby ranking "Dziś" nie był pusty na pokazie.

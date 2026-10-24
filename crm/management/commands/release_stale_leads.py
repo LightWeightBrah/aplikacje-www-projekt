@@ -1,13 +1,13 @@
-from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from crm.rules import get_rules
 from crm.services import release_stale_leads
 
 
 class Command(BaseCommand):
     help = (
         "Zwraca do puli leady przypisane agentom, których agent nie ruszył "
-        "od LEAD_CLAIM_TIMEOUT_HOURS godzin."
+        "od określonej w ustawieniach zespołu liczby godzin (domyślnie 24)."
     )
 
     def add_arguments(self, parser):
@@ -20,7 +20,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
         count = release_stale_leads(dry_run=dry_run)
-        hours = settings.LEAD_CLAIM_TIMEOUT_HOURS
+        hours = get_rules().claim_timeout_hours
         if dry_run:
             self.stdout.write(f"Do zwrotu do puli (brak aktywności > {hours} h): {count}")
         else:
