@@ -69,13 +69,15 @@ class MissedCallTests(CrmTestBase):
         self.assertEqual(lead.missed_calls, 0)
         self.assertEqual(lead.next_contact_at, original)
 
-    def test_no_answer_without_appointment_changes_nothing(self):
+    def test_no_answer_without_appointment_is_not_a_missed_appointment(self):
+        # zwykła nieodebrana próba nie jest „nieodebranym umówionym kontaktem”;
+        # system tylko proponuje ponowną próbę (szczegóły: test_retry.py)
         lead = self.make_lead(owner=self.agent1)
         self.post(lead, "no_answer")
         lead.refresh_from_db()
         self.assertEqual(lead.missed_calls, 0)
-        self.assertIsNone(lead.next_contact_at)
         self.assertIsNone(lead.agreed_contact_at)
+        self.assertIsNotNone(lead.next_contact_at)
 
     def test_conversation_resets_counter_and_stores_new_agreement(self):
         lead = self.appointment(-30)
@@ -180,7 +182,7 @@ class ActivityTimelineTests(CrmTestBase):
         self.post(other, "no_answer")
         act = other.activities.get()
         self.assertIsNone(act.planned_at)
-        self.assertIsNone(act.rescheduled_to)
+        self.assertIsNotNone(act.rescheduled_to)   # automatyczna ponowna próba
 
     def test_api_exposes_timeline_read_only(self):
         planned = timezone.now() - timedelta(minutes=10)

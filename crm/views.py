@@ -70,6 +70,8 @@ from .services import (
     LEADERBOARD_SORT_KEYS,
     build_stats,
     leaderboard,
+    PROMISED_STATUSES,
+    with_owner_tries,
     with_transfer_info,
     calendar_ics,
     calendar_leads,
@@ -168,7 +170,7 @@ class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
     ]
 
     def get_queryset(self):
-        return with_transfer_info(super().get_queryset())
+        return with_owner_tries(with_transfer_info(super().get_queryset()))
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -332,7 +334,7 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     def list(self, request, *args, **kwargs):
         active = Q(leads__status__in=ACTIVE_STATUSES)
-        overdue = active & Q(leads__next_contact_at__lt=timezone.now())
+        overdue = Q(leads__status__in=PROMISED_STATUSES) & Q(leads__next_contact_at__lt=timezone.now())
         users = self.get_queryset().annotate(
             active_leads=Count("leads", filter=active, distinct=True),
             overdue_leads=Count("leads", filter=overdue, distinct=True),
@@ -447,7 +449,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         queryset = Lead.objects.select_related("product", "company", "owner", "batch").filter(
             owner=self.request.user
         )
-        return with_transfer_info(queryset)
+        return with_owner_tries(with_transfer_info(queryset))
 
     @extend_schema(
         responses=DueLeadsSerializer,

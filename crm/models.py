@@ -256,3 +256,53 @@ class AgentProfile(models.Model):
 
     def __str__(self):
         return f"Profil: {self.user}"
+
+
+class TeamRules(models.Model):
+    """Zasady pracy z leadami dla całego zespołu (jeden wiersz, zmienia go manager).
+
+    Wartości startowe pochodzą z config/settings.py; po pierwszej zmianie przez managera
+    obowiązują te zapisane tutaj. Odczyt: crm.rules.get_rules().
+    """
+
+    max_attempts_per_agent = models.PositiveSmallIntegerField(
+        "limit prób jednego agenta", default=3
+    )
+    unreachable_after_agents = models.PositiveSmallIntegerField(
+        "ilu agentów bez skutku, by lead był nieosiągalny", default=5
+    )
+    retry_after_first_minutes = models.PositiveIntegerField(
+        "ponowna próba po 1. nieodebraniu (min)", default=120
+    )
+    retry_after_second_minutes = models.PositiveIntegerField(
+        "ponowna próba po 2. nieodebraniu (min)", default=1440
+    )
+    retry_after_next_minutes = models.PositiveIntegerField(
+        "ponowna próba po kolejnych nieodebraniach (min)", default=2880
+    )
+    work_start_hour = models.PositiveSmallIntegerField("początek dnia pracy (godzina)", default=9)
+    work_end_hour = models.PositiveSmallIntegerField("koniec dnia pracy (godzina)", default=17)
+    callback_retry_minutes = models.PositiveIntegerField(
+        "ponowna próba po nieodebranym umówionym kontakcie (min)", default=60
+    )
+    claim_timeout_hours = models.PositiveIntegerField(
+        "po ilu godzinach nietknięty lead wraca do puli", default=24
+    )
+    unreachable_cooldown_days = models.PositiveIntegerField(
+        "po ilu dniach nieosiągalne leady można zwrócić do obiegu", default=30
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Ustawienia zespołu"
+        verbose_name_plural = "Ustawienia zespołu"
+
+    def __str__(self):
+        return "Ustawienia zespołu"

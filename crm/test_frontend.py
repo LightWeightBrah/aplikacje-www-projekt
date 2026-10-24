@@ -447,3 +447,21 @@ class ReminderSettingsAndWorkerTests(CrmTestBase):
 
     def test_plan_page_has_clickable_rows_script(self):
         self.assertContains(self.client.get("/crm/plan/"), "crm/js/plan.js")
+
+
+class SettingsPageTests(CrmTestBase):
+    def test_settings_page_renders(self):
+        r = self.client.get("/crm/settings/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "rules-form")
+        self.assertContains(r, "CRM.initSettings")
+
+    def test_menu_links_to_settings_for_managers_only(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/settings/"')
+        self.assertContains(r, "data-manager-only")
+
+    def test_settings_api_used_by_page_is_manager_only_for_writes(self):
+        self.assertEqual(self.api(self.agent1).get("/api/settings/").status_code, 200)
+        self.assertEqual(self.api(self.agent1).patch("/api/settings/", {}, format="json").status_code, 403)
+        self.assertEqual(self.api(self.manager).patch("/api/settings/", {}, format="json").status_code, 200)

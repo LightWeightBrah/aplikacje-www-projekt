@@ -42,6 +42,11 @@ def import_page(request):
     return render(request, "crm/import.html")
 
 
+def settings_page(request):
+    """Ustawienia zespołu (tylko manager): limity prób, ponowne próby, zwroty do puli. Dane z /api/settings/."""
+    return render(request, "crm/settings.html")
+
+
 def ranking_page(request):
     """Szkielet rankingu zespołu. Dane idą z /api/leaderboard/ (403, gdy manager wyłączył podgląd)."""
     return render(request, "crm/ranking.html")

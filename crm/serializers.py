@@ -8,7 +8,8 @@ from rest_framework import serializers
 
 from .excel import MAX_IMPORT_BYTES
 from .roles import AGENT, MANAGER
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product
+from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product, TeamRules
+from .rules import FIELD_LIMITS, attempt_times, get_rules, suggest_retry
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -72,10 +73,14 @@ class ActivitySerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        # Termin jest wymagany, a sprawa (next_contact_note) opcjonalna
+        # Kontakt obiecany klientowi (oddzwonić / zainteresowany) musi mieć termin; sprawa jest opcjonalna
         if attrs["outcome"] == Activity.Outcome.CALLBACK and not attrs.get("next_contact_at"):
             raise serializers.ValidationError(
                 "Wynik 'Prosił o oddzwonienie' wymaga next_contact_at."
+            )
+        if attrs["outcome"] == Activity.Outcome.INTERESTED and not attrs.get("next_contact_at"):
+            raise serializers.ValidationError(
+                "Wynik 'Zainteresowany' wymaga next_contact_at (kiedy ponownie zadzwonić)."
             )
         return attrs
 
@@ -106,6 +111,9 @@ class LeadSerializer(serializers.ModelSerializer):
     batch_name = serializers.CharField(source="batch.name", read_only=True, allow_null=True)
     # Od kogo lead został przepisany obecnemu opiekunowi (null = wzięty z puli)
     transferred_from = serializers.SerializerMethodField()
+    # Ile razy obecny opiekun nie dodzwonił się do leada i kiedy system proponuje następną próbę
+    owner_no_answers = serializers.SerializerMethodField()
+    suggested_retry_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -125,6 +133,39 @@ class LeadSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.STR)
     def get_transferred_from(self, obj):
         return getattr(obj, "transferred_from_name", None)
+
+    def _rules(self):
+        # jedno zapytanie o ustawienia na całą listę leadów
+        if "team_rules" not in self.context:
+            self.context["team_rules"] = get_rules()
+        return self.context["team_rules"]
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_owner_no_answers(self, obj):
+        if obj.owner_id is None:
+            return 0
+        value = getattr(obj, "owner_no_answers", None)
+        if value is None:
+            value = Activity.objects.filter(
+                lead=obj, agent_id=obj.owner_id, outcome=Activity.Outcome.NO_ANSWER
+            ).count()
+        return value
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_suggested_retry_at(self, obj):
+        """Termin ponownej próby, który system ustawi po kolejnym nieodebraniu (null = ostatnia próba)."""
+        if obj.owner_id is None or obj.status != Lead.Status.NEW:
+            return None
+        tries = self.get_owner_no_answers(obj)
+        rules = self._rules()
+        if tries + 1 >= rules.max_attempts_per_agent:
+            return None
+        acts = getattr(obj, "no_answer_acts", None)
+        if acts is None:
+            acts = Activity.objects.filter(lead=obj, outcome=Activity.Outcome.NO_ANSWER)
+        now = timezone.now()
+        earlier = attempt_times(rules, [(a.created_at, a.rescheduled_to) for a in acts]) + [now]   # + próba, którą agent właśnie robi
+        return suggest_retry(rules, tries, now, earlier).isoformat()
 
     # Walidacja na poziomie pojedynczego pola
     def validate_phone(self, value):
@@ -151,6 +192,8 @@ class LeadSerializer(serializers.ModelSerializer):
         )
         if status == Lead.Status.CALLBACK and not next_at:
             raise serializers.ValidationError("Status 'Do oddzwonienia' wymaga terminu.")
+        if status == Lead.Status.INTERESTED and not next_at:
+            raise serializers.ValidationError("Status 'Zainteresowany' wymaga terminu kolejnego kontaktu.")
         return attrs
 
 
@@ -335,3 +378,42 @@ class LeaderboardSerializer(serializers.Serializer):
     date_to = serializers.DateField()
     sort = serializers.CharField()
     results = LeaderboardRowSerializer(many=True)
+
+
+class TeamRulesSerializer(serializers.ModelSerializer):
+    """Ustawienia zespołu (limit prób, ponowne próby, zwroty do puli) – zmienia je manager."""
+
+    updated_by_name = serializers.CharField(source="updated_by.username", read_only=True, default=None)
+
+    class Meta:
+        model = TeamRules
+        fields = (
+            "max_attempts_per_agent",
+            "unreachable_after_agents",
+            "retry_after_first_minutes",
+            "retry_after_second_minutes",
+            "retry_after_next_minutes",
+            "work_start_hour",
+            "work_end_hour",
+            "callback_retry_minutes",
+            "claim_timeout_hours",
+            "unreachable_cooldown_days",
+            "updated_at",
+            "updated_by_name",
+        )
+        read_only_fields = ("updated_at", "updated_by_name")
+
+    def validate(self, attrs):
+        for name, value in attrs.items():
+            lo, hi, unit, _ = FIELD_LIMITS[name]
+            if not lo <= value <= hi:
+                raise serializers.ValidationError(
+                    {name: f"Wartość musi być z zakresu od {lo} do {hi} ({unit})."}
+                )
+        start = attrs.get("work_start_hour", getattr(self.instance, "work_start_hour", 8))
+        end = attrs.get("work_end_hour", getattr(self.instance, "work_end_hour", 20))
+        if start >= end:
+            raise serializers.ValidationError(
+                {"work_end_hour": "Koniec dnia pracy musi być później niż jego początek."}
+            )
+        return attrs

@@ -13,6 +13,7 @@ urlpatterns = [
     path("ranking/", web_views.ranking_page, name="ranking"),
     path("import/", web_views.import_page, name="import"),
     path("users/", web_views.users_page, name="users"),
+    path("settings/", web_views.settings_page, name="settings"),
     path("leads/", web_views.lead_list, name="lead-list"),
     path("sw.js", web_views.service_worker, name="sw"),
 ]

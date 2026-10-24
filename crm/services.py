@@ -7,16 +7,16 @@ import re
 from datetime import datetime, time, timedelta
 from datetime import timezone as dt_timezone
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
-from django.db.models.functions import TruncDate, TruncHour
+from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
+from django.db.models.functions import Coalesce, TruncDate, TruncHour
 from django.utils import timezone
 from rest_framework.renderers import BaseRenderer
 
 from .models import Activity, AgentProfile, Lead, LeadAssignment
 from .roles import AGENT
+from .rules import attempt_times, get_rules, suggest_retry
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
 ACTIVE_STATUSES = (
@@ -42,6 +42,9 @@ CLOSED_STATUSES = (Lead.Status.WON, Lead.Status.LOST, Lead.Status.DO_NOT_CALL)
 # Nieodebrany telefon w tym oknie przed terminem też liczy się jako nieodebrany umówiony kontakt
 MISSED_WINDOW = timedelta(minutes=5)
 # Po tych wynikach rozmowa się odbyła, więc licznik nieodebranych umówionych kontaktów wraca do zera
+# Statusy leadów z kontaktem obiecanym klientowi (tylko tu nieodebranie w terminie to „nieodebrany umówiony kontakt”)
+PROMISED_STATUSES = (Lead.Status.CALLBACK, Lead.Status.INTERESTED, Lead.Status.OFFER)
+
 OUTCOMES_THAT_END_MISSES = (
     Activity.Outcome.CALLBACK,
     Activity.Outcome.INTERESTED,
@@ -83,11 +86,36 @@ def with_transfer_info(queryset):
     )
 
 
+def with_owner_tries(queryset):
+    """Dodaje do leadów `owner_no_answers`: ile razy obecny opiekun nie dodzwonił się do leada."""
+    tries = (
+        Activity.objects.filter(
+            lead=OuterRef("pk"), agent=OuterRef("owner"), outcome=Activity.Outcome.NO_ANSWER
+        )
+        .values("lead")
+        .annotate(n=Count("pk"))
+        .values("n")
+    )
+    # wcześniejsze nieodebrane próby (godziny), żeby ponowna próba wypadła o innej porze dnia
+    earlier = Prefetch(
+        "activities",
+        queryset=Activity.objects.filter(outcome=Activity.Outcome.NO_ANSWER),
+        to_attr="no_answer_acts",
+    )
+    return queryset.annotate(owner_no_answers=Coalesce(Subquery(tries), 0)).prefetch_related(
+        earlier
+    )
+
+
 def overdue_leads(user):
-    """Leady agenta z terminem kontaktu, który już minął."""
+    """Zaległe oddzwonienia agenta: obiecane klientowi (oddzwonić / zainteresowany / oferta) z minionym terminem.
+
+    Tylko one blokują pobranie nowego leada. Ponowna próba do leada, z którym nikt jeszcze
+    nie rozmawiał (status „nowy”), jest zadaniem miękkim i nie blokuje.
+    """
     return Lead.objects.filter(
         owner=user,
-        status__in=ACTIVE_STATUSES,
+        status__in=PROMISED_STATUSES,
         next_contact_at__lt=timezone.now(),
     )
 
@@ -158,24 +186,57 @@ def register_activity(
     - "nie odebrał" w umówionym terminie (albo po nim) liczy się jako nieodebrany
       umówiony kontakt: rośnie `missed_calls`, umówiony termin zostaje w
       `agreed_contact_at`, a jeśli agent nie wskazał nowego terminu, system sam
-      ustawia ponowną próbę za CALLBACK_RETRY_MINUTES minut. Dzięki temu lead
+      ustawia ponowną próbę za `callback_retry_minutes` minut (ustawienie managera). Dzięki temu lead
       nie zostaje "zaległy" w nieskończoność i nie blokuje pobrania kolejnego.
     """
     with transaction.atomic():
         now = timezone.now()
-        before = Lead.objects.values("next_contact_at", "agreed_contact_at").get(
-            pk=lead.pk
-        )
+        rules = get_rules()
+        before = Lead.objects.values(
+            "next_contact_at", "agreed_contact_at", "status", "owner_id"
+        ).get(pk=lead.pk)
         changes = {"last_activity_at": now}
         if outcome != Activity.Outcome.NOTE:
             changes["attempts_count"] = F("attempts_count") + 1
 
         # Umówiony kontakt, do którego nie dodzwoniono (termin minął lub właśnie nadszedł)
-        missed = (
-            outcome == Activity.Outcome.NO_ANSWER
-            and before["next_contact_at"] is not None
+        # (tylko kontakt obiecany klientowi: oddzwonić / zainteresowany; zwykła ponowna próba
+        # po nieodebraniu to po prostu kolejna próba, a nie „nieodebrany umówiony kontakt”)
+        term_due = (
+            before["next_contact_at"] is not None
             and before["next_contact_at"] <= now + MISSED_WINDOW
         )
+        missed = (
+            outcome == Activity.Outcome.NO_ANSWER
+            and term_due
+            and before["status"] in PROMISED_STATUSES
+        )
+        # Pierwszy kontakt, do którego nikt się jeszcze nie dodzwonił: system sam proponuje
+        # ponowną próbę (chyba że to ostatnia próba agenta, wtedy lead wraca do puli)
+        auto_retry_at = None
+        if (
+            outcome == Activity.Outcome.NO_ANSWER
+            and not missed
+            and before["status"] == Lead.Status.NEW
+            and before["owner_id"] is not None
+        ):
+            tries_before = Activity.objects.filter(
+                lead_id=lead.pk, agent_id=before["owner_id"], outcome=outcome
+            ).count()
+            attempts_raw = list(Activity.objects.filter(
+                lead_id=lead.pk, outcome=outcome).values_list("created_at", "rescheduled_to"))
+            earlier = attempt_times(rules, attempts_raw)
+            if tries_before + 1 < rules.max_attempts_per_agent:
+                suggested = suggest_retry(rules, tries_before, now, earlier + [now])
+                # Termin ustawiony wcześniej spoza rozmów (np. wpisany ręcznie albo przez managera)
+                # i późniejszy niż propozycja zostaje. Termin, który powstał przy poprzednich próbach
+                # (automatyczny albo z formularza), zastępuje nowa propozycja: inaczej rotacja godzin
+                # „zacinała się”, bo zapis się nie zmieniał, a w historii brakowało nowej godziny.
+                earlier_terms = {m for _c, m in attempts_raw if m is not None}
+                keep = (before["next_contact_at"] is not None and before["next_contact_at"] >= suggested
+                        and before["next_contact_at"] not in earlier_terms)
+                if not keep:
+                    auto_retry_at = suggested
         if missed:
             changes["missed_calls"] = F("missed_calls") + 1
             if before["agreed_contact_at"] is None:
@@ -199,9 +260,9 @@ def register_activity(
                 changes["next_contact_note"] = next_contact_note
         elif missed:
             # Brak nowego terminu od agenta: ponowna próba za chwilę, sprawa zostaje ta sama
-            changes["next_contact_at"] = now + timedelta(
-                minutes=settings.CALLBACK_RETRY_MINUTES
-            )
+            changes["next_contact_at"] = now + timedelta(minutes=rules.callback_retry_minutes)
+        elif auto_retry_at is not None:
+            changes["next_contact_at"] = auto_retry_at
         elif new_status and new_status != Lead.Status.CALLBACK:
             changes["next_contact_at"] = None
             changes["next_contact_note"] = ""
@@ -264,12 +325,13 @@ def release_if_exhausted(lead_id):
     no_answers = Activity.objects.filter(
         lead=lead, outcome=Activity.Outcome.NO_ANSWER
     )
+    rules = get_rules()
     owner_tries = no_answers.filter(agent_id=lead.owner_id).count()
-    if owner_tries < settings.LEAD_MAX_ATTEMPTS_PER_AGENT:
+    if owner_tries < rules.max_attempts_per_agent:
         return None
 
     agents_tried = no_answers.values("agent").distinct().count()
-    if agents_tried >= settings.LEAD_UNREACHABLE_AFTER_AGENTS:
+    if agents_tried >= rules.unreachable_after_agents:
         new_status = Lead.Status.UNREACHABLE
         reason = f"Nieosiągalny: {agents_tried} agentów bez skutku"
     else:
@@ -287,7 +349,8 @@ def release_stale_leads(dry_run=False):
     "Nietknięty" = status nowy, przypisany dawno temu i bez żadnej aktywności
     obecnego opiekuna. Zwraca liczbę leadów (przy dry_run tylko je liczy).
     """
-    cutoff = timezone.now() - timedelta(hours=settings.LEAD_CLAIM_TIMEOUT_HOURS)
+    hours = get_rules().claim_timeout_hours
+    cutoff = timezone.now() - timedelta(hours=hours)
     touched = Activity.objects.filter(lead=OuterRef("pk"), agent=OuterRef("owner"))
     stale = Lead.objects.filter(
         owner__isnull=False,
@@ -300,7 +363,7 @@ def release_stale_leads(dry_run=False):
 
     released = 0
     for lead in stale:
-        reason = f"Brak aktywności przez {settings.LEAD_CLAIM_TIMEOUT_HOURS} h, zwrot do puli"
+        reason = f"Brak aktywności przez {hours} h, zwrot do puli"
         if _return_to_pool(lead, Lead.Status.NEW, reason):
             released += 1
     return released
@@ -378,18 +441,19 @@ def unreachable_leads(ready_only=False):
     """Pula nieosiągalnych. ready_only: tylko te, które przeleżały cooldown."""
     queryset = Lead.objects.filter(status=Lead.Status.UNREACHABLE)
     if ready_only:
-        cutoff = timezone.now() - timedelta(days=settings.LEAD_UNREACHABLE_COOLDOWN_DAYS)
+        cutoff = timezone.now() - timedelta(days=get_rules().unreachable_cooldown_days)
         queryset = queryset.filter(owner__isnull=True, last_activity_at__lte=cutoff)
     return queryset.order_by("last_activity_at")
 
 
 def recycle_unreachable():
-    """Zwraca do obiegu nieosiągalne leady po LEAD_UNREACHABLE_COOLDOWN_DAYS dniach.
+    """Zwraca do obiegu nieosiągalne leady po `unreachable_cooldown_days` dniach (ustawienie managera).
 
     Lead dostaje status "nowy" i wraca do puli. Agenci, którzy już go prowadzili,
     nadal go nie dostaną (historia przypisań). Zwraca liczbę leadów.
     """
     recycled = 0
+    days = get_rules().unreachable_cooldown_days
     for lead in unreachable_leads(ready_only=True):
         with transaction.atomic():
             changed = Lead.objects.filter(
@@ -400,7 +464,7 @@ def recycle_unreachable():
                     lead=lead,
                     reason=(
                         f"Koniec okresu karencji "
-                        f"({settings.LEAD_UNREACHABLE_COOLDOWN_DAYS} dni), zwrot do obiegu"
+                        f"({days} dni), zwrot do obiegu"
                     ),
                 )
                 recycled += 1

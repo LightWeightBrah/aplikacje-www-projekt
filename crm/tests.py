@@ -1539,3 +1539,51 @@ class LeadLookupTests(CrmTestBase):
         self.assertEqual(self.lookup(self.no_role, "500").status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.lookup(None, "500").status_code, status.HTTP_401_UNAUTHORIZED)
 
+
+
+class ResetLeadsCommandTests(CrmTestBase):
+    """Komenda reset_leads: czyści leady do testów, ale tylko w trybie DEBUG."""
+
+    def run_command(self, *args):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("reset_leads", *args, stdout=out)
+        return out.getvalue()
+
+    def test_refuses_when_debug_is_off(self):
+        from django.core.management.base import CommandError
+
+        self.make_lead(owner=self.agent1)
+        with override_settings(DEBUG=False):
+            with self.assertRaises(CommandError):
+                self.run_command("--yes")
+        self.assertEqual(Lead.objects.count(), 1)
+
+    @override_settings(DEBUG=True)
+    def test_empty_reset_removes_leads_but_keeps_users(self):
+        lead = self.make_lead(owner=self.agent1)
+        Activity.objects.create(lead=lead, agent=self.agent1, outcome="no_answer")
+        self.run_command("--yes", "--empty")
+        self.assertEqual(Lead.objects.count(), 0)
+        self.assertEqual(Activity.objects.count(), 0)
+        self.assertTrue(User.objects.filter(username="agent1").exists())
+
+    @override_settings(DEBUG=True)
+    def test_reset_loads_demo_data(self):
+        self.make_lead(owner=self.agent1, phone="500111222")
+        self.run_command("--yes")
+        self.assertFalse(Lead.objects.filter(phone="500111222").exists())
+        self.assertGreater(Lead.objects.count(), 5)
+
+    @override_settings(DEBUG=True)
+    def test_wrong_confirmation_cancels(self):
+        from unittest import mock
+
+        self.make_lead(owner=self.agent1)
+        with mock.patch("builtins.input", return_value="nie"):
+            out = self.run_command()
+        self.assertIn("Anulowano", out)
+        self.assertEqual(Lead.objects.count(), 1)

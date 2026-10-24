@@ -10,6 +10,7 @@ from .models import (
     LeadAssignment,
     LeadBatch,
     Product,
+    TeamRules,
 )
 
 
@@ -82,3 +83,16 @@ class UserWithProfileAdmin(UserAdmin):
 
 admin.site.unregister(get_user_model())
 admin.site.register(get_user_model(), UserWithProfileAdmin)
+
+
+@admin.register(TeamRules)
+class TeamRulesAdmin(admin.ModelAdmin):
+    """Ustawienia zespołu (jeden wiersz); na co dzień zmienia je manager na stronie /crm/settings/."""
+
+    list_display = ("__str__", "max_attempts_per_agent", "updated_at", "updated_by")
+
+    def has_add_permission(self, request):
+        return not TeamRules.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
