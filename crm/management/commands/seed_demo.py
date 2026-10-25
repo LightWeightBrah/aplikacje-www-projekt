@@ -68,7 +68,7 @@ class Command(BaseCommand):
             batch.leads.all().delete()
             batch.delete()
 
-        call_command("setup_roles", "--demo", verbosity=0)
+        call_command("setup_roles", "--demo", stdout=self.stdout)
         User = get_user_model()
         agent1 = User.objects.get(username="agent1")
         agent2 = User.objects.get(username="agent2")

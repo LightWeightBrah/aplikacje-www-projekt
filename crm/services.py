@@ -12,6 +12,7 @@ from django.db import transaction
 from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
 from django.db.models.functions import Coalesce, TruncDate, TruncHour
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.renderers import BaseRenderer
 
 from .models import Activity, AgentProfile, Lead, LeadAssignment
@@ -102,9 +103,17 @@ def with_owner_tries(queryset):
         queryset=Activity.objects.filter(outcome=Activity.Outcome.NO_ANSWER),
         to_attr="no_answer_acts",
     )
-    return queryset.annotate(owner_no_answers=Coalesce(Subquery(tries), 0)).prefetch_related(
-        earlier
+    # ostatni kontakt z leadem (bez samych notatek): wynik, kiedy i kto, do linii „Ostatnio: …” na listach
+    last = (
+        Activity.objects.filter(lead=OuterRef("pk")).exclude(outcome=Activity.Outcome.NOTE)
+        .order_by("-created_at", "-pk")
     )
+    return queryset.annotate(
+        owner_no_answers=Coalesce(Subquery(tries), 0),
+        last_contact_outcome=Subquery(last.values("outcome")[:1]),
+        last_contact_at=Subquery(last.values("created_at")[:1]),
+        last_contact_agent=Subquery(last.values("agent")[:1]),
+    ).prefetch_related(earlier)
 
 
 def overdue_leads(user):
@@ -170,6 +179,61 @@ def claim_next_lead(user, batch_id=None):
     raise NoLeadsAvailable
 
 
+UNDO_WINDOW_SECONDS = 30   # serwer jest łaskawszy niż pasek w kolejce (10 s), żeby opóźnienie sieci nie psuło cofania
+UNDO_FIELDS = (
+    "owner_id", "status", "claimed_at", "next_contact_at", "next_contact_note",
+    "agreed_contact_at", "missed_calls", "attempts_count", "last_activity_at",
+)
+
+
+class UndoNotPossible(Exception):
+    """Wpisu nie da się już cofnąć (za późno, nie jest ostatni albo lead zmienił się w międzyczasie)."""
+
+
+def _snapshot(lead_pk):
+    """Stan leada do przywrócenia przy cofnięciu (daty jako tekst ISO, żeby zmieścić się w JSON)."""
+    row = Lead.objects.values(*UNDO_FIELDS).get(pk=lead_pk)
+    return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()}
+
+
+def _restore_value(field, value):
+    if value is not None and field in ("claimed_at", "next_contact_at", "agreed_contact_at", "last_activity_at"):
+        return parse_datetime(value)
+    return value
+
+
+def undo_activity(activity, user, is_manager=False):
+    """Cofa OSTATNI zapis leada zaraz po pomyłce: przywraca stan sprzed wpisu i usuwa wpis z historii.
+
+    Warunki: wpis ma migawkę, jest najnowszym wpisem leada, powstał nie dawniej niż UNDO_WINDOW_SECONDS
+    temu, a cofa go jego autor (albo manager). Jeśli zapis zwrócił leada do puli (wyczerpany limit prób),
+    cofnięcie go odzyskuje, o ile nikt go jeszcze nie pobrał.
+    """
+    with transaction.atomic():
+        activity = Activity.objects.select_for_update().get(pk=activity.pk)
+        lead = Lead.objects.select_for_update().get(pk=activity.lead_id)
+        if activity.undo_state is None:
+            raise UndoNotPossible("Tego wpisu nie można cofnąć.")
+        if not is_manager and activity.agent_id != user.pk:
+            raise UndoNotPossible("Możesz cofnąć tylko własny zapis.")
+        if timezone.now() - activity.created_at > timedelta(seconds=UNDO_WINDOW_SECONDS):
+            raise UndoNotPossible("Za późno na cofnięcie tego zapisu.")
+        newest = Activity.objects.filter(lead_id=lead.pk).order_by("-created_at", "-pk").first()
+        if newest.pk != activity.pk:
+            raise UndoNotPossible("Po tym zapisie doszły już nowe wpisy, więc nie można go cofnąć.")
+        state = activity.undo_state
+        if lead.owner_id not in (state["owner_id"], None):
+            raise UndoNotPossible("Ten lead został już przejęty przez kogoś innego.")
+        # zwrot do puli po wyczerpaniu prób zostawia wpis w historii przypisań: usuwamy go razem z zapisem
+        LeadAssignment.objects.filter(
+            lead_id=lead.pk, to_agent__isnull=True, assigned_at__gte=activity.created_at
+        ).delete()
+        restored = {k: _restore_value(k, v) for k, v in state.items()}
+        Lead.objects.filter(pk=lead.pk).update(**restored)
+        activity.delete()
+    return Lead.objects.get(pk=lead.pk)
+
+
 def register_activity(
     lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None
 ):
@@ -192,6 +256,7 @@ def register_activity(
     with transaction.atomic():
         now = timezone.now()
         rules = get_rules()
+        undo_state = _snapshot(lead.pk)
         before = Lead.objects.values(
             "next_contact_at", "agreed_contact_at", "status", "owner_id"
         ).get(pk=lead.pk)
@@ -277,6 +342,7 @@ def register_activity(
             note=note,
             planned_at=before["next_contact_at"] if is_call else None,
             rescheduled_to=rescheduled if is_call else None,
+            undo_state=undo_state,
         )
 
         Lead.objects.filter(pk=lead.pk).update(**changes)
@@ -484,11 +550,11 @@ def day_bounds(day):
 
 def _scheduled_leads(user):
     """Aktywne leady agenta, które mają wyznaczony termin kontaktu."""
-    return Lead.objects.filter(
+    return with_owner_tries(Lead.objects.filter(
         owner=user,
         status__in=ACTIVE_STATUSES,
         next_contact_at__isnull=False,
-    ).select_related("product", "company", "batch")
+    ).select_related("product", "company", "batch"))
 
 
 def day_schedule(user, day):
@@ -506,6 +572,29 @@ def day_schedule(user, day):
     else:
         overdue = base.none()
     return list(overdue), list(scheduled)
+
+
+def day_summary(user):
+    """Liczby do paska dnia nad kolejką: co już zrobiono dziś i co jeszcze czeka.
+
+    `overdue` = zaległe oddzwonienia obiecane klientowi (czerwone), `retries_due` = ponowne próby
+    leadów, z którymi jeszcze nikt nie rozmawiał (termin minął, ale to nie jest zaległość wobec klienta).
+    """
+    start, end = day_bounds(timezone.localdate())
+    now = timezone.now()
+    mine = Activity.objects.filter(agent=user, created_at__gte=start, created_at__lt=end).exclude(
+        outcome=Activity.Outcome.NOTE
+    )
+    waiting = _scheduled_leads(user)
+    past = waiting.filter(next_contact_at__lt=now)
+    return {
+        "done_today": mine.count(),
+        "talked_today": mine.exclude(outcome=Activity.Outcome.NO_ANSWER).count(),
+        "overdue": past.filter(status__in=PROMISED_STATUSES).count(),
+        "retries_due": past.exclude(status__in=PROMISED_STATUSES).count(),
+        "left_today": waiting.filter(next_contact_at__gte=now, next_contact_at__lt=end).count(),
+        "active": Lead.objects.filter(owner=user, status__in=ACTIVE_STATUSES).count(),
+    }
 
 
 def calendar_leads(user):

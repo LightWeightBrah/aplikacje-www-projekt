@@ -114,6 +114,10 @@ class LeadSerializer(serializers.ModelSerializer):
     # Ile razy obecny opiekun nie dodzwonił się do leada i kiedy system proponuje następną próbę
     owner_no_answers = serializers.SerializerMethodField()
     suggested_retry_at = serializers.SerializerMethodField()
+    # Ostatni kontakt (bez samych notatek): do linii „Ostatnio: Nie odebrał · dziś 22:09” na listach
+    last_contact_outcome = serializers.SerializerMethodField()
+    last_contact_at = serializers.SerializerMethodField()
+    last_contact_agent = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -129,6 +133,19 @@ class LeadSerializer(serializers.ModelSerializer):
             "agreed_contact_at",
             "missed_calls",
         )
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_last_contact_outcome(self, obj):
+        return getattr(obj, "last_contact_outcome", None)
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_last_contact_at(self, obj):
+        value = getattr(obj, "last_contact_at", None)
+        return value.isoformat() if value else None
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_last_contact_agent(self, obj):
+        return getattr(obj, "last_contact_agent", None)
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_transferred_from(self, obj):

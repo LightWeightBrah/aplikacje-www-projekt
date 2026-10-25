@@ -319,7 +319,9 @@ class InterestedNeedsTermTests(CrmTestBase):
     def test_demo_data_has_terms_for_all_promised_leads(self):
         from django.core.management import call_command
 
-        call_command("seed_demo", "--reset", verbosity=0)
+        from io import StringIO
+
+        call_command("seed_demo", "--reset", stdout=StringIO())
         promised = Lead.objects.filter(status__in=(Lead.Status.INTERESTED, Lead.Status.CALLBACK))
         self.assertGreater(promised.count(), 3)
         self.assertFalse(promised.filter(next_contact_at__isnull=True).exists())

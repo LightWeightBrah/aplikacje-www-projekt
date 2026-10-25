@@ -181,6 +181,8 @@ class Activity(models.Model):
     # następna próba o 13:10”.
     planned_at = models.DateTimeField(null=True, blank=True)
     rescheduled_to = models.DateTimeField(null=True, blank=True)
+    # Stan leada sprzed tego wpisu: pozwala cofnąć ostatni zapis tuż po pomyłce (patrz services.undo_activity)
+    undo_state = models.JSONField(null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

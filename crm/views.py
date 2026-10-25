@@ -6,6 +6,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
+from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -64,6 +65,9 @@ from .services import (
     CalendarRenderer,
     InvalidAssignment,
     NoLeadsAvailable,
+    UndoNotPossible,
+    day_summary,
+    undo_activity,
     OverdueCallbacks,
     claim_next_lead,
     assign_lead,
@@ -426,6 +430,20 @@ class ActivityViewSet(
             next_contact_note=data.get("next_contact_note"),
         )
 
+    @extend_schema(request=None, responses=LeadSerializer)
+    @action(detail=True, methods=["post"])
+    def undo(self, request, pk=None):
+        """Cofa ostatni zapis zaraz po pomyłce (do 30 s): przywraca stan leada i usuwa wpis z historii."""
+        # wpis szukamy po autorze, a nie po opiekunie leada: po ostatniej próbie lead wraca do puli
+        # i agent nie widzi go już na zwykłej liście, a właśnie wtedy cofnięcie jest najbardziej potrzebne
+        candidates = Activity.objects.all() if is_manager(request.user) else Activity.objects.filter(agent=request.user)
+        activity = get_object_or_404(candidates, pk=pk)
+        try:
+            lead = undo_activity(activity, request.user, is_manager=is_manager(request.user))
+        except UndoNotPossible as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(LeadSerializer(lead, context=self.get_serializer_context()).data)
+
 
 class LeadAssignmentViewSet(OwnerScopedMixin, viewsets.ReadOnlyModelViewSet):
     queryset = LeadAssignment.objects.select_related("lead")
@@ -495,6 +513,12 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         overdue, scheduled = day_schedule(request.user, day)
         data = {"date": day, "overdue": overdue, "scheduled": scheduled}
         return Response(ScheduleSerializer(data).data)
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        """Liczby do paska dnia: wykonane dziś, zaległe, pozostałe na dziś."""
+        return Response(day_summary(request.user))
 
     @extend_schema(responses={(200, "text/calendar"): OpenApiTypes.STR})
     @action(
