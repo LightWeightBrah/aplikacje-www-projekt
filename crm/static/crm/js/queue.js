@@ -58,7 +58,7 @@
     .sort((a, b) => (isFresh(a) - isFresh(b)) || (new Date(a.next_contact_at) - new Date(b.next_contact_at)));
 
   function rel(iso) {
-    const m = Math.round((new Date(iso) - Date.now()) / 60000), a = Math.abs(m);
+    const m = Math.floor(new Date(iso) / 60000) - Math.floor(Date.now() / 60000), a = Math.abs(m);   // po granicach minut zegara: wszystkie wpisy zmieniają się razem
     if (a === 0) return "teraz";
     const t = a < 60 ? `${a} min` : a < 1440 ? `${Math.round(a / 60)} h` : Math.round(a / 1440) === 1 ? "1 dzień" : `${Math.round(a / 1440)} dni`;
     return m < 0 ? `${t} temu` : `za ${t}`;
@@ -92,6 +92,30 @@
   }
   const errText = (d) => Object.values(d || {}).flat().map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ") || "Nie udało się zapisać.";
 
+  /* Pasek dnia nad kolejką: ile już zrobiono dziś i ile jeszcze czeka */
+  async function loadSummary() {
+    const box = $("day-bar");
+    if (!box) return;
+    box.hidden = !CRM.dayBarEnabled();
+    if (box.hidden) return;
+    try {
+      const r = await api("/api/my-leads/summary/");
+      if (!r.ok) return;
+      const d = await r.json();
+      const todo = d.left_today + d.overdue + d.retries_due, total = d.done_today + todo;
+      const pct = total ? Math.round((d.done_today / total) * 100) : 0;
+      const parts = [
+        `<span title="Rozmów: ${d.talked_today}, nieodebranych: ${d.done_today - d.talked_today}"><b>${d.done_today}</b> wykonane</span>`,
+        `<span><b>${d.left_today}</b> jeszcze dziś</span>`,
+        d.overdue ? `<span class="db-late"><b>${d.overdue}</b> zaległe</span>` : "",
+        d.retries_due ? `<span class="db-retry" title="Ponowne próby leadów, z którymi jeszcze nie rozmawiałeś"><b>${d.retries_due}</b> do ponowienia</span>` : "",
+      ].filter(Boolean).join('<span class="db-sep">·</span>');
+      box.innerHTML = `<div class="db-text"><span class="db-label">Dziś</span>${parts}</div>
+        <div class="db-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Postęp dnia"><i style="width:${pct}%"></i></div>`;
+    } catch { /* pasek jest dodatkiem: brak danych nie przeszkadza w pracy */ }
+  }
+  document.addEventListener("crm:view", loadSummary);   // agent włączył / wyłączył pasek w oknie „Powiadomienia i widok”
+
   async function loadLeads() {
     let url = "/api/my-leads/", all = [];
     for (let i = 0; i < 5 && url; i++) {
@@ -101,13 +125,16 @@
     }
     leads = all.filter((l) => !CLOSED.includes(l.status)).sort(byUrgency);
     renderList();
+    loadSummary();
   }
 
   /* Jeden wiersz listy; extra = dodatkowa linia (np. „Pasuje numer telefonu”) pod numerem */
   function leadItem(l, g, extra = "") {
     const when = l.next_contact_at ? `<small class="when${g === 0 ? " late" : g === 2 && new Date(l.next_contact_at) < new Date() ? " soft" : ""}" title="${fmt(l.next_contact_at)}">${rel(l.next_contact_at)} · ${fmt(l.next_contact_at)}</small>` : "";
-    return `<button type="button" class="lead-item${l.id === selectedId ? " active" : ""}" data-id="${l.id}">
-        <div><strong>${esc(l.contact_name)}</strong>${statusChip(l)}</div><small>${esc(l.phone)}</small>${extra}${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why" title="Sprawa">${ICON_NOTE}<span>${esc(l.next_contact_note)}</span></small>` : ""}${l.missed_calls > 0 ? `<small>${missedChip(l)}</small>` : ""}</button>`;
+    const overdue = g === 0;   // obiecany kontakt, którego termin minął
+    const retryDue = isFresh(l) && !!l.next_contact_at && new Date(l.next_contact_at) <= Date.now();   // ponowna próba, na którą już pora
+    return `<button type="button" class="lead-item${l.id === selectedId ? " active" : ""}${retryDue ? " retry-due" : ""}${overdue ? " promise-late" : ""}" data-id="${l.id}">
+        <div><strong>${esc(l.contact_name)}</strong>${statusChip(l)}</div><small>${esc(l.phone)}</small>${retryDue ? `<small class="retry-now">Czas na ponowną próbę</small>` : ""}${CRM.lastContact(l, me.id)}${extra}${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why" title="Sprawa">${ICON_NOTE}<span>${esc(l.next_contact_note)}</span></small>` : ""}${l.missed_calls > 0 ? `<small>${missedChip(l)}</small>` : ""}</button>`;
   }
 
   function renderList() {
@@ -329,11 +356,11 @@
     const nextBlock = `<div class="next-card${late ? " late" : ""}${soft ? " soft" : ""}"${d.next_contact_at ? ` data-iso="${esc(d.next_contact_at)}"` : ""}>
       <div class="nc-section"><span class="nc-label nc-state">${stateText(due)}</span>
         ${next ? `<div class="nc-time"><div class="nc-when">${esc(rel(d.next_contact_at))}</div><div class="nc-date">${esc(long(d.next_contact_at))}</div></div>
-          ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}
-          ${d.next_contact_note ? `<div class="nc-why"><span class="nc-why-ic">${ICON_NOTE}</span><div><span class="nc-why-l">Sprawa do omówienia</span><span class="nc-why-t">${esc(d.next_contact_note)}</span></div></div>` : ""}`
+          ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}`
           : `<div class="nc-date">Nie zaplanowano</div>`}</div>
       ${lastNote ? `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(lastNote.created_at)}</span><div class="nc-text">${esc(lastNote.note)}</div></div>` : ""}
     </div>`;
+    const caseBlock = d.next_contact_note ? `<div class="nc-why case-top"><span class="nc-why-ic">${ICON_NOTE}</span><div><span class="nc-why-l">Sprawa do omówienia</span><span class="nc-why-t">${esc(d.next_contact_note)}</span></div></div>` : "";
     const mv = (d.assignments || [])[0];
     const transfer = d.transferred_from && mv && mv.to_agent === d.owner
       ? `<div class="transfer-note">
@@ -350,9 +377,10 @@
       <div class="card">
         <div class="lead-head"><div><h2 class="lead-name">${esc(d.contact_name)}</h2>
           <p class="muted">${company ? esc(company.name) : "Brak firmy"}${product ? " · " + esc(product.name) : ""}</p></div>${statusChip(d)}</div>
-                <div class="facts facts-top">
-          <div class="f-phone"><span>Telefon</span><a class="big-phone" href="tel:${tel}">${esc(d.phone)}</a></div>
-          <div><span>E-mail</span>${d.email ? `<a href="mailto:${esc(d.email)}">${esc(d.email)}</a>` : "–"}</div>
+        ${caseBlock}
+        <div class="facts facts-top">
+          <div class="f-phone"><span>Telefon</span><div class="phone-row"><a class="big-phone" href="tel:${tel}">${esc(d.phone)}</a>${CRM.copyButton(d.phone)}</div></div>
+          <div class="f-mail"><span>E-mail</span>${d.email ? `<div class="phone-row"><a href="mailto:${esc(d.email)}">${esc(d.email)}</a>${CRM.copyButton(d.email, "e-mail")}</div>` : "–"}</div>
           <div><span>NIP / KRS</span>${company ? esc(company.nip || "–") + " / " + esc(company.krs || "–") : "–"}</div>
           <div class="f-tries" title="Liczba prób kontaktu z tym leadem"><span>Próby</span>${d.attempts_count}</div>
         </div>
@@ -373,6 +401,7 @@
           <div class="presets">${PRESETS.map(([l], i) => `<button type="button" data-preset="${i}" aria-pressed="false">${l}</button>`).join("")}</div>
           <label><span id="cb-why-label">W jakiej sprawie</span><input id="cb-note" maxlength="255" placeholder="np. wróci z urlopu, chce wycenę"></label>
         </div>
+        ${CRM.phraseButtons()}
         <label>Komentarz (opcjonalnie)<textarea id="act-note" rows="2" placeholder="Krótka notatka z rozmowy"></textarea></label>
         <p class="form-error" id="act-error" hidden></p>
         <div class="actions">
@@ -409,6 +438,7 @@
     const jump = $("recent-all");
     if (jump) jump.addEventListener("click", () => { histAll = true; paintHistory(); $("hist-card").scrollIntoView({ behavior: "smooth", block: "start" }); });
     wireForm(d.id);
+    CRM.wirePhrases($("act-form"), $("act-note"));
     const eh = document.querySelector("#act-form .enter-hint");
     if (eh) {
       const od = otherOverdue(d.id);
@@ -419,13 +449,59 @@
   async function postActivity(body) {
     return api("/api/activities/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
+  /* Pasek „Cofnij” po zapisie: 10 s na pomyłkę (serwer przyjmuje cofnięcie do 30 s, tylko dla ostatniego wpisu leada) */
+  const UNDO_SECONDS = 10;
+  let undoTimer = null;
+  function hideUndo() { clearInterval(undoTimer); const el = $("undo-bar"); if (el) el.remove(); }
+  function showUndo(saved, leadId, html) {
+    hideUndo();
+    if (!saved || !saved.id) return;
+    const bar = document.createElement("div");
+    bar.id = "undo-bar"; bar.className = "undo-bar"; bar.setAttribute("role", "status");
+    bar.innerHTML = `<span class="ub-text">${html}</span><button type="button" class="ub-btn" title="Cofnij zapis (Ctrl+Z)">Cofnij <span class="ub-sec">${UNDO_SECONDS}</span></button><span class="ub-time" aria-hidden="true"></span>`;
+    document.body.appendChild(bar);
+    bar.querySelector(".ub-time").style.animationDuration = UNDO_SECONDS + "s";
+    let left = UNDO_SECONDS;
+    undoTimer = setInterval(() => {
+      left -= 1;
+      const sec = bar.querySelector(".ub-sec");
+      if (sec) sec.textContent = String(Math.max(left, 0));
+      if (left <= 0) hideUndo();
+    }, 1000);
+    const btn = bar.querySelector(".ub-btn");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      let r;
+      try { r = await api(`/api/activities/${saved.id}/undo/`, { method: "POST" }); }
+      catch { toast("Brak połączenia z serwerem. Nie cofnięto.", true); btn.disabled = false; return; }
+      if (!r.ok) {
+        const msg = (await r.json().catch(() => ({}))).detail || "Nie można cofnąć tego zapisu.";
+        toast(msg, true); hideUndo(); return;
+      }
+      hideUndo();
+      toast("Zapis cofnięty.");
+      clearSearch();
+      await loadLeads();
+      refreshReminders();
+      await CRM.openLead(leadId);
+    });
+  }
+  /* Ctrl+Z cofa ostatni zapis, dopóki pasek jest widoczny (nie w polach tekstowych, żeby nie psuć ich własnego cofania) */
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z" || e.shiftKey) return;
+    const t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    const btn = document.querySelector("#undo-bar .ub-btn");
+    if (typing || !btn || btn.disabled) return;
+    e.preventDefault(); btn.click();
+  });
+
   async function afterSave(leadId, goNext, saved) {
-    toast("Zapisano.");
     clearSearch();   // po zapisie wracasz do zwykłej kolejki (dane z wyszukiwania byłyby nieaktualne)
     const name = current && current.contact_name ? current.contact_name : "";
     const out = saved && saved.outcome ? OUT_LABEL[saved.outcome] || "" : "";
     const again = saved && saved.rescheduled_to ? ` Następny kontakt: <b>${esc(fmt(saved.rescheduled_to))}</b>.` : "";
     savedNote = `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}.${again}`;
+    showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}`);
     await loadLeads();
     refreshReminders();
     if (saved && saved.outcome === "no_answer" && !leads.some((l) => l.id === leadId)) {
@@ -612,7 +688,7 @@
     const o = OUTCOMES[Number(e.key) - 1];
     if (o) { e.preventDefault(); form.querySelector(`[data-outcome="${o[0]}"]`).click(); }   // preventDefault: cyfra nie wpisze się w pole, na które przeskoczy kursor
   });
-  /* Żywy licznik: co 10 s odświeża „za X min” na liście i w karcie, a przy zmianie pilności przesuwa leada do innej grupy */
+  /* Żywy licznik: co sekundę (jak karty przypomnień, żeby oba miejsca zmieniały się w tej samej chwili) odświeża „za X min” na liście i w karcie, a przy zmianie pilności przesuwa leada do innej grupy */
   setInterval(() => {
     if (document.hidden) return;
     renderList();
@@ -623,7 +699,8 @@
     const state = nc.querySelector(".nc-state"), when = nc.querySelector(".nc-when");
     if (state) state.textContent = soft ? (due ? "Czas na ponowną próbę" : "Ponowna próba") : due ? "Zaległy kontakt" : "Następny kontakt";
     if (when) when.textContent = rel(iso);
-  }, 10000);
+  }, 1000);
+  setInterval(() => { if (!document.hidden) loadSummary(); }, 30000);   // pasek dnia: liczby „zaległe / do ponowienia” zmieniają się z upływem czasu
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { renderList(); } });
   /* /crm/queue/?lead=ID (link z planu dnia) otwiera od razu wskazanego leada */
   const wanted = Number(new URLSearchParams(location.search).get("lead"));

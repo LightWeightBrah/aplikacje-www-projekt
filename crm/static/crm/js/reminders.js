@@ -17,7 +17,7 @@ CRM.initReminders = function initReminders() {
   const SEEN_KEY = "crm_rem_seen_" + user.username;
   const BROWSER_KEY = "crm_rem_browser_" + user.username;
   const CFG_KEY = "crm_rem_cfg_" + user.username;
-  const DEFAULTS = { enabled: true, lead: 300, sound: true };   // lead = sekundy przed terminem
+  const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true };   // lead = sekundy przed terminem
   const baseTitle = document.title;
   const box = $("reminders");
   box.addEventListener("click", (e) => {
@@ -44,6 +44,9 @@ CRM.initReminders = function initReminders() {
     memCfg = { ...cfg(), ...patch };
     try { localStorage.setItem(CFG_KEY, JSON.stringify(memCfg)); } catch { /* brak dostępu */ }
   }
+
+  /* Pasek dnia nad kolejką: domyślnie widoczny, agent może go schować w oknie „Powiadomienia i widok” */
+  CRM.dayBarEnabled = () => cfg().dayBar !== false;
 
   /* ---------- zapamiętywanie, o czym już przypomniano ---------- */
   function readSeen() {
@@ -171,8 +174,10 @@ CRM.initReminders = function initReminders() {
   /* „Za 4 min 12 s” (do 10 min dokładnie co do sekundy) / „Za 35 min” / „Spóźnione o 14 min” */
   function relText(iso, now) {
     const diff = new Date(iso).getTime() - now;
+    /* minuty liczymy po granicach minut zegara (nie od sekundy terminu), żeby wszystkie karty zmieniały się w tej samej chwili */
+    const minOf = (t) => Math.floor(t / 60000);
     if (diff < 0) {
-      const late = Math.floor(-diff / 60000);
+      const late = minOf(now) - minOf(new Date(iso).getTime());
       return late < 1 ? "Termin właśnie minął" : "Spóźnione o " + minutesText(late);
     }
     const sec = Math.ceil(diff / 1000);
@@ -181,7 +186,7 @@ CRM.initReminders = function initReminders() {
       const m = Math.floor(sec / 60), s = sec % 60;
       return "Za " + (m ? m + " min " : "") + s + " s";
     }
-    return "Za " + minutesText(Math.ceil(sec / 60));
+    return "Za " + minutesText(Math.max(1, minOf(new Date(iso).getTime()) - minOf(now)));
   }
   const who = (l) => l.contact_name + (l.company_name ? " · " + l.company_name : "");
   /* Kolor karty = kolor statusu leada (Zainteresowany zielony, Do oddzwonienia bursztynowy); zaległe zawsze czerwone */
@@ -344,6 +349,7 @@ CRM.initReminders = function initReminders() {
     const c = cfg();
     $("notif-enabled").checked = c.enabled;
     $("notif-sound").checked = c.sound;
+    $("notif-daybar").checked = c.dayBar !== false;
     $("notif-min").value = Math.floor(c.lead / 60);
     $("notif-sec").value = c.lead % 60;
     paintBrowserButton();
@@ -364,6 +370,10 @@ CRM.initReminders = function initReminders() {
       dlg.showModal();
     });
     $("notif-enabled").addEventListener("change", () => { saveCfg({ enabled: $("notif-enabled").checked }); evaluate(); });
+    $("notif-daybar").addEventListener("change", () => {
+      saveCfg({ dayBar: $("notif-daybar").checked });
+      document.dispatchEvent(new CustomEvent("crm:view"));   // kolejka od razu pokazuje / chowa pasek
+    });
     $("notif-sound").addEventListener("change", () => {
       saveCfg({ sound: $("notif-sound").checked });
       if ($("notif-sound").checked) beep();   // od razu słychać, jak brzmi

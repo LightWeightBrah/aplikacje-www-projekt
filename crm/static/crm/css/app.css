@@ -330,7 +330,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .plan-nav{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}
 .day-nav{display:inline-flex;gap:.25rem}.day-nav .btn-mini{padding:.5rem .8rem;font-size:.9rem}
 .plan-list{display:flex;flex-direction:column;gap:.6rem}
-.plan-item{--accent:transparent;display:grid;grid-template-columns:8.2rem minmax(0,1fr) 10.5rem;gap:1.2rem;align-items:center;padding:.95rem 1.1rem .95rem 1.3rem;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:inset 4px 0 0 var(--accent);transition:background .12s,border-color .12s,box-shadow .12s,transform .12s}
+.plan-item{--accent:transparent;display:grid;grid-template-columns:10.5rem minmax(0,1fr) 10.5rem;gap:1.2rem;align-items:center;padding:.95rem 1.1rem .95rem 1.3rem;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:inset 4px 0 0 var(--accent);transition:background .12s,border-color .12s,box-shadow .12s,transform .12s}
 .plan-item.is-next{--accent:var(--brand)}
 .plan-item.is-passed{--accent:color-mix(in srgb,#ef4444 85%,transparent)}.plan-item.is-passed .plan-hour{color:color-mix(in srgb,#ef4444 75%,var(--ink))}
 .plan-time{display:flex;flex-direction:column;line-height:1.15;font-variant-numeric:tabular-nums}.plan-hour{font-size:1.5rem;font-weight:700}.plan-sub{white-space:nowrap;margin-top:.25rem;font-size:.78rem;font-weight:600;color:var(--muted)}.plan-sub.late{color:color-mix(in srgb,#ef4444 75%,var(--ink))}.plan-sub.next{color:color-mix(in srgb,var(--brand) 70%,var(--ink))}
@@ -478,7 +478,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 @media(max-width:640px){.h-tiles{grid-template-columns:1fr}.history .h-row{grid-template-columns:3.4rem minmax(0,1fr);gap:.6rem}}
 .next-card{max-width:none}
 /* v47b: dane kontaktowe na samej górze karty leada, pod nazwiskiem */
-.facts.facts-top{grid-template-columns:minmax(210px,1.3fr) minmax(0,1.6fr) minmax(0,1.2fr) auto;align-items:center;gap:.8rem 1.5rem;margin:.9rem 0 .2rem;padding:.8rem 1.1rem;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--brand) 7%,transparent)}
+.facts.facts-top{grid-template-columns:minmax(290px,1.5fr) minmax(0,1.5fr) minmax(0,1.1fr) auto;align-items:center;gap:.8rem 1.5rem;margin:.9rem 0 .2rem;padding:.8rem 1.1rem;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--brand) 7%,transparent)}
 .facts-top .big-phone{font-size:1.65rem;line-height:1.15}
 .facts-top .f-tries{text-align:right}
 .facts-top a{word-break:normal;overflow-wrap:anywhere}
@@ -487,3 +487,74 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 @media(max-width:900px){.facts-top .f-phone{grid-column:1/-1}}
 /* v48b: wyróżnione liczby w podsumowaniu ustawień: czytelne w obu motywach (kolor tekstu + pastylka zamiast ciemnego indygo) */
 .rules-summary b{color:var(--ink);font-weight:700;background:color-mix(in srgb,var(--ink) 12%,transparent);border-radius:6px;padding:.05rem .4rem;white-space:nowrap}
+/* v52: pasek „Cofnij” po zapisie rozmowy */
+.undo-bar{position:fixed;left:50%;bottom:1.5rem;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:1rem;padding:.7rem .7rem .7rem 1.1rem;border-radius:14px;overflow:hidden;background:#0f172a;color:#f1f5f9;box-shadow:0 14px 36px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-width:calc(100vw - 2rem);font-size:.95rem}
+.undo-bar .ub-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.undo-bar .ub-btn{flex:none;border:0;border-radius:10px;padding:.5rem .9rem;font:inherit;font-weight:700;cursor:pointer;background:#6366f1;color:#fff}
+.undo-bar .ub-btn:hover{background:#4f46e5}.undo-bar .ub-btn:disabled{opacity:.6;cursor:wait}
+.undo-bar .ub-sec{display:inline-block;min-width:1.2ch;text-align:right;opacity:.85;font-variant-numeric:tabular-nums}
+.undo-bar .ub-time{position:absolute;left:0;bottom:0;height:3px;width:100%;background:#818cf8;transform-origin:left;animation:ub-run linear forwards}
+@keyframes ub-run{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+@media(prefers-reduced-motion:reduce){.undo-bar .ub-time{animation:none}}
+/* v52: ostatni wynik na liście, kopiowanie numeru, szybkie frazy, pasek dnia, plan dnia w układzie kolejki */
+.last-contact{display:block;font-size:.8rem;color:var(--muted)}.last-contact b{color:var(--oc,var(--ink))}
+.lead-item .last-contact{margin-top:.1rem}
+.phone-row{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem}
+.copy-btn{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:8px;padding:.25rem .55rem;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s,color .12s,border-color .12s}
+.copy-btn:hover{background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--ink);border-color:var(--brand)}
+.copy-btn.copied{background:color-mix(in srgb,#10b981 18%,transparent);border-color:#10b981;color:var(--ink)}
+.copy-btn svg{flex:none}
+.phrases{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 .4rem}
+.phrases button{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:99px;padding:.2rem .7rem;font:inherit;font-size:.8rem;cursor:pointer}
+.phrases button:hover{background:color-mix(in srgb,var(--brand) 14%,transparent);border-color:var(--brand)}
+.day-bar{min-width:280px;max-width:520px;flex:1;display:flex;flex-direction:column;gap:.45rem}
+.day-bar .db-text{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem .5rem;font-size:.9rem;color:var(--muted)}
+.day-bar .db-label{font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.day-bar b{color:var(--ink)}.day-bar small{color:var(--muted)}.day-bar .db-late,.day-bar .db-late b{color:#ef4444;font-weight:600}
+.day-bar .db-track{height:8px;border-radius:99px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden}
+.day-bar .db-track i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#6366f1,#10b981);transition:width .4s}
+@media(max-width:700px){.day-bar{min-width:0;max-width:none;width:100%}.page-head{flex-wrap:wrap}}
+.plan-callrow{display:flex;flex-wrap:wrap;align-items:center;gap:.55rem;margin-top:.4rem}
+.plan-callrow .plan-phone{font-size:1.3rem;font-weight:700;letter-spacing:.01em;border-bottom:0}
+.plan-note em{font-style:normal;font-size:.72rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-right:.25rem}
+.plan-hist{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem 1rem;margin-top:.4rem}.plan-hist .last-contact{display:inline}.plan-hist b{color:var(--ink)}
+.plan-sub{white-space:normal}
+.facts .copy-btn span{display:inline;font-size:.78rem;text-transform:none;letter-spacing:0;color:inherit}
+.undo-bar{left:auto;right:1.5rem;transform:none}
+@media(max-width:700px){.undo-bar{left:1rem;right:1rem;bottom:1rem}}
+.facts.facts-top{grid-template-columns:auto minmax(0,1fr) auto auto}
+.facts-top a{overflow-wrap:break-word;word-break:normal}
+@media(max-width:900px){.facts.facts-top{grid-template-columns:1fr 1fr}}
+/* v53: pasek dnia w jednym wierszu, ponowne próby wyraźniejsze (ale nie czerwone) */
+.day-bar{max-width:560px}
+.day-bar .db-text{flex-wrap:nowrap;white-space:nowrap;overflow:hidden;gap:.2rem .55rem;font-size:.88rem}
+.day-bar .db-sep{opacity:.5}
+.day-bar .db-retry,.day-bar .db-retry b{color:#6366f1;font-weight:600}
+:root[data-theme="dark"] .day-bar .db-retry,:root[data-theme="dark"] .day-bar .db-retry b{color:#a5b4fc}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .day-bar .db-retry,:root:not([data-theme="light"]) .day-bar .db-retry b{color:#a5b4fc}}
+.lead-item.retry-due{box-shadow:inset 3px 0 0 #6366f1;background:color-mix(in srgb,#6366f1 9%,var(--card,transparent))}
+.lead-item .retry-now{display:inline-block;margin-top:.2rem;padding:.05rem .55rem;border-radius:99px;font-size:.72rem;font-weight:700;background:color-mix(in srgb,#6366f1 20%,transparent);color:#4f46e5}
+:root[data-theme="dark"] .lead-item .retry-now{color:#c7d2fe}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .lead-item .retry-now{color:#c7d2fe}}
+.grp .grp-due{color:#6366f1;text-transform:none;letter-spacing:0;font-weight:700}
+:root[data-theme="dark"] .grp .grp-due{color:#a5b4fc}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .grp .grp-due{color:#a5b4fc}}
+.facts .f-mail .phone-row{flex-wrap:nowrap}.facts .f-mail a{min-width:0}
+.plan-item{grid-template-columns:10.5rem minmax(0,1fr) auto}
+.plan-item.is-retry{--accent:color-mix(in srgb,#6366f1 85%,transparent)}.plan-item.is-retry .plan-hour{color:var(--ink)}
+.plan-sub.retry{color:color-mix(in srgb,#6366f1 70%,var(--ink));font-weight:700}
+.plan-grp{display:flex;align-items:baseline;gap:.5rem;margin:.9rem 0 .1rem;font-size:.74rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.plan-grp:first-child{margin-top:0}.plan-grp span{font-weight:600;color:var(--ink);background:color-mix(in srgb,var(--ink) 10%,transparent);border-radius:99px;padding:0 .5rem;letter-spacing:0}
+.plan-item .plan-go{display:grid;place-items:center;width:2.4rem;height:2.4rem;border-radius:50%;color:var(--muted);text-decoration:none;transition:background .12s,color .12s}
+.plan-item:hover .plan-go,.plan-go:focus-visible{background:var(--brand);color:#fff}
+@media(max-width:700px){.plan-item{grid-template-columns:1fr}.plan-item .plan-go{justify-self:end}}
+.facts .f-mail .copy-btn span{display:none}.facts .f-mail .copy-btn{padding:.3rem .4rem}
+.facts .f-mail a{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* v55: sprawa pod nagłówkiem, czytelny komentarz w zaległej karcie, delikatne tło zaległych */
+.case-top{margin:.9rem 0 .2rem;padding:.7rem .9rem;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.next-card.late .nc-text,.next-card .nc-text{color:var(--ink);font-weight:500}
+.lead-item.promise-late{box-shadow:inset 3px 0 0 #ef4444;background:color-mix(in srgb,#ef4444 9%,var(--card,transparent));border-color:color-mix(in srgb,#ef4444 30%,var(--line))}
+.plan-item.is-passed{background:color-mix(in srgb,#ef4444 8%,var(--card))}
+.plan-item.is-retry{background:color-mix(in srgb,#6366f1 8%,var(--card))}
+.plan-item.is-passed[data-href]:hover{background:color-mix(in srgb,#ef4444 15%,var(--card));border-color:#ef4444;box-shadow:inset 4px 0 0 var(--accent),0 0 0 1px #ef4444,0 10px 28px color-mix(in srgb,#ef4444 25%,transparent)}

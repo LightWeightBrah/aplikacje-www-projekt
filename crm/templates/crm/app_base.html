@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=51">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=55">
 </head>
 <body>
 <div class="shell">
@@ -42,7 +42,7 @@
                     <button type="button" data-theme-choice="dark">Ciemny</button>
                     <button type="button" data-theme-choice="auto">Auto</button>
                 </div>
-                <button type="button" class="pop-item" id="notif-open">Powiadomienia…</button>
+                <button type="button" class="pop-item" id="notif-open">Powiadomienia i widok…</button>
                 <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
                 <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
             </div>
@@ -82,7 +82,7 @@
 </dialog>
 <dialog id="notif-dialog" class="dialog">
     <form id="notif-form" method="dialog" novalidate>
-        <h2>Powiadomienia o oddzwonieniach</h2>
+        <h2>Powiadomienia i widok</h2>
         <label class="check"><input type="checkbox" id="notif-enabled"> <span><strong>Przypomnienia na ekranie</strong><small class="muted">Karta w rogu ekranu, gdy zbliża się termin kontaktu albo już minął.</small></span></label>
         <div class="field">Powiadom mnie przed terminem
             <div class="lead-row">
@@ -97,14 +97,16 @@
             <button type="button" class="btn-mini notif-test" id="notif-test" hidden>Wyślij powiadomienie testowe</button>
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
+        <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Pasek dnia nad kolejką</strong><small class="muted">Ile kontaktów wykonano dziś i ile jeszcze czeka.</small></span></label>
         <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Plan dnia” zostaje, żeby żaden termin Ci nie umknął.</p>
         <div class="dialog-actions"><button type="submit" class="btn btn-primary" id="notif-close">Gotowe</button></div>
     </form>
 </dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=51"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=51"></script>
-<script src="{% static 'crm/js/search.js' %}?v=51"></script>
+<script src="{% static 'crm/js/app.js' %}?v=55"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=55"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=55"></script>
+<script src="{% static 'crm/js/search.js' %}?v=55"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();</script>
 {% block scripts %}{% endblock %}
 </body>
