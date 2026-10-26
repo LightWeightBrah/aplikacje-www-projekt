@@ -628,3 +628,8 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
   .orow.money{grid-template-columns:1fr 7rem}.orow.money .track{display:none}
 }
 #no-price-warning{color:#d97706;font-weight:600}
+/* v59: szuflada nad paskiem wyszukiwania, e-mail w karcie leada i kafel przychodu bez zawijania */
+.drawer-back{z-index:50}.drawer{z-index:51}
+@media(max-width:1700px){.facts.facts-top{grid-template-columns:auto minmax(0,1fr);gap:.8rem 1.5rem}.facts-top .f-tries{text-align:left}}
+@media(max-width:900px){.facts.facts-top{grid-template-columns:1fr 1fr}}
+.kpi strong{white-space:nowrap;font-size:clamp(1.5rem,1.9vw,2rem)}

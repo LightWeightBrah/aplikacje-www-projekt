@@ -89,4 +89,4 @@ class EditCaseTests(CrmTestBase):
 class QueuePageLayoutTests(CrmTestBase):
     def test_queue_page_uses_current_static_version(self):
         html = self.client.get("/crm/queue/").content.decode()
-        self.assertIn("crm/js/queue.js?v=58", html)
+        self.assertIn("crm/js/queue.js?v=59", html)
