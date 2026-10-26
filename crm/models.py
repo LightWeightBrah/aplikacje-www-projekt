@@ -8,6 +8,16 @@ class Product(models.Model):
     name = models.CharField(max_length=120, unique=True)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    # Cena jednostkowa z katalogu (ustawia manager). Przy sprzedaży cena jest kopiowana do
+    # SaleItem, więc późniejsza zmiana ceny nie zmienia wartości dawnych sprzedaży.
+    price = models.DecimalField(
+        "cena jednostkowa (zł)",
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+    unit = models.CharField("jednostka", max_length=20, default="szt.")
 
     class Meta:
         verbose_name = "Produkt"
@@ -192,6 +202,42 @@ class Activity(models.Model):
 
     def __str__(self):
         return f"{self.lead} - {self.get_outcome_display()}"
+
+
+class SaleItem(models.Model):
+    """Jedna pozycja sprzedaży: co i ile sprzedano w rozmowie z wynikiem „Sprzedane”.
+
+    Nazwa, jednostka i cena są kopiowane z katalogu w chwili sprzedaży (zmiana ceny albo
+    nazwy produktu później nie przepisuje historii), a `total` = ilość × cena jednostkowa.
+    Data i agent sprzedaży to data i agent rozmowy (`activity`); usunięcie rozmowy
+    (np. cofnięcie zapisu) usuwa też jej pozycje.
+    """
+
+    activity = models.ForeignKey(
+        Activity,
+        on_delete=models.CASCADE,
+        related_name="sale_items",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sale_items",
+    )
+    product_name = models.CharField(max_length=120)
+    unit = models.CharField(max_length=20, blank=True)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        verbose_name = "Pozycja sprzedaży"
+        verbose_name_plural = "Pozycje sprzedaży"
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.product_name} × {self.quantity} = {self.total}"
 
 
 class LeadAssignment(models.Model):

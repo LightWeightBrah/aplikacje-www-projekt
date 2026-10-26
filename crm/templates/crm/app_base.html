@@ -6,7 +6,7 @@
     <title>{% block title %}LeadCRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=55">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=58">
 </head>
 <body>
 <div class="shell">
@@ -19,6 +19,7 @@
             <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
             <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Panel managera</a>
             <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport</a>
+            <a href="{% url 'crm:products' %}" data-manager-only class="{% block nav_products %}{% endblock %}">Produkty</a>
             <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
             <a href="{% url 'crm:settings' %}" data-manager-only class="{% block nav_settings %}{% endblock %}">Ustawienia</a>
             <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
@@ -103,10 +104,10 @@
     </form>
 </dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=55"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=55"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=55"></script>
-<script src="{% static 'crm/js/search.js' %}?v=55"></script>
+<script src="{% static 'crm/js/app.js' %}?v=58"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=58"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=58"></script>
+<script src="{% static 'crm/js/search.js' %}?v=58"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();</script>
 {% block scripts %}{% endblock %}
 </body>

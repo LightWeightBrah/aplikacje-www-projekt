@@ -42,6 +42,11 @@ def import_page(request):
     return render(request, "crm/import.html")
 
 
+def products_page(request):
+    """Katalog produktów z cenami (tylko manager). Dane idą z /api/products/."""
+    return render(request, "crm/products.html")
+
+
 def settings_page(request):
     """Ustawienia zespołu (tylko manager): limity prób, ponowne próby, zwroty do puli. Dane z /api/settings/."""
     return render(request, "crm/settings.html")

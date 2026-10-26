@@ -13,7 +13,7 @@
     ["no_answer", "Nie odebrał", "Zaliczy próbę. Po wyczerpaniu limitu prób lead wraca do puli. Możesz zaplanować ponowną próbę."],
     ["callback", "Oddzwonić", "Lead zostaje u Ciebie do wskazanego terminu."],
     ["interested", "Zainteresowany", "Status „Zainteresowany”. Wpisz, kiedy ponownie zadzwonić (sprawa jest opcjonalna)."],
-    ["sold", "Sprzedane", "Lead zostaje zamknięty jako wygrany (sprzedaż). Znika z Twojej kolejki."],
+    ["sold", "Sprzedane", "Wybierz, co klient kupił, i wpisz ilość. Wartość policzy się sama z cen w katalogu. Lead zostaje zamknięty jako wygrany i znika z Twojej kolejki."],
     ["refused", "Odmowa", "Lead zostaje zamknięty jako przegrany."],
     ["wrong_number", "Zły numer", "Lead zostaje zamknięty jako „Nie dzwonić”."],
   ];
@@ -25,6 +25,15 @@
   const chip = (code) => { const [l, c] = STATUS[code] || [code, "#64748b"]; return `<span class="chip" style="--c:${c}">${esc(l)}</span>`; };
   const cache = { companies: {}, products: {} };
   let leads = [], selectedId = null, outcome = null, resetForm = null, current = null, lastListHtml = "", savedNote = "", rules = { max_attempts_per_agent: 3 }, autoRetry = false;
+  /* Katalog produktów do formularza sprzedaży (odświeżany co minutę przy otwieraniu leada) */
+  let products = [], productsAt = 0;
+  async function loadProducts() {
+    if (Date.now() - productsAt < 60000) return;
+    try {
+      products = (await CRM.fetchAll("/api/products/?is_active=true")).filter((x) => x.is_active);
+      productsAt = Date.now();
+    } catch { /* bez katalogu sprzedaż zapisze się bez wartości, a serwer podpowie, jeśli jednak jest wymagana */ }
+  }
   const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e",
     refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8" };
   const MISSED_WINDOW_MS = 5 * 60000;
@@ -220,12 +229,20 @@
       <p class="muted">albo pobierz następnego z puli przyciskiem „Daj kolejnego leada”.</p></div>`;
   }
 
+  /* Otwarty lead ma być widoczny w kolumnie po lewej (lista przewija się do niego) */
+  function keepActiveVisible() {
+    const el = document.querySelector("#lead-list .lead-item.active"), box = $("lead-list").closest(".list-card");
+    if (!el || !box) return;
+    const e = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    if (e.top < b.top + 8) box.scrollTop -= b.top + 8 - e.top;
+    else if (e.bottom > b.bottom - 8) box.scrollTop += e.bottom - b.bottom + 8;
+  }
   async function select(id) {
-    selectedId = id; renderList();
+    selectedId = id; renderList(); keepActiveVisible();
     const r = await api(`/api/leads/${id}/`);
     if (!r.ok) { toast("Nie udało się wczytać leada.", true); return; }
     const d = await r.json();
-    const [company, product] = await Promise.all([ref("companies", d.company), ref("products", d.product)]);
+    const [company, product] = await Promise.all([ref("companies", d.company), ref("products", d.product), loadProducts()]);
     outcome = null; current = d; autoRetry = false;
     renderCard(d, company, product);
   }
@@ -268,6 +285,10 @@
   /* Czy kontakt odbył się w umówionym terminie: pokazujemy tylko, gdy różnica jest zauważalna (≥ 5 min) */
   function punctuality(a) {
     if (!a.planned_at || a.outcome === "note") return "";
+    /* Tylko termin obiecany klientowi (wcześniejszy wpis „Oddzwonić” / „Zainteresowany” z tym terminem). Ponowne próby po nieodebraniu ustawia system, więc nie są „spóźnione”. */
+    const promised = ((current && current.activities) || []).some((b) => (b.outcome === "callback" || b.outcome === "interested")
+      && b.rescheduled_to && sameMinute(b.rescheduled_to, a.planned_at) && new Date(b.created_at) < new Date(a.created_at));
+    if (!promised) return "";
     const diff = Math.round((new Date(a.created_at) - new Date(a.planned_at)) / 60000);
     if (Math.abs(diff) < 5) return "";
     return diff > 0 ? `<div class="h-punct late">Spóźniony kontakt: ${spanText(diff)} po umówionym terminie (${esc(wd(a.planned_at))})</div>` : "";   // wcześniejszy telefon nie jest problemem, więc go nie pokazujemy
@@ -286,12 +307,13 @@
     return { talked, noans, calls: talked + noans, first, last: acts[0] || null };
   }
   /* Jeden wpis historii; ten sam wygląd w panelu „Ostatnie kontakty” i w pełnej historii */
+  const noteHtml = (a) => (a.note ? `<p class="h-note">${esc(a.note)}</p>` : "");
   function contactRow(a, whenHtml) {
     const who = a.agent_name ? (a.agent === me.id ? "Ty" : esc(a.agent_name)) : "–";
     const num = histNums.get(a.id);
     return `<li class="h-row" style="--oc:${OUT_COLOR[a.outcome] || "#64748b"}"><div class="h-when">${whenHtml}</div>
-      <div class="h-main"><div class="h-head"><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="who">${who}</span>${num ? `<span class="h-n" title="Który to kontakt z tym leadem">kontakt ${num}</span>` : ""}</div>
-      ${a.note ? `<p class="h-note">${esc(a.note)}</p>` : ""}${nextStep(a)}${punctuality(a)}</div></li>`;
+      <div class="h-main"><div class="h-head"><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="who">${who}</span>${a.agent === me.id ? `<button type="button" class="h-edit" data-aid="${a.id}">${a.note ? "Popraw komentarz" : "Dodaj komentarz"}</button>` : ""}${num ? `<span class="h-n" title="Który to kontakt z tym leadem">kontakt ${num}</span>` : ""}</div>
+      <div class="h-notebox">${noteHtml(a)}</div>${CRM.saleHtml(a)}${nextStep(a)}${punctuality(a)}</div></li>`;
   }
   const hhmm = (iso) => new Date(iso).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
   function historyHtml(acts, all, filter = "all") {
@@ -341,6 +363,103 @@
     return `<div class="fresh-note retry"><b>Jeszcze z nim nie rozmawiałeś.</b> Nie odebrał ${n} ${raz(n)} z ${max} dozwolonych prób. ${left <= 1 ? "<b>To ostatnia próba:</b> jeśli znów nie odbierze, lead wróci do wspólnej puli." : `Po ${max}. nieodebranym telefonie lead wróci do wspólnej puli.`}</div>`;
   }
 
+  /* ---------- pasek leada przy przewijaniu, widoczność formularza, poprawianie wpisów ---------- */
+  let miniObs = null, repaintHistory = () => {};
+  const topOffset = () => { const t = document.querySelector(".topbar"); return t ? t.offsetHeight : 0; };
+  const caseInner = (d) => `<span class="nc-why-ic">${ICON_NOTE}</span><div class="case-body"><span class="nc-why-l">Sprawa do omówienia</span>${d.next_contact_note ? `<span class="nc-why-t">${esc(d.next_contact_note)}</span>` : `<span class="nc-why-t nc-none">Nie wpisano</span>`}</div><button type="button" class="link-btn case-edit" id="case-edit">${d.next_contact_note ? "Zmień" : "Dodaj"}</button>`;
+  function lastNoteHtml(d) {
+    const n = d.activities.find((a) => a.note);
+    if (!n) return "";
+    const who = n.agent === me.id ? "Ty" : esc(n.agent_name || "–");
+    return `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(n.created_at)}</span><div class="nc-text">${esc(n.note)}</div></div>`;
+  }
+  const miniBar = (d, company, tel) => `<div class="lead-mini-wrap"><div class="lead-mini" id="lead-mini" aria-hidden="true">
+      <div class="lm-id"><div class="lm-name"><strong>${esc(d.contact_name)}</strong>${company ? `<span>${esc(company.name)}</span>` : ""}</div><div class="lm-case" id="lm-case">${d.next_contact_note ? "Sprawa: " + esc(d.next_contact_note) : ""}</div></div>
+      <a class="lm-phone" href="tel:${tel}" tabindex="-1">${esc(d.phone)}</a>${CRM.copyButton(d.phone)}${statusChip(d)}</div></div>`;
+  function wireMini() {
+    if (miniObs) miniObs.disconnect();
+    const mini = $("lead-mini"), head = document.querySelector("#lead-pane .lead-head");
+    if (!mini || !head || !("IntersectionObserver" in window)) return;
+    const off = topOffset();
+    document.documentElement.style.setProperty("--topbar-h", off + "px");
+    miniObs = new IntersectionObserver(([e]) => mini.classList.toggle("show", !e.isIntersecting && e.boundingClientRect.top < off),
+      { rootMargin: `-${off}px 0px 0px 0px` });
+    miniObs.observe(head);
+  }
+  /* Po wyborze wyniku formularz ma być w całości na ekranie (pod paskiem leada), a nie zjeżdżać do przycisku zapisu */
+  function ensureFormVisible(form) {
+    const top = topOffset() + 76, r = form.getBoundingClientRect();
+    if (r.top >= top && r.bottom <= window.innerHeight - 8) return;
+    window.scrollTo({ top: window.scrollY + r.top - top, behavior: "smooth" });
+  }
+  /* Małe okienko edycji w miejscu: Enter zapisuje, Esc anuluje (zdarzenia nie wychodzą do skrótów formularza) */
+  function inlineEdit(host, value, opts, onSave) {
+    const before = host.innerHTML;
+    host.innerHTML = `<div class="ie">${opts.multiline ? '<textarea class="ie-field" rows="2"></textarea>' : '<input class="ie-field">'}
+      <p class="form-error ie-err" hidden></p>
+      <div class="ie-actions"><button type="button" class="btn btn-primary ie-save">Zapisz</button><button type="button" class="link-btn ie-cancel">Anuluj</button><span class="ie-hint">Enter zapisuje · Esc anuluje${opts.multiline ? " · Shift+Enter = nowa linia" : ""}</span></div></div>`;
+    const f = host.querySelector(".ie-field"), err = host.querySelector(".ie-err"), save = host.querySelector(".ie-save");
+    f.value = value; f.maxLength = opts.maxlength; f.placeholder = opts.placeholder || "";
+    f.focus(); f.setSelectionRange(f.value.length, f.value.length);
+    const cancel = () => { host.innerHTML = before; };
+    let busy = false;
+    const doSave = async () => {
+      if (busy) return;
+      const v = f.value.trim();
+      if (opts.required && !v) { err.textContent = opts.required; err.hidden = false; return; }
+      busy = true; save.disabled = true; err.hidden = true;
+      const msg = await onSave(v);
+      if (msg) { err.textContent = msg; err.hidden = false; busy = false; save.disabled = false; }
+    };
+    save.addEventListener("click", doSave);
+    host.querySelector(".ie-cancel").addEventListener("click", cancel);
+    f.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+      else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSave(); }
+    });
+  }
+  const patchJson = async (url, body) => {
+    let r;
+    try { r = await api(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch { return { error: "Brak połączenia z serwerem. Spróbuj ponownie." }; }
+    if (!r.ok) return { error: errText(await r.json().catch(() => ({}))) };
+    return { data: await r.json().catch(() => ({})) };
+  };
+  function wireEdits(d) {
+    $("lead-pane").onclick = (e) => {
+      const caseBtn = e.target.closest("#case-edit");
+      if (caseBtn) {
+        const host = $("case-block");
+        inlineEdit(host, d.next_contact_note || "", { maxlength: 255, placeholder: "np. wysłać porównanie ofert" }, async (v) => {
+          const r = await patchJson(`/api/leads/${d.id}/`, { next_contact_note: v });
+          if (r.error) return r.error;
+          d.next_contact_note = v;
+          host.innerHTML = caseInner(d);
+          const lm = $("lm-case"); if (lm) lm.textContent = v ? "Sprawa: " + v : "";
+          loadLeads();   // lista po lewej pokazuje sprawę pod nazwiskiem
+          return "";
+        });
+        return;
+      }
+      const editBtn = e.target.closest(".h-edit");
+      if (editBtn) {
+        const a = d.activities.find((x) => String(x.id) === editBtn.dataset.aid);
+        const host = editBtn.closest(".h-row").querySelector(".h-notebox");
+        if (!a || !host) return;
+        inlineEdit(host, a.note || "", { multiline: true, maxlength: 2000, placeholder: "Komentarz do tego kontaktu",
+          required: a.outcome === "note" ? "Notatka nie może być pusta." : "" }, async (v) => {
+          const r = await patchJson(`/api/activities/${a.id}/`, { note: v });
+          if (r.error) return r.error;
+          a.note = v;
+          repaintHistory();
+          const w = $("nc-last-wrap"); if (w) w.innerHTML = lastNoteHtml(d);
+          toast("Komentarz poprawiony.");
+          return "";
+        });
+      }
+    };
+  }
+
   function renderCard(d, company, product) {
     const tel = esc(d.phone.replace(/[^\d+]/g, ""));
     numberCalls(d.activities);
@@ -350,17 +469,16 @@
     const soft = isFresh(d), late = due && !soft;   // ponowna próba (nikt jeszcze nie rozmawiał) nie jest „zaległa”, tylko „do ponowienia”
     const stateText = (isDue_) => (soft ? (isDue_ ? "Czas na ponowną próbę" : "Ponowna próba") : isDue_ ? "Zaległy kontakt" : "Następny kontakt");
     const long = (iso) => new Date(iso).toLocaleString("pl-PL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-    const lastNote = d.activities.find((a) => a.note);
-    const who = lastNote ? (lastNote.agent === me.id ? "Ty" : esc(lastNote.agent_name || "–")) : "";
     const agreedLong = d.agreed_contact_at ? long(d.agreed_contact_at) : "";
     const nextBlock = `<div class="next-card${late ? " late" : ""}${soft ? " soft" : ""}"${d.next_contact_at ? ` data-iso="${esc(d.next_contact_at)}"` : ""}>
+      ${CRM.lastContact(d, me.id) ? `<div class="nc-lastline">${CRM.lastContact(d, me.id)}</div>` : ""}
       <div class="nc-section"><span class="nc-label nc-state">${stateText(due)}</span>
         ${next ? `<div class="nc-time"><div class="nc-when">${esc(rel(d.next_contact_at))}</div><div class="nc-date">${esc(long(d.next_contact_at))}</div></div>
           ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}`
           : `<div class="nc-date">Nie zaplanowano</div>`}</div>
-      ${lastNote ? `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(lastNote.created_at)}</span><div class="nc-text">${esc(lastNote.note)}</div></div>` : ""}
+      <div id="nc-last-wrap">${lastNoteHtml(d)}</div>
     </div>`;
-    const caseBlock = d.next_contact_note ? `<div class="nc-why case-top"><span class="nc-why-ic">${ICON_NOTE}</span><div><span class="nc-why-l">Sprawa do omówienia</span><span class="nc-why-t">${esc(d.next_contact_note)}</span></div></div>` : "";
+    const caseBlock = `<div class="nc-why case-top" id="case-block">${caseInner(d)}</div>`;
     const mv = (d.assignments || [])[0];
     const transfer = d.transferred_from && mv && mv.to_agent === d.owner
       ? `<div class="transfer-note">
@@ -371,6 +489,7 @@
     const banner = savedNote ? `<div class="saved-banner" role="status"><span class="sb-ic">✓</span><div>${savedNote}</div></div>` : "";
     savedNote = "";
     $("lead-pane").innerHTML = `
+      ${miniBar(d, company, tel)}
       ${banner}
       ${matchBanner(d.id)}
       ${transfer}
@@ -385,8 +504,7 @@
           <div class="f-tries" title="Liczba prób kontaktu z tym leadem"><span>Próby</span>${d.attempts_count}</div>
         </div>
         ${freshNote(d)}
-        ${nextBlock}${recentPanel(d)}
-
+        ${nextBlock}
       </div>
       <form class="card" id="act-form" novalidate>
         <h2>Jak poszła rozmowa?</h2>
@@ -401,8 +519,17 @@
           <div class="presets">${PRESETS.map(([l], i) => `<button type="button" data-preset="${i}" aria-pressed="false">${l}</button>`).join("")}</div>
           <label><span id="cb-why-label">W jakiej sprawie</span><input id="cb-note" maxlength="255" placeholder="np. wróci z urlopu, chce wycenę"></label>
         </div>
+        <div id="sale-fields" class="sale-box" hidden>
+          <div class="sale-head"><span>Co sprzedano</span><span>Ilość</span><span>Wartość</span><span></span></div>
+          <div id="sale-rows"></div>
+          <p class="hint" id="sale-note" hidden></p>
+          <div class="sale-foot">
+            <button type="button" class="link-btn" id="sale-add">+ Dodaj kolejny produkt</button>
+            <div class="sale-total"><span>Wartość sprzedaży</span><b id="sale-sum">0,00 zł</b></div>
+          </div>
+        </div>
         ${CRM.phraseButtons()}
-        <label>Komentarz (opcjonalnie)<textarea id="act-note" rows="2" placeholder="Krótka notatka z rozmowy"></textarea></label>
+        <label>Komentarz (opcjonalnie)<textarea id="act-note" rows="2" placeholder="Krótka notatka z rozmowy (Enter zapisuje, Shift+Enter = nowa linia)"></textarea></label>
         <p class="form-error" id="act-error" hidden></p>
         <div class="actions">
           <div class="act-main">
@@ -410,13 +537,14 @@
             <button class="btn btn-secondary" type="submit" disabled>Tylko zapisz</button>
           </div>
           <div class="act-links">
-            <button class="link-btn" type="button" id="note-only">Dodaj samą notatkę</button>
+            <button class="link-btn" type="button" id="note-only" title="Zapisuje tylko komentarz w historii. Bez wyniku rozmowy: nie liczy się jako próba i nie zmienia statusu ani terminu leada.">Tylko notatka (bez rozmowy)</button>
             <button class="link-btn" type="button" id="reset-btn">Zacznij od nowa (Esc)</button>
           </div>
           <span class="enter-hint">↵ Enter zapisuje i bierze kolejnego</span>
         </div>
       </form>
       <div class="card" id="hist-card"><h2>Historia kontaktów${d.activities.length ? ` <span class="muted small">(${d.activities.length})</span>` : ""}</h2>
+        ${d.activities.length ? summaryTiles(d.activities) : ""}
         ${d.activities.length ? `<div class="h-filters" role="group" aria-label="Filtr historii">${[["all", "Wszystko", d.activities.length], ["talked", "Rozmowy", st.talked], ["noans", "Nieodebrane", st.noans], ["notes", "Notatki", d.activities.filter(HIST_FILTERS.notes).length]]
           .filter(([k, , n]) => k === "all" || n > 0).map(([k, l, n]) => `<button type="button" data-hf="${k}" aria-pressed="${k === "all"}">${l} <small>${n}</small></button>`).join("")}</div>` : ""}
         <ul class="history" id="hist">${hist}</ul>
@@ -437,12 +565,17 @@
     }));
     const jump = $("recent-all");
     if (jump) jump.addEventListener("click", () => { histAll = true; paintHistory(); $("hist-card").scrollIntoView({ behavior: "smooth", block: "start" }); });
+    repaintHistory = paintHistory;
     wireForm(d.id);
+    wireMini();
+    wireEdits(d);
     CRM.wirePhrases($("act-form"), $("act-note"));
     const eh = document.querySelector("#act-form .enter-hint");
     if (eh) {
       const od = otherOverdue(d.id);
-      eh.textContent = od.length ? `↵ Enter zapisuje i otwiera: ${od[0].contact_name} (${isFresh(od[0]) ? "ponowna próba" : "zaległy"})` : "↵ Enter zapisuje i pobiera nowego leada z puli";
+      const un = leads.filter((l) => l.id !== d.id && groupOf(l) === 4);
+      eh.textContent = od.length ? `↵ Enter zapisuje i otwiera: ${od[0].contact_name} (${isFresh(od[0]) ? "ponowna próba" : "zaległy"})`
+        : un.length ? `↵ Enter zapisuje i otwiera: ${un[0].contact_name} (jeszcze bez telefonu)` : "↵ Enter zapisuje i pobiera nowego leada z puli";
     }
   }
 
@@ -500,8 +633,9 @@
     const name = current && current.contact_name ? current.contact_name : "";
     const out = saved && saved.outcome ? OUT_LABEL[saved.outcome] || "" : "";
     const again = saved && saved.rescheduled_to ? ` Następny kontakt: <b>${esc(fmt(saved.rescheduled_to))}</b>.` : "";
-    savedNote = `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}.${again}`;
-    showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}`);
+    const worth = saved && saved.sale_total ? ` Wartość sprzedaży: <b>${esc(CRM.money(saved.sale_total))}</b>.` : "";
+    savedNote = `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}.${worth}${again}`;
+    showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}${saved && saved.sale_total ? " · " + esc(CRM.money(saved.sale_total)) : ""}`);
     await loadLeads();
     refreshReminders();
     if (saved && saved.outcome === "no_answer" && !leads.some((l) => l.id === leadId)) {
@@ -514,15 +648,109 @@
         select(od[0].id);
         return;
       }
-      if (await claim()) return;
+      const untouched = leads.filter((l) => l.id !== leadId && groupOf(l) === 4);   // Twoje leady, do których jeszcze nie dzwoniono
+      if (untouched.length) {
+        savedNote += ` Otwieram kolejnego z Twojej listy (jeszcze bez telefonu, zostało ich ${untouched.length}).`;
+        select(untouched[0].id);
+        return;
+      }
+      const got = await claim();
+      if (got === true) return;
+      if (got === "empty") { doneForNow(); return; }   // pula pusta i nic więcej do zrobienia: mówimy to wprost, zamiast pokazywać znów ten sam lead
     }
     if (leads.some((l) => l.id === leadId)) select(leadId);
     else if (leads.length) select(leads[0].id);
     else { savedNote = ""; emptyPane(); }
   }
 
+  /* Pula pusta, a w kolejce nic nie czeka „na teraz”: wprost to mówimy i pokazujemy, co jest najbliżej */
+  function doneForNow() {
+    selectedId = null; renderList();
+    const upcoming = leads.slice().sort(byUrgency).slice(0, 3);
+    const note = savedNote; savedNote = "";
+    $("lead-pane").innerHTML = `${note ? `<div class="saved-banner" role="status"><span class="sb-ic">✓</span><div>${note}</div></div>` : ""}
+      <div class="card empty"><h2>Na teraz wszystko zrobione</h2>
+        <p class="muted">Wspólna pula jest pusta i nie masz więcej leadów do pierwszego telefonu ani zaległych kontaktów.${upcoming.length ? " Najbliższe zaplanowane:" : ""}</p>
+        ${upcoming.length ? `<div class="lead-list">${upcoming.map((l) => leadItem(l, groupOf(l))).join("")}</div>` : ""}</div>`;
+  }
+
+  /* Sprzedaż (wynik „Sprzedane”): wiersze „produkt + ilość”, wartość liczy się na żywo z cen katalogu.
+     Serwer i tak liczy wartość sam, z ceny z chwili zapisu. */
+  function makeSale() {
+    const box = $("sale-fields"), rowsEl = $("sale-rows"), sumEl = $("sale-sum"), noteEl = $("sale-note"), addBtn = $("sale-add");
+    const find = (id) => products.find((x) => String(x.id) === String(id));
+    const cents = (x) => Math.round(Number(x.price) * 100);
+    const optionText = (x) => `${x.name} – ${Number(x.price) > 0 ? CRM.money(x.price) : "brak ceny"}${x.unit ? " / " + x.unit : ""}`;
+    const usedIds = () => [...rowsEl.querySelectorAll(".sale-prod")].map((el) => el.value);
+    function recalc() {
+      let total = 0, noPrice = false;
+      rowsEl.querySelectorAll(".sale-row").forEach((row) => {
+        const x = find(row.querySelector(".sale-prod").value), q = Number(row.querySelector(".sale-qty").value);
+        const line = x && Number.isInteger(q) && q > 0 ? cents(x) * q : 0;
+        if (x && !(Number(x.price) > 0)) noPrice = true;
+        total += line;
+        row.querySelector(".sale-line").textContent = x ? CRM.money(line / 100) : "–";
+      });
+      sumEl.textContent = CRM.money(total / 100);
+      addBtn.hidden = !products.length;
+      addBtn.disabled = rowsEl.children.length >= products.length;
+      if (products.length) {
+        noteEl.hidden = !noPrice;
+        if (noPrice) noteEl.textContent = "Ten produkt nie ma ceny w katalogu, więc jego wartość wyniesie 0 zł. Ceny ustawia manager na stronie „Produkty”.";
+      }
+    }
+    function addRow(preferredId) {
+      const used = usedIds();
+      const pick = (preferredId && !used.includes(String(preferredId)) && find(preferredId)) || products.find((x) => !used.includes(String(x.id)));
+      if (!pick) return null;
+      const row = document.createElement("div");
+      row.className = "sale-row";
+      row.innerHTML = `<select class="select sale-prod" aria-label="Produkt">${products.map((x) => `<option value="${x.id}"${x.id === pick.id ? " selected" : ""}>${esc(optionText(x))}</option>`).join("")}</select>
+        <input type="number" class="select sale-qty" min="1" max="9999" step="1" value="1" inputmode="numeric" aria-label="Ilość">
+        <b class="sale-line">–</b>
+        <button type="button" class="sale-del" title="Usuń pozycję" aria-label="Usuń pozycję">×</button>`;
+      rowsEl.appendChild(row);
+      recalc();
+      return row;
+    }
+    rowsEl.addEventListener("input", recalc);
+    rowsEl.addEventListener("change", recalc);
+    rowsEl.addEventListener("click", (e) => {
+      const del = e.target.closest(".sale-del");
+      if (!del || rowsEl.children.length < 2) return;
+      del.closest(".sale-row").remove();
+      recalc();
+    });
+    addBtn.addEventListener("click", () => { const row = addRow(); if (row) row.querySelector(".sale-qty").select(); });
+    return {
+      open() {
+        box.hidden = false;
+        if (!products.length) {
+          noteEl.hidden = false;
+          noteEl.textContent = "Katalog produktów jest pusty, więc sprzedaż zapisze się bez wartości. Produkty i ceny dodaje manager na stronie „Produkty”.";
+        } else if (!rowsEl.children.length) addRow(current && current.product);
+        recalc();
+      },
+      close() { box.hidden = true; rowsEl.innerHTML = ""; noteEl.hidden = true; },
+      firstQty: () => rowsEl.querySelector(".sale-qty"),
+      lines() {
+        if (!products.length) return { ok: true, lines: [] };
+        const out = [];
+        for (const row of rowsEl.querySelectorAll(".sale-row")) {
+          const id = Number(row.querySelector(".sale-prod").value), q = Number(row.querySelector(".sale-qty").value);
+          if (!id) return { ok: false, error: "Wybierz produkt." };
+          if (!Number.isInteger(q) || q < 1) return { ok: false, error: "Ilość musi być liczbą całkowitą, co najmniej 1." };
+          if (q > 9999) return { ok: false, error: "Ilość jest za duża (maksymalnie 9999). Sprawdź, czy to nie literówka." };
+          out.push({ product: id, quantity: q });
+        }
+        return out.length ? { ok: true, lines: out } : { ok: false, error: "Dodaj, co zostało sprzedane." };
+      },
+    };
+  }
+
   function wireForm(leadId) {
     const form = $("act-form"), err = $("act-error");
+    const sale = makeSale();
     const submits = () => form.querySelectorAll("[type=submit]");
     const fail = (m) => { err.textContent = m; err.hidden = false; };
     const actions = form.querySelector(".actions"), primary = form.querySelector("[data-next]");
@@ -533,6 +761,7 @@
       form.querySelectorAll("[data-outcome]").forEach((x) => x.setAttribute("aria-checked", "false"));
       form.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", "false"));
       $("cb-fields").hidden = true;
+      sale.close();
       ["cb-at", "cb-note", "act-note"].forEach((id) => { $(id).value = ""; });
       updatePreview();
       $("hint").textContent = "Wybierz wynik (klawisze 1–6). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.";
@@ -547,11 +776,17 @@
     [$("cb-note"), $("act-note"), primary].forEach((f) => {
       f.addEventListener("focus", () => {
         if (!outcome) return;
-        hintEl.textContent = f === $("act-note") ? "Ctrl+Enter zapisuje i bierze kolejnego (Enter = nowa linia)" : "↵ Enter zapisuje i bierze kolejnego";
+        hintEl.textContent = f === $("act-note") ? "↵ Enter zapisuje i bierze kolejnego (Shift+Enter = nowa linia)" : "↵ Enter zapisuje i bierze kolejnego";
         setArmed(true);
       });
       f.addEventListener("blur", () => setArmed(false));
     });
+    $("sale-fields").addEventListener("focusin", (e) => {
+      if (outcome !== "sold" || !e.target.matches(".sale-qty, .sale-prod")) return;
+      hintEl.textContent = "↵ Enter zapisuje i bierze kolejnego";
+      setArmed(true);
+    });
+    $("sale-fields").addEventListener("focusout", () => setArmed(false));
     /* Wybór terminu z kalendarza (natywny picker przeglądarki) */
     const nat = $("cb-native");
     $("cb-pick").addEventListener("click", () => {
@@ -575,6 +810,7 @@
       const sched = SCHEDULING.includes(outcome) && !lastTry, required = REQUIRED.includes(outcome);
       autoRetry = false;
       $("cb-fields").hidden = !sched;
+      if (outcome === "sold") sale.open(); else sale.close();
       let hintText = OUTCOMES.find((o) => o[0] === outcome)[2];
       if (sched) {
         const missed = outcome === "no_answer" && isMissable(current);
@@ -595,12 +831,21 @@
       submits().forEach((s) => { s.disabled = false; });
       /* Kursor od razu ląduje tam, gdzie agent ma coś wpisać lub zatwierdzić (Enter). */
       const focusOn = { callback: "cb-at", interested: "cb-at", refused: "act-note" }[outcome];
-      (focusOn ? $(focusOn) : form.querySelector("[data-next]")).focus();
+      const saleQty = outcome === "sold" ? sale.firstQty() : null;   // sprzedaż: kursor od razu w ilości (domyślnie 1)
+      (saleQty || (focusOn ? $(focusOn) : form.querySelector("[data-next]"))).focus({ preventScroll: true });
+      ensureFormVisible(form);   // wynik wybrany z góry strony: przewiń tak, żeby było widać przyciski 1–6 i zapis
       if (focusOn === "cb-at") $("cb-at").select();   // od razu można nadpisać domyślny termin
+      if (saleQty) saleQty.select();
     }));
     const clearPresets = () => form.querySelectorAll("[data-preset]").forEach((p) => p.setAttribute("aria-pressed", "false"));
     $("cb-at").addEventListener("input", () => { autoRetry = false; clearPresets(); updatePreview(); });
     $("cb-at").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("cb-note").focus(); } });
+    /* Enter w komentarzu działa tak samo jak wszędzie: zapisuje i bierze kolejnego (nowa linia: Shift+Enter) */
+    $("act-note").addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      e.preventDefault();
+      if (!primary.disabled) primary.click();
+    });
     form.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
       const was = b.getAttribute("aria-pressed") === "true";
       autoRetry = false;
@@ -634,6 +879,11 @@
         if (when && when < new Date()) { fail("Ten termin już minął."); return; }
         if (when) { body.next_contact_at = when.toISOString(); body.next_contact_note = why; }
       }
+      if (outcome === "sold") {
+        const sl = sale.lines();
+        if (!sl.ok) { fail(sl.error); return; }
+        if (sl.lines.length) body.sale_lines = sl.lines;
+      }
       if (saving) return;   // podwójne kliknięcie / Enter nie zapisze drugi raz
       saving = true;
       submits().forEach((s) => { s.disabled = true; });
@@ -655,7 +905,7 @@
       const r = await api("/api/leads/next/", { method: "POST" });
       const d = await r.json().catch(() => ({}));
       if (r.status === 409) { toast(`Masz zaległe oddzwonienia (${d.overdue_count}). Zrób je najpierw – są na górze listy.`, true); return false; }
-      if (r.status === 404) { toast("Pula jest pusta – brak leadów do pobrania.", true); return false; }
+      if (r.status === 404) { toast("Pula jest pusta – brak leadów do pobrania.", true); return "empty"; }
       if (!r.ok) { toast(d.detail || "Nie udało się pobrać leada.", true); return false; }
       await loadLeads(); select(d.id);
       refreshReminders();
@@ -665,15 +915,20 @@
     } finally { btn.disabled = false; }
   }
 
+  loadProducts();
   api("/api/settings/").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { rules = d; renderList(); } }).catch(() => {});
   $("claim-btn").addEventListener("click", claim);
-  $("lead-pane").addEventListener("click", (e) => { if (e.target.closest("#banner-clear")) clearSearch(); });
+  $("lead-pane").addEventListener("click", (e) => {
+    if (e.target.closest("#banner-clear")) { clearSearch(); return; }
+    const item = e.target.closest(".empty .lead-item[data-id]");   // lista „najbliższe zaplanowane” na ekranie „wszystko zrobione”
+    if (item) select(Number(item.dataset.id));
+  });
   $("lead-list").addEventListener("click", (e) => {
     if (e.target.closest("#found-clear")) { clearSearch(); return; }
     const item = e.target.closest("[data-id]");
     if (item) select(Number(item.dataset.id));
   });
-  /* Skróty: 1–6 wybiera wynik, Ctrl+Enter zapisuje i bierze kolejnego. */
+  /* Skróty: 1–6 wybiera wynik, Enter (albo Ctrl+Enter) zapisuje i bierze kolejnego. */
   document.addEventListener("keydown", (e) => {
     const form = $("act-form");
     if (!form) return;

@@ -297,6 +297,7 @@ const CRM = (() => {
       ["Dodzwoniłem się", pct(calls ? answered / calls : null), `${answered} z ${calls} rozmów`],
       ["Zainteresowani", o.interested, answered ? `${pct(o.interested / answered)} odebranych` : ""],
       ["Sprzedane", o.sold, "sprzedaże w wybranym okresie"],
+      ["Przychód", CRM.money(d.revenue), d.revenue && Number(d.revenue) > 0 ? "wartość sprzedanych produktów" : "wpisuj produkty przy sprzedaży"],
       manager ? ["Czekają na agenta", d.pool_leads, "klienci, których nikt jeszcze nie prowadzi"] : ["Moi klienci w toku", active, "jeszcze niezamknięci, do obsłużenia"],
     ];
     $("kpis").innerHTML = cards.map(([label, value, sub]) =>
@@ -323,6 +324,16 @@ const CRM = (() => {
       ].map(([l, n, c, h]) => orow(l, n, c, calls, h)).join("") +
       `<div class="closed-line"><span>Sprawy zamknięte w okresie: <b>${o.sold + lost}</b></span>
         <span class="ok">ze sprzedażą: <b>${o.sold}</b></span><span class="bad">bez sprzedaży: <b>${lost}</b></span></div>`;
+  }
+
+  /* Sprzedaż według produktów: ile sztuk i na jaką kwotę (pasek proporcjonalny do przychodu) */
+  function renderSalesByProduct(rows, revenue) {
+    const max = Math.max(1, ...rows.map((r) => Number(r.revenue)));
+    $("sales-products").innerHTML = rows.length
+      ? rows.map((r) => `<div class="orow money"><span class="olabel">${esc(r.product_name)}<small>ilość: ${r.quantity}</small></span>
+          <div class="track"><i style="width:${(Number(r.revenue) / max) * 100}%;background:#16a34a"></i></div><b>${esc(CRM.money(r.revenue))}</b></div>`).join("") +
+        `<div class="closed-line"><span>Razem: <b>${esc(CRM.money(revenue))}</b></span></div>`
+      : `<p class="muted">W tym okresie nie wpisano sprzedaży z produktami.</p>`;
   }
 
   function renderScheduled(s) {
@@ -392,10 +403,10 @@ const CRM = (() => {
   function renderAgents(rows) {
     $("agents").innerHTML = `<thead><tr><th>Agent</th><th>Klienci w toku</th><th>Sprzedani klienci (łącznie)</th>
       <th>Rozmowy</th><th>Nie odebrał</th><th>Oddzwonić</th><th>Zainteresowani</th>
-      <th>Sprzedaże w okresie</th><th>Odmowy</th><th>Zły numer</th><th>Dodzwonienia</th></tr></thead><tbody>` +
+      <th>Sprzedaże w okresie</th><th>Przychód</th><th>Odmowy</th><th>Zły numer</th><th>Dodzwonienia</th></tr></thead><tbody>` +
       rows.map((a) => `<tr><td><strong>${esc(a.username)}</strong></td><td>${a.leads_active}</td>
         <td>${a.leads_won}</td><td>${a.calls}</td><td>${a.no_answer}</td><td>${a.callbacks}</td>
-        <td>${a.interested}</td><td>${a.sold}</td><td>${a.refused}</td><td>${a.wrong_number}</td>
+        <td>${a.interested}</td><td>${a.sold}</td><td class="nowrap">${esc(CRM.money(a.revenue))}</td><td>${a.refused}</td><td>${a.wrong_number}</td>
         <td>${pct(a.answer_rate)}</td></tr>`).join("") + "</tbody>";
   }
 
@@ -445,6 +456,8 @@ const CRM = (() => {
         $("outcomes-period").textContent = "· " + period;
         $("agents-period").textContent = "· " + period;
         renderOutcomes(d.outcomes);
+        $("sales-period").textContent = "· " + period;
+        renderSalesByProduct(d.sales_by_product || [], d.revenue);
         renderScheduled(d.scheduled);
         renderFunnel(d.leads_by_status);
         renderDaily(d);

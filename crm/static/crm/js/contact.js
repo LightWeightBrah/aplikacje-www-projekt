@@ -1,5 +1,6 @@
 /* Wspólne elementy pracy z kontaktem, używane w kolejce i w planie dnia:
-   linia „Ostatnio: …”, przycisk kopiowania numeru i szybkie frazy do notatki. */
+   linia „Ostatnio: …”, przycisk kopiowania numeru, szybkie frazy do notatki
+   oraz kwoty i pozycje sprzedaży (money, saleHtml, fetchAll). */
 (() => {
   const { esc } = CRM;
   const OUT_LABEL = { no_answer: "Nie odebrał", callback: "Oddzwonić", interested: "Zainteresowany", sold: "Sprzedane",
@@ -61,5 +62,30 @@
     }));
   }
 
-  Object.assign(CRM, { OUT_LABEL, OUT_COLOR, shortWhen, lastContact, copyButton, copyText, phraseButtons, wirePhrases });
+  /* Kwota po polsku: 3 600,00 zł (pusta wartość = „–”). API oddaje kwoty jako tekst, np. "3600.00". */
+  const money = (v) => (v == null || v === "" || Number.isNaN(Number(v)) ? "–"
+    : Number(v).toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " zł");
+
+  /* Wszystkie strony listy DRF (paginacja) jako jedna tablica */
+  async function fetchAll(url) {
+    const items = [];
+    while (url) {
+      const r = await CRM.api(url);
+      if (!r.ok) throw new Error("Nie udało się pobrać danych (" + r.status + ").");
+      const d = await r.json();
+      if (Array.isArray(d)) return d;
+      items.push(...d.results);
+      url = d.next ? d.next.replace(location.origin, "") : null;
+    }
+    return items;
+  }
+
+  /* Pozycje sprzedaży w historii kontaktu: „Światłowód × 3 … 3 600,00 zł” i suma */
+  function saleHtml(a) {
+    if (!a || a.outcome !== "sold" || !a.sale_items || !a.sale_items.length) return "";
+    const lines = a.sale_items.map((i) => `<li><span>${esc(i.product_name)} <small>× ${i.quantity}</small></span><b>${money(i.total)}</b></li>`).join("");
+    return `<div class="h-sale"><ul>${lines}</ul><div class="h-sale-sum"><span>Wartość sprzedaży</span><b>${money(a.sale_total)}</b></div></div>`;
+  }
+
+  Object.assign(CRM, { OUT_LABEL, OUT_COLOR, shortWhen, lastContact, copyButton, copyText, phraseButtons, wirePhrases, money, fetchAll, saleHtml });
 })();

@@ -1,0 +1,56 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Produkty – LeadCRM{% endblock %}
+{% block nav_products %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Produkty</h1>
+        <p class="muted" id="subtitle">Ładowanie…</p>
+    </div>
+    <div class="head-actions">
+        <button type="button" class="btn btn-primary" id="add-open">+ Dodaj produkt</button>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="products-area">
+    <section class="card">
+        <p class="card-desc" id="no-price-warning" hidden></p>
+        <div class="table-wrap">
+            <table class="table products-table" id="products-table"></table>
+        </div>
+        <p class="card-desc rank-note">Agent przy wyniku „Sprzedane” wybiera produkt z tej listy i wpisuje ilość, a system sam liczy wartość sprzedaży (ilość × cena). Zmiana ceny dotyczy tylko nowych sprzedaży: dawne zostają z ceną z dnia sprzedaży, więc przychód z poprzednich okresów się nie zmienia. Produktu nie usuwa się, tylko wyłącza: znika z listy wyboru, ale historia sprzedaży zostaje.</p>
+    </section>
+</div>
+
+<dialog id="prod-dialog" class="dialog">
+    <form id="prod-form" novalidate>
+        <h2 id="prod-title">Dodaj produkt</h2>
+        <label class="field">Nazwa
+            <input id="prod-name" class="select" maxlength="120" autocomplete="off" required>
+        </label>
+        <div class="field-row">
+            <label class="field">Cena jednostkowa (zł)
+                <input id="prod-price" class="select" inputmode="decimal" autocomplete="off" placeholder="np. 1200,00">
+            </label>
+            <label class="field">Jednostka
+                <input id="prod-unit" class="select" maxlength="20" list="unit-list" autocomplete="off" placeholder="szt.">
+            </label>
+        </div>
+        <datalist id="unit-list"><option value="szt."><option value="umowa"><option value="abonament"><option value="mies."></datalist>
+        <label class="field">Opis (opcjonalnie)
+            <textarea id="prod-desc" class="select" rows="2" maxlength="500"></textarea>
+        </label>
+        <small class="muted" id="prod-hint">Cena to wartość jednej sztuki (albo jednej umowy). Przy sprzedaży 3 sztuk system policzy 3 × cena.</small>
+        <p class="form-error" id="prod-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="prod-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="prod-ok">Zapisz</button>
+        </div>
+    </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/products.js' %}?v=58"></script>
+<script>CRM.initProducts();</script>{% endblock %}

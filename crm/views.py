@@ -39,6 +39,7 @@ from .permissions import (
 )
 from .roles import AGENT, can_view_team_stats, is_manager, visible_to
 from .serializers import (
+    ActivityNoteSerializer,
     ActivitySerializer,
     AgentAccessBulkSerializer,
     AgentAccessSerializer,
@@ -99,9 +100,13 @@ class OwnerScopedMixin:
 
 
 class ProductViewSet(viewsets.ModelViewSet):
+    """Katalog produktów z cenami: czytają wszyscy, zmienia tylko manager (`?is_active=true` = tylko do sprzedaży)."""
+
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [IsManagerOrReadOnly]
+    filterset_fields = ["is_active"]
+    search_fields = ["name"]
 
 
 class CompanyViewSet(viewsets.ModelViewSet):
@@ -406,7 +411,7 @@ class ActivityViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Historia kontaktów: można dodawać i czytać, nie można edytować ani usuwać."""
+    """Historia kontaktów: można dodawać i czytać, poprawiać tylko komentarz; usuwać nie można."""
 
     queryset = Activity.objects.select_related("lead", "agent")
     serializer_class = ActivitySerializer
@@ -428,7 +433,21 @@ class ActivityViewSet(
             next_contact_at=data.get("next_contact_at"),
             # brak pola = zostaje dotychczasowa sprawa; puste pole = agent świadomie ją czyści
             next_contact_note=data.get("next_contact_note"),
+            # sprzedane produkty (tylko przy wyniku „Sprzedane”): pary (produkt, ilość)
+            sale_items=[(line["product"], line["quantity"]) for line in data.get("sale_lines", [])],
         )
+
+    @extend_schema(request=ActivityNoteSerializer, responses=ActivitySerializer)
+    def partial_update(self, request, pk=None):
+        """Poprawa komentarza w zapisanym kontakcie (autor albo manager). Wynik i terminy zostają bez zmian."""
+        # wpis szukamy po autorze (jak przy cofaniu), bo lead mógł już wrócić do puli
+        candidates = Activity.objects.all() if is_manager(request.user) else Activity.objects.filter(agent=request.user)
+        activity = get_object_or_404(candidates, pk=pk)
+        serializer = ActivityNoteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        activity.note = serializer.validated_data["note"]
+        activity.save(update_fields=["note"])
+        return Response(ActivitySerializer(activity, context=self.get_serializer_context()).data)
 
     @extend_schema(request=None, responses=LeadSerializer)
     @action(detail=True, methods=["post"])
@@ -660,7 +679,7 @@ class StatsViewSet(viewsets.ViewSet):
             "sort",
             str,
             enum=list(LEADERBOARD_SORT_KEYS),
-            description="Wg czego układać ranking: sold (domyślnie), calls, interested",
+            description="Wg czego układać ranking: sold (domyślnie), calls, interested, revenue (przychód)",
         )
     ],
 )
@@ -682,7 +701,7 @@ def leaderboard_response(request):
     sort = request.query_params.get("sort", "sold")
     if sort not in LEADERBOARD_SORT_KEYS:
         return Response(
-            {"detail": "Parametr sort musi mieć wartość: sold, calls lub interested."},
+            {"detail": "Parametr sort musi mieć wartość: sold, calls, interested lub revenue."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     rows = leaderboard(date_from, date_to, sort, me_id=request.user.pk)

@@ -465,3 +465,19 @@ class SettingsPageTests(CrmTestBase):
         self.assertEqual(self.api(self.agent1).get("/api/settings/").status_code, 200)
         self.assertEqual(self.api(self.agent1).patch("/api/settings/", {}, format="json").status_code, 403)
         self.assertEqual(self.api(self.manager).patch("/api/settings/", {}, format="json").status_code, 200)
+
+
+class ProductsPageTests(CrmTestBase):
+    def test_products_page_renders(self):
+        r = self.client.get("/crm/products/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "products-table")
+        self.assertContains(r, "CRM.initProducts")
+
+    def test_menu_links_to_products_page_for_managers_only(self):
+        r = self.client.get("/crm/")
+        self.assertContains(r, 'href="/crm/products/" data-manager-only')
+
+    def test_queue_page_has_sale_form_and_dashboard_has_sales_card(self):
+        self.assertContains(self.client.get("/crm/queue/"), "queue.js")
+        self.assertContains(self.client.get("/crm/"), 'id="sales-products"')

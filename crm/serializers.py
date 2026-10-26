@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -8,14 +9,36 @@ from rest_framework import serializers
 
 from .excel import MAX_IMPORT_BYTES
 from .roles import AGENT, MANAGER
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product, TeamRules
+from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product, SaleItem, TeamRules
 from .rules import FIELD_LIMITS, attempt_times, get_rules, suggest_retry
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    """Produkt z katalogu: nazwa, cena jednostkowa (zł) i jednostka. Zmienia je manager."""
+
     class Meta:
         model = Product
         fields = "__all__"
+
+
+# Największa ilość jednej pozycji w jednej sprzedaży (zabezpieczenie przed literówką, np. 5000 zamiast 5)
+MAX_SALE_QUANTITY = 9999
+
+
+class SaleItemSerializer(serializers.ModelSerializer):
+    """Pozycja sprzedaży: co i ile sprzedano, z ceną z chwili sprzedaży."""
+
+    class Meta:
+        model = SaleItem
+        fields = ("id", "product", "product_name", "unit", "unit_price", "quantity", "total")
+        read_only_fields = fields
+
+
+class SaleLineSerializer(serializers.Serializer):
+    """Wejście: jedna sprzedawana pozycja (id produktu z katalogu i ilość)."""
+
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.IntegerField(min_value=1, max_value=MAX_SALE_QUANTITY)
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -32,6 +55,12 @@ class LeadBatchSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_by", "created_at")
 
 
+class ActivityNoteSerializer(serializers.Serializer):
+    """Poprawa komentarza w już zapisanym kontakcie (zmienia się tylko treść notatki)."""
+
+    note = serializers.CharField(allow_blank=True, max_length=2000, trim_whitespace=True)
+
+
 class ActivitySerializer(serializers.ModelSerializer):
     # Kto prowadził rozmowę (do historii kontaktów)
     agent_name = serializers.SerializerMethodField()
@@ -43,6 +72,11 @@ class ActivitySerializer(serializers.ModelSerializer):
     next_contact_note = serializers.CharField(
         write_only=True, required=False, allow_blank=True, max_length=255
     )
+    # Tylko do zapisu, przy wyniku „Sprzedane”: co sprzedano i ile sztuk. Wartość liczy system
+    # z cen katalogu (pozycje wracają w `sale_items`, suma w `sale_total`).
+    sale_lines = SaleLineSerializer(many=True, write_only=True, required=False)
+    sale_items = serializers.SerializerMethodField()
+    sale_total = serializers.SerializerMethodField()
 
     class Meta:
         model = Activity
@@ -58,12 +92,48 @@ class ActivitySerializer(serializers.ModelSerializer):
             "rescheduled_to",
             "next_contact_at",
             "next_contact_note",
+            "sale_lines",
+            "sale_items",
+            "sale_total",
         )
         read_only_fields = ("agent", "created_at", "planned_at", "rescheduled_to")
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_agent_name(self, obj):
         return obj.agent.username if obj.agent else None
+
+    @extend_schema_field(SaleItemSerializer(many=True))
+    def get_sale_items(self, obj):
+        if obj.outcome != Activity.Outcome.SOLD:
+            return []
+        return SaleItemSerializer(obj.sale_items.all(), many=True).data
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_sale_total(self, obj):
+        """Wartość sprzedaży (suma pozycji) albo null, gdy to nie sprzedaż lub nie podano pozycji."""
+        if obj.outcome != Activity.Outcome.SOLD:
+            return None
+        items = list(obj.sale_items.all())
+        if not items:
+            return None
+        return str(sum((item.total for item in items), Decimal("0.00")))
+
+    def validate_sale_lines(self, lines):
+        """Ten sam produkt wpisany dwa razy to jedna pozycja; sprzedawać można tylko aktywne produkty."""
+        merged = {}
+        for line in lines:
+            product = line["product"]
+            if not product.is_active:
+                raise serializers.ValidationError(
+                    f"Produkt „{product.name}” jest wyłączony ze sprzedaży."
+                )
+            merged[product.pk] = (product, merged.get(product.pk, (product, 0))[1] + line["quantity"])
+        for product, quantity in merged.values():
+            if quantity > MAX_SALE_QUANTITY:
+                raise serializers.ValidationError(
+                    f"Ilość produktu „{product.name}” nie może przekraczać {MAX_SALE_QUANTITY}."
+                )
+        return [{"product": product, "quantity": quantity} for product, quantity in merged.values()]
 
     def validate_next_contact_at(self, value):
         if value and value < timezone.now():
@@ -81,6 +151,21 @@ class ActivitySerializer(serializers.ModelSerializer):
         if attrs["outcome"] == Activity.Outcome.INTERESTED and not attrs.get("next_contact_at"):
             raise serializers.ValidationError(
                 "Wynik 'Zainteresowany' wymaga next_contact_at (kiedy ponownie zadzwonić)."
+            )
+        lines = attrs.get("sale_lines") or []
+        if lines and attrs["outcome"] != Activity.Outcome.SOLD:
+            raise serializers.ValidationError(
+                "Sprzedane produkty (sale_lines) można podać tylko przy wyniku 'Sprzedane'."
+            )
+        # Gdy w katalogu są aktywne produkty, sprzedaż musi mówić, co sprzedano (bez tego nie ma przychodu).
+        # Pusty katalog nie blokuje agenta: wtedy sprzedaż zapisuje się bez wartości.
+        if (
+            attrs["outcome"] == Activity.Outcome.SOLD
+            and not lines
+            and Product.objects.filter(is_active=True).exists()
+        ):
+            raise serializers.ValidationError(
+                "Wynik 'Sprzedane' wymaga listy sprzedanych produktów (sale_lines: produkt i ilość)."
             )
         return attrs
 
@@ -302,6 +387,7 @@ class AgentStatsSerializer(serializers.Serializer):
     interested = serializers.IntegerField()
     refused = serializers.IntegerField()
     sold = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
     no_answer = serializers.IntegerField()
     callbacks = serializers.IntegerField()
     wrong_number = serializers.IntegerField()
@@ -319,12 +405,25 @@ class HourlyCallsSerializer(serializers.Serializer):
     calls = serializers.IntegerField()
 
 
+class ProductSalesSerializer(serializers.Serializer):
+    """Sprzedaż jednego produktu w okresie: ile sztuk i na jaką kwotę."""
+
+    product_name = serializers.CharField()
+    unit = serializers.CharField(allow_blank=True)
+    quantity = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+
+
 class StatsSerializer(serializers.Serializer):
-    """Opis odpowiedzi /api/stats/ (lejek, skuteczność agentów, rozmowy dzień po dniu)."""
+    """Opis odpowiedzi /api/stats/ (lejek, skuteczność agentów, rozmowy dzień po dniu, przychód)."""
 
     days = serializers.IntegerField()
     date_from = serializers.DateField()
     date_to = serializers.DateField()
+    revenue = serializers.DecimalField(
+        max_digits=14, decimal_places=2, help_text="Przychód ze sprzedaży w okresie (zł)."
+    )
+    sales_by_product = ProductSalesSerializer(many=True)
     total_leads = serializers.IntegerField()
     pool_leads = serializers.IntegerField(allow_null=True)
     leads_by_status = serializers.DictField(child=serializers.IntegerField())
@@ -381,6 +480,7 @@ class LeaderboardRowSerializer(serializers.Serializer):
     full_name = serializers.CharField()
     avatar = serializers.CharField(help_text="Zdjęcie profilowe (data URL) albo pusty tekst.")
     sold = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
     calls = serializers.IntegerField()
     answered = serializers.IntegerField()
     interested = serializers.IntegerField()

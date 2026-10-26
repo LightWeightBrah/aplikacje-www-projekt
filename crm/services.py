@@ -5,17 +5,18 @@ statystyki oraz plan dnia."""
 import json
 import re
 from datetime import datetime, time, timedelta
+from decimal import Decimal
 from datetime import timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum
 from django.db.models.functions import Coalesce, TruncDate, TruncHour
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.renderers import BaseRenderer
 
-from .models import Activity, AgentProfile, Lead, LeadAssignment
+from .models import Activity, AgentProfile, Lead, LeadAssignment, SaleItem
 from .roles import AGENT
 from .rules import attempt_times, get_rules, suggest_retry
 
@@ -234,8 +235,31 @@ def undo_activity(activity, user, is_manager=False):
     return Lead.objects.get(pk=lead.pk)
 
 
+def add_sale_items(activity, lines):
+    """Zapisuje pozycje sprzedaży do rozmowy „Sprzedane”.
+
+    `lines` to lista par (produkt, ilość). Nazwa, jednostka i cena są kopiowane z katalogu
+    w chwili sprzedaży, a wartość pozycji to ilość × cena jednostkowa.
+    """
+    return SaleItem.objects.bulk_create(
+        [
+            SaleItem(
+                activity=activity,
+                product=product,
+                product_name=product.name,
+                unit=product.unit,
+                unit_price=product.price,
+                quantity=quantity,
+                total=product.price * quantity,
+            )
+            for product, quantity in lines
+        ]
+    )
+
+
 def register_activity(
-    lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None
+    lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None,
+    sale_items=None,
 ):
     """Zapisuje rozmowę (Activity) i od razu aktualizuje lead.
 
@@ -251,7 +275,9 @@ def register_activity(
       umówiony kontakt: rośnie `missed_calls`, umówiony termin zostaje w
       `agreed_contact_at`, a jeśli agent nie wskazał nowego terminu, system sam
       ustawia ponowną próbę za `callback_retry_minutes` minut (ustawienie managera). Dzięki temu lead
-      nie zostaje "zaległy" w nieskończoność i nie blokuje pobrania kolejnego.
+      nie zostaje "zaległy" w nieskończoność i nie blokuje pobrania kolejnego,
+    - wynik "sprzedane" może mieć `sale_items` (lista par produkt + ilość): z cen katalogu
+      powstają pozycje sprzedaży, z których liczy się przychód.
     """
     with transaction.atomic():
         now = timezone.now()
@@ -344,6 +370,8 @@ def register_activity(
             rescheduled_to=rescheduled if is_call else None,
             undo_state=undo_state,
         )
+        if outcome == Activity.Outcome.SOLD and sale_items:
+            add_sale_items(activity, sale_items)
 
         Lead.objects.filter(pk=lead.pk).update(**changes)
 
@@ -661,6 +689,29 @@ def lead_funnel(leads):
     return {code: counts.get(code, 0) for code, _ in Lead.Status.choices}
 
 
+def sale_items_in_range(since, until=None, agent_ids=None):
+    """Pozycje sprzedaży z rozmów w okresie (opcjonalnie tylko wskazanych agentów)."""
+    items = SaleItem.objects.filter(activity__created_at__gte=since)
+    if until is not None:
+        items = items.filter(activity__created_at__lt=until)
+    if agent_ids is not None:
+        items = items.filter(activity__agent__in=agent_ids)
+    return items
+
+
+def sales_summary(since, until, agent_ids=None):
+    """Przychód w okresie i rozbicie na produkty (najwyższy przychód na górze)."""
+    items = sale_items_in_range(since, until, agent_ids)
+    revenue = items.aggregate(total=Sum("total"))["total"] or Decimal("0.00")
+    by_product = list(
+        items.order_by()
+        .values("product_name")
+        .annotate(quantity=Sum("quantity"), revenue=Sum("total"), unit=Max("unit"))
+        .order_by("-revenue", "product_name")
+    )
+    return revenue, by_product
+
+
 def agent_stats(users, since, until=None):
     """Skuteczność agentów: rozmowy od `since` (do `until`, bez niego) oraz bieżący stan ich leadów."""
     ids = [user.pk for user in users]
@@ -687,6 +738,15 @@ def agent_stats(users, since, until=None):
         )
     )
     activity = {row["agent"]: row for row in activity_rows}
+
+    # przychód ze sprzedaży w okresie (z pozycji sprzedaży rozmów danego agenta)
+    revenue_rows = (
+        sale_items_in_range(since, until, ids)
+        .order_by()
+        .values("activity__agent")
+        .annotate(revenue=Sum("total"))
+    )
+    revenue = {row["activity__agent"]: row["revenue"] for row in revenue_rows}
 
     lead_rows = (
         Lead.objects.filter(owner__in=ids)
@@ -721,6 +781,7 @@ def agent_stats(users, since, until=None):
                 "interested": interested,
                 "refused": a.get("refused", 0),
                 "sold": a.get("sold", 0),
+                "revenue": revenue.get(user.pk) or Decimal("0.00"),
                 "no_answer": a.get("no_answer", 0),
                 "callbacks": a.get("callbacks", 0),
                 "wrong_number": a.get("wrong_number", 0),
@@ -841,10 +902,13 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
         pool = None
         agent_ids = [user.pk]
 
+    revenue, by_product = sales_summary(since, until, agent_ids)
     return {
         "days": days,
         "date_from": date_from,
         "date_to": date_to,
+        "revenue": revenue,
+        "sales_by_product": by_product,
         "total_leads": leads.count(),
         "pool_leads": pool,
         "leads_by_status": lead_funnel(leads),
@@ -857,13 +921,13 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
     }
 
 
-LEADERBOARD_SORT_KEYS = ("sold", "calls", "interested")
+LEADERBOARD_SORT_KEYS = ("sold", "calls", "interested", "revenue")
 
 
 def leaderboard(date_from, date_to, sort="sold", me_id=None):
     """Ranking agentów w okresie: tylko liczby wyników, bez żadnych danych klientów.
 
-    Sortowanie malejąco wg `sort` (sold / calls / interested), remis rozstrzyga liczba
+    Sortowanie malejąco wg `sort` (sold / calls / interested / revenue), remis rozstrzyga liczba
     rozmów. Agenci z takim samym wynikiem i taką samą liczbą rozmów mają to samo miejsce.
     """
     since, _ = day_bounds(date_from)
@@ -884,6 +948,7 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
             "full_name": user.get_full_name() or user.username,
             "avatar": avatars.get(user.pk, ""),
             "sold": row["sold"],
+            "revenue": row["revenue"],
             "calls": row["calls"],
             "answered": row["answered"],
             "interested": row["interested"],

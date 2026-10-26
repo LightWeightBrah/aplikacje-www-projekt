@@ -4,7 +4,7 @@ CRM.initRanking = function initRanking() {
   const { api, esc, $ } = CRM;
   const me = CRM.currentUser() || {};
   const manager = me.role === "manager";
-  const UNIT = { sold: "sprzedanych", calls: "rozmów", interested: "zainteresowanych" };
+  const UNIT = { sold: "sprzedanych", calls: "rozmów", interested: "zainteresowanych", revenue: "przychodu" };
   let sort = "sold";
 
   const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -30,8 +30,9 @@ CRM.initRanking = function initRanking() {
     const today = d.date_from === d.date_to && d.date_from === iso(new Date());
     const when = today ? "Dziś" : "W tym okresie";
     const top = rows.filter((r) => r.rank === 1 && r[d.sort] > 0);
+    const score = top.length ? (d.sort === "revenue" ? CRM.money(top[0].revenue) : `${top[0][d.sort]} ${UNIT[d.sort]}`) : "";
     $("champion").textContent = top.length
-      ? `${when} prowadzi: ${top.map((r) => r.full_name).join(", ")} – ${top[0][d.sort]} ${UNIT[d.sort]}.`
+      ? `${when} prowadzi: ${top.map((r) => r.full_name).join(", ")} – ${score}.`
       : `${when} nikt jeszcze nie ma wyniku w tej kategorii. Pierwszy wpis zajmie pierwsze miejsce.`;
   }
 
@@ -42,16 +43,17 @@ CRM.initRanking = function initRanking() {
 
   function renderTable(rows, d) {
     const col = (key, label) => `<th class="num${d.sort === key ? " sorted" : ""}">${label}</th>`;
-    const cell = (r, key) => `<td class="num${d.sort === key ? " sorted" : ""}">${key === "answer_rate" ? pct(r[key]) : r[key]}</td>`;
+    const show = (r, key) => (key === "answer_rate" ? pct(r[key]) : key === "revenue" ? CRM.money(r[key]) : r[key]);
+    const cell = (r, key) => `<td class="num${d.sort === key ? " sorted" : ""}">${esc(show(r, key))}</td>`;
     $("rank-table").innerHTML =
-      `<thead><tr><th>Miejsce</th><th>Agent</th>${col("sold", "Sprzedane")}${col("calls", "Rozmowy")}` +
+      `<thead><tr><th>Miejsce</th><th>Agent</th>${col("sold", "Sprzedane")}${col("revenue", "Przychód")}${col("calls", "Rozmowy")}` +
       `${col("interested", "Zainteresowani")}<th class="num">Dodzwonienia</th></tr></thead><tbody>` +
       (rows.length ? rows.map((r) => {
         const medal = r.rank <= 3 && r[d.sort] > 0 ? ` medal m${r.rank}` : "";
         return `<tr class="${r.is_me ? "me" : ""}"><td><span class="place${medal}">${r.rank}</span></td>
           <td><span class="who-cell">${avatarHtml(r)}<strong>${esc(r.full_name)}</strong>${r.is_me ? ' <small class="you">to Ty</small>' : ""}</span></td>
-          ${cell(r, "sold")}${cell(r, "calls")}${cell(r, "interested")}${cell(r, "answer_rate")}</tr>`;
-      }).join("") : `<tr><td colspan="6" class="muted">Brak agentów do pokazania.</td></tr>`) + "</tbody>";
+          ${cell(r, "sold")}${cell(r, "revenue")}${cell(r, "calls")}${cell(r, "interested")}${cell(r, "answer_rate")}</tr>`;
+      }).join("") : `<tr><td colspan="7" class="muted">Brak agentów do pokazania.</td></tr>`) + "</tbody>";
   }
 
   async function load() {

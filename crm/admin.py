@@ -10,6 +10,7 @@ from .models import (
     LeadAssignment,
     LeadBatch,
     Product,
+    SaleItem,
     TeamRules,
 )
 
@@ -20,9 +21,16 @@ class ActivityInline(admin.TabularInline):
     readonly_fields = ("created_at",)
 
 
+class SaleItemInline(admin.TabularInline):
+    model = SaleItem
+    extra = 0
+    readonly_fields = ("product_name", "unit", "unit_price", "quantity", "total")
+    can_delete = False
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("name", "is_active")
+    list_display = ("name", "price", "unit", "is_active")
     list_filter = ("is_active",)
     search_fields = ("name",)
 
@@ -61,6 +69,7 @@ class ActivityAdmin(admin.ModelAdmin):
     list_display = ("lead", "agent", "outcome", "created_at")
     list_filter = ("outcome", "agent")
     search_fields = ("lead__contact_name", "lead__phone", "note")
+    inlines = [SaleItemInline]
 
 
 @admin.register(LeadAssignment)

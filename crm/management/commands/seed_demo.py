@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -21,7 +22,12 @@ from crm.services import register_activity
 
 BATCH_NAME = "Demo - baza startowa"
 
-PRODUCTS = ("Internet światłowodowy", "Abonament komórkowy", "Leasing samochodowy")
+# nazwa, cena jednostkowa (zł), jednostka; ceny w katalogu zmienia manager na stronie „Produkty”
+PRODUCTS = (
+    ("Internet światłowodowy", Decimal("1200.00"), "umowa"),
+    ("Abonament komórkowy", Decimal("49.00"), "szt."),
+    ("Leasing samochodowy", Decimal("3500.00"), "umowa"),
+)
 
 COMPANIES = (
     ("Alfa Systemy Sp. z o.o.", "5250000001", "0000100001", "Olsztyn"),
@@ -74,7 +80,15 @@ class Command(BaseCommand):
         agent2 = User.objects.get(username="agent2")
         manager = User.objects.get(username="manager1")
 
-        products = [Product.objects.get_or_create(name=name)[0] for name in PRODUCTS]
+        products = []
+        for name, price, unit in PRODUCTS:
+            product, _ = Product.objects.get_or_create(
+                name=name, defaults={"price": price, "unit": unit}
+            )
+            if product.price == 0:  # produkt z wcześniejszego seeda, sprzed wprowadzenia cen
+                product.price, product.unit = price, unit
+                product.save(update_fields=["price", "unit"])
+            products.append(product)
         companies = [
             Company.objects.get_or_create(
                 name=name, defaults={"nip": nip, "krs": krs, "city": city}
@@ -171,13 +185,20 @@ class Command(BaseCommand):
         )
 
         # Dzisiejsze sprzedaże, żeby ranking "Dziś" nie był pusty na pokazie.
-        for owner, names in (
-            (agent1, ("Julia Adamska", "Kamil Borkowski")),
-            (agent2, ("Lena Czerwińska",)),
+        # (agent, klient, co sprzedano: pary indeks produktu + ilość)
+        for owner, contact_name, basket in (
+            (agent1, "Julia Adamska", ((0, 1), (1, 3))),
+            (agent1, "Kamil Borkowski", ((2, 1),)),
+            (agent2, "Lena Czerwińska", ((1, 5),)),
         ):
-            for contact_name in names:
-                lead = new_lead(contact_name, owner=owner)
-                register_activity(lead, owner, Activity.Outcome.SOLD, "Podpisana umowa")
+            lead = new_lead(contact_name, owner=owner)
+            register_activity(
+                lead,
+                owner,
+                Activity.Outcome.SOLD,
+                "Podpisana umowa",
+                sale_items=[(products[index], quantity) for index, quantity in basket],
+            )
 
         # Nowy agent z wyłączonym podglądem rankingu (pokaz blokady 403).
         agent3, created = User.objects.get_or_create(username="agent3")

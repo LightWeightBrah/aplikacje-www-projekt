@@ -33,13 +33,14 @@
 <div id="ranking-area">
     <div class="tabs" id="tabs" role="tablist">
         <button type="button" role="tab" data-sort="sold" aria-selected="true">Sprzedane</button>
+        <button type="button" role="tab" data-sort="revenue" aria-selected="false">Przychód</button>
         <button type="button" role="tab" data-sort="calls" aria-selected="false">Rozmowy</button>
         <button type="button" role="tab" data-sort="interested" aria-selected="false">Zainteresowani</button>
     </div>
     <section class="card">
         <p class="champion" id="champion" aria-live="polite"></p>
         <div class="table-wrap"><table class="table rank-table" id="rank-table"></table></div>
-        <p class="card-desc rank-note">Ranking pokazuje tylko liczby wyników. Przy remisie wyżej jest osoba z większą liczbą rozmów.</p>
+        <p class="card-desc rank-note">Ranking pokazuje tylko liczby wyników i kwoty sprzedaży. Przy remisie wyżej jest osoba z większą liczbą rozmów.</p>
     </section>
 </div>
 
@@ -56,5 +57,5 @@
     <div id="access-list"></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=55"></script>
+{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=58"></script>
 <script>CRM.initRanking();</script>{% endblock %}
