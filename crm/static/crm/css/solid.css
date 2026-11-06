@@ -516,3 +516,8 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 .step-del{border:0;background:none;color:var(--muted);font-size:1.15rem;line-height:1;padding:.2rem .4rem;border-radius:8px;cursor:pointer}
 .step-del:hover:not(:disabled){color:#ef4444;background:var(--track)}
 .step-del:disabled{opacity:.3;cursor:default}
+
+/* „Moje ustawienia”: co widać na ekranie „Dzwonienie” */
+.view-prefs{border:1px solid var(--line);border-radius:12px;padding:.7rem .9rem .8rem;margin:0;display:flex;flex-direction:column;gap:.6rem}
+.view-prefs legend{font-weight:700;font-size:.9rem;padding:0 .35rem}
+.view-prefs>small{margin-top:-.2rem}

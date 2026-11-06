@@ -171,9 +171,10 @@
     hint.innerHTML = parts.length ? `Najpierw: ${parts.join(", ")}` : "Teraz: nowa firma z Twojej bazy";
   }
   /* Ile jeszcze firm do obdzwonienia: własna baza (pasek postępu) i wspólna pula zespołu */
+  const showPart = (part) => !CRM.showPart || CRM.showPart(part);   // „Moje ustawienia”: drobne napisy można schować
   function renderBase() {
     const b = summary && summary.base, box = $("base-progress");
-    if (!b) { box.hidden = true; return; }
+    if (!b || !showPart("base")) { box.hidden = true; return; }
     box.hidden = false;
     const fmt = (n) => Number(n || 0).toLocaleString("pl-PL");
     const own = b.total ? `<div class="bp-text"><span>Twoja baza</span><b>zostało ${fmt(b.left)} z ${fmt(b.total)}</b></div>
@@ -213,7 +214,7 @@
     const hourNow = new Date().getHours();
     const hours = t.minutes_by_hour.filter((h) => (h.hour >= 8 && h.hour <= 18) || h.minutes > 0);
     const pctHour = Math.min(100, Math.round((t.minutes_this_hour / goal) * 100));
-    const minutesBlock = t.dialer_used || t.minutes_today
+    const minutesBlock = !showPart("goal") ? "" : t.dialer_used || t.minutes_today
       ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${CRM.talk(t.minutes_this_hour)} / ${goal} min</b></div>
           <div class="g-track"><i class="${t.minutes_this_hour >= goal ? "ok" : ""}" style="width:${pctHour}%"></i></div>
           <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div class="${h.hour === hourNow ? "now" : ""}" title="${h.hour}:00 – ${CRM.talk(h.minutes)}${h.hour === hourNow ? " (teraz)" : ""}"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
@@ -243,7 +244,7 @@
     const br = w.break_minutes ? `, w tym przerwy ${w.break_minutes} min` : "";
     return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min${br})`;
   }
-  document.addEventListener("crm:view", renderSide);
+  document.addEventListener("crm:view", () => { renderSide(); renderBase(); renderDialbar(); });
 
   /* ================= DIALER (pasek na dole) ================= */
   let callTimer = null, callStart = null;
@@ -265,7 +266,7 @@
     if (dialing && !callTimer) { callStart = Date.now(); callTimer = setInterval(tick, 1000); tick(); }
     if (!dialing && callTimer) { clearInterval(callTimer); callTimer = null; }
     const t = summary && summary.today;
-    $("db-min").textContent = t ? `Dziś: ${t.calls} tel. · ${CRM.talk(t.minutes_today)} rozmów · ta godzina ${CRM.talk(t.minutes_this_hour)} / ${t.goal_minutes_per_hour} min` : "";
+    $("db-min").textContent = t && showPart("footer") ? `Dziś: ${t.calls} tel. · ${CRM.talk(t.minutes_today)} rozmów · ta godzina ${CRM.talk(t.minutes_this_hour)} / ${t.goal_minutes_per_hour} min` : "";
     const btn = $("call-btn");
     if (btn) { btn.classList.toggle("busy", !!dialing); btn.querySelector("span").textContent = dialing ? "Dzwonię…" : "Zadzwoń"; }
   }

@@ -17,7 +17,9 @@ CRM.initReminders = function initReminders() {
   const SEEN_KEY = "crm_rem_seen_" + user.username;
   const BROWSER_KEY = "crm_rem_browser_" + user.username;
   const CFG_KEY = "crm_rem_cfg_" + user.username;
-  const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true, undoBar: true, keys: true };   // lead = sekundy przed terminem
+  // lead = sekundy przed terminem; goal / base / footer = drobne napisy na ekranie „Dzwonienie” (można schować)
+  const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true, undoBar: true, keys: true, goal: true, base: true, footer: true };
+  const VIEW_PREFS = { goal: "pref-goal", base: "pref-base", footer: "pref-footer" };
   const baseTitle = document.title;
   const box = $("reminders");
   box.addEventListener("click", (e) => {
@@ -49,6 +51,8 @@ CRM.initReminders = function initReminders() {
   CRM.dayBarEnabled = () => cfg().dayBar !== false;
   /* Pasek „Cofnij” po zapisie wyniku: domyślnie włączony, można go wyłączyć */
   CRM.undoBarEnabled = () => cfg().undoBar !== false;
+  /* Czy pokazać drobny dodatek na ekranie „Dzwonienie”: "goal" (cel minut), "base" (ile zostało w bazie), "footer" (liczniki na dole) */
+  CRM.showPart = (name) => cfg()[name] !== false;
   /* Skróty klawiszowe (N, Z, 1–8, Enter) – można wyłączyć dla mniej technicznych agentów */
   CRM.keysEnabled = () => cfg().keys !== false;
   document.body.classList.toggle("no-keys", !CRM.keysEnabled());   // na każdej stronie (np. „/” w wyszukiwarce)
@@ -374,6 +378,7 @@ CRM.initReminders = function initReminders() {
     $("notif-daybar").checked = c.dayBar !== false;
     $("notif-undo").checked = c.undoBar !== false;
     $("notif-keys").checked = c.keys !== false;
+    Object.entries(VIEW_PREFS).forEach(([k, id]) => { if ($(id)) $(id).checked = c[k] !== false; });
     $("notif-min").value = Math.floor(c.lead / 60);
     $("notif-sec").value = c.lead % 60;
     paintBrowserButton();
@@ -399,6 +404,13 @@ CRM.initReminders = function initReminders() {
       document.dispatchEvent(new CustomEvent("crm:view"));   // kolejka od razu pokazuje / chowa pasek
     });
     $("notif-undo").addEventListener("change", () => saveCfg({ undoBar: $("notif-undo").checked }));
+    Object.entries(VIEW_PREFS).forEach(([k, id]) => {
+      if (!$(id)) return;
+      $(id).addEventListener("change", () => {
+        saveCfg({ [k]: $(id).checked });
+        document.dispatchEvent(new CustomEvent("crm:view"));   // ekran „Dzwonienie” od razu chowa / pokazuje napis
+      });
+    });
     $("notif-keys").addEventListener("change", () => {
       saveCfg({ keys: $("notif-keys").checked });
       document.body.classList.toggle("no-keys", !$("notif-keys").checked);   // chowa też „/” w wyszukiwarce
