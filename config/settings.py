@@ -10,22 +10,59 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+def _load_env_file(path):
+    """Plik .env (KLUCZ=wartość w każdej linii) – na serwerze trzyma sekrety poza repo.
+
+    Lokalnie pliku nie ma i wszystko działa jak dotąd (tryb deweloperski).
+    Zmienne ustawione już w środowisku mają pierwszeństwo.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_file(BASE_DIR / ".env")
+
+# Lokalnie: tryb deweloperski. Na serwerze w .env: DJANGO_DEBUG=0, własny DJANGO_SECRET_KEY i adres.
+DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+# Serwer firmy (osobno od DEBUG, bo testy Django zawsze wyłączają DEBUG): bez kont demo i podpowiedzi haseł.
+IS_SERVER = not DEBUG
+# Aktywacja urządzeń (crm/device_lock.py): na serwerze CRM otwiera się tylko na urządzeniach
+# aktywowanych kodem od managera. Domyślnie włączona na serwerze, lokalnie wyłączona.
+DEVICE_LOCK = os.environ.get("DJANGO_DEVICE_LOCK", "1" if IS_SERVER else "0") == "1"
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-@1ljisvv(+n0*wun0gm3==@clh7joubh8gicu09w7bu^@e3)u5'
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    'django-insecure-@1ljisvv(+n0*wun0gm3==@clh7joubh8gicu09w7bu^@e3)u5',  # tylko lokalnie
+)
+if not DEBUG and SECRET_KEY.startswith("django-insecure"):
+    raise RuntimeError("Na serwerze ustaw DJANGO_SECRET_KEY w pliku .env (instrukcja: docs/HOSTING.md).")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# np. DJANGO_ALLOWED_HOSTS=solidcrm.eu.pythonanywhere.com
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
+CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS]
 
-ALLOWED_HOSTS = []
+if not DEBUG:
+    # serwer stoi za HTTPS (PythonAnywhere): ciasteczka tylko przez szyfrowane połączenie
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True   # wejście przez http:// przekierowuje na https://
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
 
 
 # Application definition
@@ -46,6 +83,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'crm.device_lock.DeviceLockMiddleware',   # tylko aktywowane urządzenia (na serwerze)
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -120,6 +158,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+# na serwerze: `manage.py collectstatic` zbiera tu CSS/JS, a PythonAnywhere podaje je pod /static/
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
 # Email
@@ -127,15 +167,20 @@ STATIC_URL = 'static/'
 
 MAILERS = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        # lokalnie maile lądują w konsoli. Na serwerze SMTP – ale CRM wysyła tylko oferty i tylko
+        # przy ustawionym EMAIL_HOST (OFFER_EMAIL_ENABLED niżej), więc bez poczty nic nie wychodzi.
+        'BACKEND': 'django.core.mail.backends.console.EmailBackend' if DEBUG
+        else 'django.core.mail.backends.smtp.EmailBackend',
     },
 }
 
 # --- Reguły cyklu życia leadów (CRM) ---
-LEAD_MAX_ATTEMPTS_PER_AGENT = 3        # ile prób dodzwonienia ma jeden agent
+LEAD_MAX_ATTEMPTS_PER_AGENT = 5        # ile prób dodzwonienia ma jeden agent
 LEAD_UNREACHABLE_AFTER_AGENTS = 5      # ilu różnych agentów musi nie zdołać, by lead był "nieosiągalny"
 LEAD_CLAIM_TIMEOUT_HOURS = 24          # po ilu godzinach nietknięty lead wraca do puli
-CALLBACK_RETRY_MINUTES = 60            # za ile minut system ponawia kontakt, gdy klient nie odebrał w umówionym terminie
+# Gdy klient nie odebrał w umówionym terminie: kolejne próby za 15 min, 1 h, 2 h, potem co 1 dzień
+CALLBACK_RETRY_STEPS = [15, 60, 120, 1440]
+WORK_DAYS = "12345"                    # dni pracy: 1 = poniedziałek … 7 = niedziela (pon–pt)
 LEAD_UNREACHABLE_COOLDOWN_DAYS = 30   # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
 
 # --- Django REST Framework ---
@@ -153,6 +198,11 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # parowanie telefonu (6-cyfrowy kod) ma limit prób, żeby kodu nie dało się zgadnąć
+    # logowanie: najwyżej 10 prób na minutę z jednego adresu (zgadywanie haseł);
+    # w testach wyżej, bo setki testów logują się z tego samego „adresu”
+    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min', 'device_activate': '10/min',
+                               'login': '10000/min' if 'test' in __import__('sys').argv else '10/min'},
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
@@ -170,3 +220,23 @@ SIMPLE_JWT = {
     "CHECK_REVOKE_TOKEN": True,
     "UPDATE_LAST_LOGIN": True,  # panel użytkowników pokazuje ostatnie logowanie
 }
+
+# Wysyłka ofert e-mailem: działa, gdy w środowisku jest ustawiony serwer poczty (EMAIL_HOST itd.).
+# Bez niego CRM nie wysyła sam, tylko przygotowuje gotową wiadomość (przycisk „Otwórz w poczcie” / „Kopiuj”).
+_os = os
+
+if _os.environ.get("EMAIL_HOST"):
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "OPTIONS": {
+                "host": _os.environ["EMAIL_HOST"],
+                "port": int(_os.environ.get("EMAIL_PORT", "587")),
+                "username": _os.environ.get("EMAIL_HOST_USER", ""),
+                "password": _os.environ.get("EMAIL_HOST_PASSWORD", ""),
+                "use_tls": _os.environ.get("EMAIL_USE_TLS", "1") == "1",
+            },
+        },
+    }
+DEFAULT_FROM_EMAIL = _os.environ.get("DEFAULT_FROM_EMAIL", _os.environ.get("EMAIL_HOST_USER") or "crm@localhost")
+OFFER_EMAIL_ENABLED = bool(_os.environ.get("EMAIL_HOST"))

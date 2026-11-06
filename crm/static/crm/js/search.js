@@ -84,6 +84,7 @@ CRM.initSearch = function initSearch() {
   clearBtn.addEventListener("click", () => { reset(); input.focus(); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (CRM.keysEnabled && !CRM.keysEnabled()) return;   // skróty wyłączone w „Moje ustawienia”
     const t = e.target;
     if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
     e.preventDefault(); input.focus(); input.select();

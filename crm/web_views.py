@@ -19,7 +19,38 @@ def lead_list(request):
 
 def login_page(request):
     """Ekran logowania aplikacji. Logowanie robi JavaScript przez /api/token/."""
-    return render(request, "crm/login.html")
+    from django.conf import settings
+    # podpowiedź z kontami demo tylko lokalnie – na serwerze firmy jej nie ma
+    return render(request, "crm/login.html", {"show_demo": not settings.IS_SERVER})
+
+
+def activate_page(request):
+    """Ekran „To urządzenie nie ma dostępu” z polem na kod aktywacji (crm/device_lock.py)."""
+    from django.conf import settings
+    from django.shortcuts import redirect
+
+    from .device_lock import device_for
+
+    if not settings.DEVICE_LOCK or device_for(request):
+        return redirect("/crm/login/")   # blokada wyłączona albo urządzenie już aktywne
+    return render(request, "crm/activate.html")
+
+
+def dialer_apk(request):
+    """Aplikacja Solid Dialer do pobrania prosto na telefon: /crm/dialer.apk.
+
+    Plik nie jest w repo (to zbudowany program): wrzuca się go na serwer do folderu
+    `downloads/solid-dialer.apk` (instrukcja: docs/HOSTING.md).
+    """
+    from django.conf import settings
+    from django.http import FileResponse, HttpResponse
+
+    apk = settings.BASE_DIR / "downloads" / "solid-dialer.apk"
+    if not apk.exists():
+        return HttpResponse("Aplikacji Solid Dialer jeszcze tu nie ma – poproś managera.", status=404,
+                            content_type="text/plain; charset=utf-8")
+    return FileResponse(apk.open("rb"), as_attachment=True, filename="solid-dialer.apk",
+                        content_type="application/vnd.android.package-archive")
 
 
 def queue_page(request):
@@ -60,6 +91,11 @@ def ranking_page(request):
 def users_page(request):
     """Szkielet zarządzania użytkownikami (tylko manager). Dane idą z /api/users/."""
     return render(request, "crm/users.html")
+
+
+def calendar_page(request):
+    """Kalendarz miesięczny agenta. Dane z /api/my-leads/month/ (token JWT)."""
+    return render(request, "crm/calendar.html")
 
 
 def plan_page(request):

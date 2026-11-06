@@ -17,7 +17,7 @@ CRM.initImport = function initImport() {
     $("drop-title").textContent = f ? f.name : "Wybierz plik .xlsx albo upuść go tutaj";
     $("drop-hint").textContent = f
       ? (f.size / 1024).toFixed(0) + " KB · kliknij, żeby wybrać inny"
-      : "Pierwszy arkusz, pierwszy wiersz = nagłówki. Max 5 MB i 5000 wierszy.";
+      : "Pierwszy arkusz. Max 5 MB i 5000 wierszy.";
     zone.classList.toggle("has-file", !!f);
   }
   function showImportError(msg) {
@@ -54,6 +54,17 @@ CRM.initImport = function initImport() {
     } catch { /* lista produktów jest opcjonalna */ }
   })();
 
+  /* Agenci do wyboru „Dla kogo jest ta baza” */
+  (async () => {
+    try {
+      const r = await api("/api/agents/");
+      if (!r.ok) return;
+      const agents = (await r.json()).filter((a) => a.role === "agent");
+      $("assigned-to").insertAdjacentHTML("beforeend",
+        agents.map((a) => `<option value="${a.id}">${esc(a.full_name || a.username)}</option>`).join(""));
+    } catch { /* bez listy baza trafi do wspólnej puli */ }
+  })();
+
   /* Błędy walidacji DRF ({file: [...]}) albo {detail: "..."} zamieniamy na tekst. */
   function errorText(data, status) {
     if (data && data.detail) return data.detail;
@@ -77,10 +88,16 @@ CRM.initImport = function initImport() {
       ["Zaimportowane", d.created ?? 0],
       ["Duplikaty", (d.duplicates || []).length],
       ["Błędy", (d.errors || []).length],
+      ["Poprawione", (d.warnings || []).length],
     ].map(([l, v]) => `<span>${esc(l)} <b>${v}</b></span>`).join("");
+    const sel = $("assigned-to"), who = sel.value ? sel.options[sel.selectedIndex].textContent : "";
     $("result-batch").innerHTML = d.batch
-      ? `Utworzono bazę <b>${esc(d.batch.name)}</b>. Leady są w puli: przypiszesz je w <a href="/crm/manager/">panelu managera</a>.`
+      ? `Utworzono bazę <b>${esc(d.batch.name)}</b>${d.layout === "ceidg" ? " (rozpoznano układ bazy z CEIDG)" : ""}. ` +
+        (who ? `Baza jest dla agenta <b>${esc(who)}</b>: dostanie te firmy przyciskiem „Daj kolejnego leada”.` : `Leady są we wspólnej puli dla wszystkich agentów.`)
       : "";
+    const warns = d.warnings || [];
+    $("result-warnings").hidden = !warns.length;
+    $("warnings-table").innerHTML = warns.length ? issuesTable(warns, [["Wiersz", "row"], ["Co poprawiono", "message"]]) : "";
     const dups = d.duplicates || [], errs = d.errors || [];
     $("result-dups").hidden = !dups.length;
     $("dups-table").innerHTML = dups.length
@@ -99,6 +116,7 @@ CRM.initImport = function initImport() {
     body.append("file", file);
     if ($("batch-name").value.trim()) body.append("name", $("batch-name").value.trim());
     if ($("product").value) body.append("product", $("product").value);
+    if ($("assigned-to").value) body.append("assigned_to", $("assigned-to").value);
     const btn = $("import-btn");
     btn.disabled = true; btn.textContent = "Importuję…";
     try {

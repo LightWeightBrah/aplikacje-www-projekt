@@ -5,3 +5,9 @@ __pycache__/
 .env
 .idea/
 .vscode/
+.claude/
+
+# zbudowana aplikacja Solid Dialer (wrzucana ręcznie na serwer)
+downloads/
+# zebrane pliki statyczne na serwerze (collectstatic)
+staticfiles/

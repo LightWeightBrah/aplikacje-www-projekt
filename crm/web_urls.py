@@ -8,6 +8,7 @@ urlpatterns = [
     path("", web_views.dashboard, name="dashboard"),
     path("queue/", web_views.queue_page, name="queue"),
     path("plan/", web_views.plan_page, name="plan"),
+    path("calendar/", web_views.calendar_page, name="calendar"),
     path("login/", web_views.login_page, name="login"),
     path("manager/", web_views.manager_page, name="manager"),
     path("ranking/", web_views.ranking_page, name="ranking"),
@@ -17,4 +18,6 @@ urlpatterns = [
     path("settings/", web_views.settings_page, name="settings"),
     path("leads/", web_views.lead_list, name="lead-list"),
     path("sw.js", web_views.service_worker, name="sw"),
+    path("dialer.apk", web_views.dialer_apk, name="dialer-apk"),
+    path("activate/", web_views.activate_page, name="activate"),
 ]

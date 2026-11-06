@@ -1,0 +1,28 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brak dostępu – Solid CRM</title>
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="color-scheme" content="light dark">
+    <script>try{var t=localStorage.getItem("crm_theme")||"dark";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="dark"}</script>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=89">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=89">
+</head>
+<body class="auth-page">
+    <main class="auth-card">
+        <div class="logo logo-lg"><span class="logo-mark">S</span><span class="logo-text">SOLID<b>CRM</b></span></div>
+        <h1>To urządzenie nie ma dostępu</h1>
+        <p class="muted">CRM działa tylko na komputerach i telefonach aktywowanych przez managera. Jeśli pracujesz w zespole, poproś managera o <b>kod aktywacji</b> i wpisz go niżej – zrobisz to tylko raz na tym urządzeniu.</p>
+        <form id="act-form" novalidate>
+            <label>Kod aktywacji<input id="act-code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="np. K7Q4-M9XP" required autofocus></label>
+            <label>Nazwa urządzenia<input id="act-name" maxlength="80" autocomplete="off" placeholder="np. Laptop Jana" required></label>
+            <p id="act-error" class="form-error" role="alert" hidden></p>
+            <button class="btn btn-primary btn-block" type="submit">Aktywuj to urządzenie</button>
+        </form>
+    </main>
+    <script src="{% static 'crm/js/app.js' %}?v=89"></script>
+    <script>CRM.initActivate();</script>
+</body>
+</html>

@@ -30,6 +30,10 @@ class Command(BaseCommand):
             self.stdout.write(f"Grupa {name}: {'utworzona' if created else 'już istnieje'}")
 
         if options["demo"]:
+            from django.conf import settings
+            from django.core.management.base import CommandError
+            if settings.IS_SERVER:
+                raise CommandError("Konta demo tylko lokalnie (DJANGO_DEBUG=1). Na serwerze użyj: manage.py start_firm")
             User = get_user_model()
             for username, role in DEMO_USERS:
                 user, created = User.objects.get_or_create(username=username)

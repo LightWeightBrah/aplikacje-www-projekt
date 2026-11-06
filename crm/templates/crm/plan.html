@@ -1,10 +1,11 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Plan dnia – LeadCRM{% endblock %}
+{% block title %}Kalendarz – Solid CRM{% endblock %}
 {% block nav_plan %}active{% endblock %}
 {% block content %}
 <header class="page-head">
     <div>
+        <div class="cal-tabs" style="margin-bottom:.6rem"><a href="/crm/plan/" class="active">Dzień</a><a href="/crm/calendar/">Miesiąc</a></div>
         <h1>Plan dnia</h1>
         <p class="muted" id="subtitle">Ładowanie…</p>
     </div>
@@ -32,5 +33,5 @@
 </section>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=59"></script>
+{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=89"></script>
 <script>CRM.initPlan();</script>{% endblock %}

@@ -1,6 +1,6 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Panel managera – LeadCRM{% endblock %}
+{% block title %}Zespół – Solid CRM{% endblock %}
 {% block nav_manager %}active{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -8,18 +8,32 @@
         <h1>Panel managera</h1>
         <p class="muted" id="mgr-sub">Wszystkie leady zespołu: filtrowanie, przypisywanie, pula</p>
     </div>
-    <div class="head-actions">
-        <button type="button" class="btn btn-secondary" id="reassign-open">Przepisz leady agenta…</button>
-        <button type="button" class="btn btn-secondary" id="export-btn">Eksport do Excela</button>
-    </div>
 </header>
 <p id="page-error" class="form-error" hidden></p>
 
+<section class="card att-card" id="att-card" hidden>
+    <div class="att-head">
+        <div><h2>Obecność i minuty rozmów</h2><p class="muted small" id="att-sum"></p></div>
+        <div class="att-tools"><input type="date" id="att-date" class="select" aria-label="Dzień"><button type="button" class="btn btn-secondary" id="att-today">Dziś</button></div>
+    </div>
+    <div class="table-wrap"><table class="table att-table">
+        <thead><tr><th>Agent</th><th>Przyszedł</th><th>Wyszedł</th><th class="num">Czas pracy</th><th class="num">Przerwy</th><th class="num">Telefony</th><th class="num">Minuty / powinno być</th></tr></thead>
+        <tbody id="att-list"></tbody>
+    </table></div>
+    <p class="card-desc">Przyszedł = zalogowanie albo pierwszy ruch w CRM tego dnia. Wyszedł = wylogowanie; godzina ze znakiem „?” to ostatni ruch agenta, który się nie wylogował (np. wyłączył laptopa). Liczą się tylko prawdziwe ruchy (dzwonienie, zapis rozmowy, „Następny klient”) – karta zostawiona otwarta na noc nie nabija czasu. Przerwa = co najmniej 15 min bez ruchu; pokazujemy ją, ale czas pracy jej nie odejmuje. Powinno być 15 min rozmów na każdą godzinę pracy (4 h → 60 min).</p>
+</section>
+
+<div class="tabs-row">
 <div class="tabs" id="tabs" role="tablist">
     <button type="button" role="tab" data-tab="all" aria-selected="true">Wszystkie</button>
     <button type="button" role="tab" data-tab="overdue" aria-selected="false">Zaległe <small id="late-count"></small></button>
     <button type="button" role="tab" data-tab="pool" aria-selected="false">Pula <small id="pool-count"></small></button>
     <button type="button" role="tab" data-tab="unreachable" aria-selected="false">Nieosiągalni <small id="unr-count"></small></button>
+</div>
+<div class="head-actions">
+    <button type="button" class="btn btn-secondary" id="reassign-open">Przepisz leady agenta…</button>
+    <button type="button" class="btn btn-secondary" id="export-btn">Eksport do Excela</button>
+</div>
 </div>
 
 <div class="card info-bar" id="late-bar" hidden>
@@ -97,5 +111,7 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=59"></script>
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=89"></script>
+<script src="{% static 'crm/js/attendance.js' %}?v=89"></script>
+<script>CRM.initAttendance();</script>
 <script>CRM.initManager();</script>{% endblock %}

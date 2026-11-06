@@ -9,8 +9,17 @@ from rest_framework import serializers
 
 from .excel import MAX_IMPORT_BYTES
 from .roles import AGENT, MANAGER
-from .models import Activity, Company, Lead, LeadAssignment, LeadBatch, Product, SaleItem, TeamRules
-from .rules import FIELD_LIMITS, attempt_times, get_rules, suggest_retry
+from .models import (
+    OPERATOR_CODES, Activity, Company, Lead, LeadAssignment, LeadBatch, Product, SaleItem, TeamRules,
+)
+from .rules import (
+    CALLBACK_STEP_LIMITS,
+    CALLBACK_STEPS_MAX,
+    FIELD_LIMITS,
+    attempt_times,
+    get_rules,
+    suggest_retry,
+)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -30,7 +39,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SaleItem
-        fields = ("id", "product", "product_name", "unit", "unit_price", "quantity", "total")
+        fields = ("id", "product", "product_name", "unit", "unit_price", "quantity", "total", "term_months", "promo", "commission")
         read_only_fields = fields
 
 
@@ -39,6 +48,9 @@ class SaleLineSerializer(serializers.Serializer):
 
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
     quantity = serializers.IntegerField(min_value=1, max_value=MAX_SALE_QUANTITY)
+    # taryfy: okres umowy (z niego liczy się prowizja) i czy z promocją
+    term_months = serializers.ChoiceField(choices=(24, 36), required=False, allow_null=True)
+    promo = serializers.BooleanField(required=False, default=False)
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -49,10 +61,17 @@ class CompanySerializer(serializers.ModelSerializer):
 
 
 class LeadBatchSerializer(serializers.ModelSerializer):
+    assigned_to_name = serializers.CharField(source="assigned_to.username", read_only=True, allow_null=True)
+
     class Meta:
         model = LeadBatch
         fields = "__all__"
         read_only_fields = ("created_by", "created_at")
+
+    def validate_assigned_to(self, user):
+        if user is not None and not user.is_active:
+            raise serializers.ValidationError("To konto jest nieaktywne.")
+        return user
 
 
 class ActivityNoteSerializer(serializers.Serializer):
@@ -64,6 +83,8 @@ class ActivityNoteSerializer(serializers.Serializer):
 class ActivitySerializer(serializers.ModelSerializer):
     # Kto prowadził rozmowę (do historii kontaktów)
     agent_name = serializers.SerializerMethodField()
+    # Nazwa klienta (firma albo osoba) – lista „Historia dziś” w dzwonieniu
+    lead_name = serializers.CharField(source="lead.display_name", read_only=True)
 
     # Pola tylko do zapisu: kiedy i w jakiej sprawie oddzwonić (trafiają do leada)
     next_contact_at = serializers.DateTimeField(
@@ -77,6 +98,10 @@ class ActivitySerializer(serializers.ModelSerializer):
     sale_lines = SaleLineSerializer(many=True, write_only=True, required=False)
     sale_items = serializers.SerializerMethodField()
     sale_total = serializers.SerializerMethodField()
+    # Tylko do zapisu: czy klient wie, skąd dzwonimy (przy umówionym oddzwonieniu)
+    introduced = serializers.BooleanField(write_only=True, required=False, allow_null=True, default=None)
+    # Krótko o ofercie wysłanej w tej rozmowie (null = bez oferty)
+    offer = serializers.SerializerMethodField()
 
     class Meta:
         model = Activity
@@ -85,8 +110,11 @@ class ActivitySerializer(serializers.ModelSerializer):
             "lead",
             "agent",
             "agent_name",
+            "lead_name",
             "outcome",
+            "skip_reason",
             "note",
+            "call_seconds",
             "created_at",
             "planned_at",
             "rescheduled_to",
@@ -95,12 +123,29 @@ class ActivitySerializer(serializers.ModelSerializer):
             "sale_lines",
             "sale_items",
             "sale_total",
+            "introduced",
+            "offer",
         )
-        read_only_fields = ("agent", "created_at", "planned_at", "rescheduled_to")
+        # call_seconds ustawi aplikacja dialera osobnym endpointem, nie formularz rozmowy
+        read_only_fields = ("agent", "created_at", "planned_at", "rescheduled_to", "call_seconds")
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_agent_name(self, obj):
         return obj.agent.username if obj.agent else None
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_offer(self, obj):
+        if obj.outcome != Activity.Outcome.OFFER:
+            return None
+        offer = getattr(obj, "offer", None)
+        if offer is None:
+            return None
+        return {
+            "id": offer.pk, "product_name": offer.product_name, "quantity": offer.quantity,
+            "term_months": offer.term_months, "promo": offer.promo, "monthly_total": str(offer.monthly_total),
+            "commission": str(offer.commission), "client_email": offer.client_email,
+            "recipient": offer.recipient, "sent": offer.sent,
+        }
 
     @extend_schema_field(SaleItemSerializer(many=True))
     def get_sale_items(self, obj):
@@ -127,13 +172,18 @@ class ActivitySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Produkt „{product.name}” jest wyłączony ze sprzedaży."
                 )
-            merged[product.pk] = (product, merged.get(product.pk, (product, 0))[1] + line["quantity"])
-        for product, quantity in merged.values():
+            key = (product.pk, line.get("term_months"), bool(line.get("promo")))
+            prev = merged.get(key, (product, 0))[1]
+            merged[key] = (product, prev + line["quantity"])
+        for (_pk, term, promo), (product, quantity) in merged.items():
             if quantity > MAX_SALE_QUANTITY:
                 raise serializers.ValidationError(
                     f"Ilość produktu „{product.name}” nie może przekraczać {MAX_SALE_QUANTITY}."
                 )
-        return [{"product": product, "quantity": quantity} for product, quantity in merged.values()]
+        return [
+            {"product": product, "quantity": quantity, "term_months": term, "promo": promo}
+            for (_pk, term, promo), (product, quantity) in merged.items()
+        ]
 
     def validate_next_contact_at(self, value):
         if value and value < timezone.now():
@@ -148,10 +198,17 @@ class ActivitySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Wynik 'Prosił o oddzwonienie' wymaga next_contact_at."
             )
+        if attrs["outcome"] == Activity.Outcome.OFFER and not attrs.get("next_contact_at"):
+            raise serializers.ValidationError("Wysłana oferta wymaga terminu follow-upu (next_contact_at).")
         if attrs["outcome"] == Activity.Outcome.INTERESTED and not attrs.get("next_contact_at"):
             raise serializers.ValidationError(
                 "Wynik 'Zainteresowany' wymaga next_contact_at (kiedy ponownie zadzwonić)."
             )
+        skipped = attrs["outcome"] == Activity.Outcome.SKIPPED
+        if skipped and not attrs.get("skip_reason"):
+            raise serializers.ValidationError("Wybierz, dlaczego pomijasz tego leada.")
+        if attrs.get("skip_reason") and not skipped:
+            raise serializers.ValidationError("Powód pominięcia (skip_reason) podaje się tylko przy wyniku 'skipped'.")
         lines = attrs.get("sale_lines") or []
         if lines and attrs["outcome"] != Activity.Outcome.SOLD:
             raise serializers.ValidationError(
@@ -191,6 +248,12 @@ class LeadSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True, allow_null=True)
     company_nip = serializers.CharField(source="company.nip", read_only=True, allow_null=True)
     company_krs = serializers.CharField(source="company.krs", read_only=True, allow_null=True)
+    company_regon = serializers.CharField(source="company.regon", read_only=True, allow_null=True)
+    company_street = serializers.CharField(source="company.street", read_only=True, allow_null=True)
+    company_postal_code = serializers.CharField(source="company.postal_code", read_only=True, allow_null=True)
+    company_city = serializers.CharField(source="company.city", read_only=True, allow_null=True)
+    # Najważniejsza nazwa do wyświetlania: firma, a bez niej osoba albo numer
+    display_name = serializers.CharField(read_only=True)
     owner_name = serializers.CharField(source="owner.username", read_only=True, allow_null=True)
     product_name = serializers.CharField(source="product.name", read_only=True, allow_null=True)
     batch_name = serializers.CharField(source="batch.name", read_only=True, allow_null=True)
@@ -203,6 +266,8 @@ class LeadSerializer(serializers.ModelSerializer):
     last_contact_outcome = serializers.SerializerMethodField()
     last_contact_at = serializers.SerializerMethodField()
     last_contact_agent = serializers.SerializerMethodField()
+    # Kto ostatnio zmienił „Stałe informacje o kliencie” (imię i nazwisko albo login)
+    client_comment_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -217,7 +282,23 @@ class LeadSerializer(serializers.ModelSerializer):
             "created_at",
             "agreed_contact_at",
             "missed_calls",
+            "client_comment_by",
+            "client_comment_at",
         )
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_client_comment_by_name(self, obj):
+        user = obj.client_comment_by
+        return (user.get_full_name() or user.username) if user else None
+
+    def update(self, instance, validated_data):
+        # Zmiana stałych informacji: zapamiętujemy, kto i kiedy (pokazujemy przy polu)
+        new = validated_data.get("client_comment")
+        if new is not None and new.strip() != (instance.client_comment or "").strip():
+            request = self.context.get("request")
+            validated_data["client_comment_by"] = request.user if request and request.user.is_authenticated else None
+            validated_data["client_comment_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_last_contact_outcome(self, obj):
@@ -278,6 +359,22 @@ class LeadSerializer(serializers.ModelSerializer):
             )
         return value.strip()
 
+    def validate_phone_alt(self, value):
+        value = value.strip()
+        if value and not 9 <= len(re.sub(r"\D", "", value)) <= 15:
+            raise serializers.ValidationError("Dodatkowy telefon musi mieć od 9 do 15 cyfr.")
+        return value
+
+    def validate_operators(self, value):
+        """Kody sieci po przecinku (np. „play,orange”); kolejność jak w OPERATORS, bez powtórzeń."""
+        codes = [c.strip().lower() for c in value.split(",") if c.strip()]
+        unknown = [c for c in codes if c not in OPERATOR_CODES]
+        if unknown:
+            raise serializers.ValidationError(
+                f"Nieznany operator: {', '.join(unknown)}. Dozwolone: {', '.join(OPERATOR_CODES)}."
+            )
+        return ",".join(c for c in OPERATOR_CODES if c in codes)
+
     def validate_next_contact_at(self, value):
         if value and value < timezone.now():
             raise serializers.ValidationError(
@@ -304,6 +401,13 @@ class LeadDetailSerializer(LeadSerializer):
 
     activities = ActivitySerializer(many=True, read_only=True)
     assignments = LeadAssignmentSerializer(many=True, read_only=True)
+    # segment pracy: offer / callback / retry / new / closed (do kolorów i list w „Dzwonieniu”)
+    segment = serializers.SerializerMethodField()
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_segment(self, obj):
+        from .work import segment_of
+        return segment_of(obj)
 
 
 class AgentSerializer(serializers.Serializer):
@@ -316,6 +420,7 @@ class AgentSerializer(serializers.Serializer):
     active_leads = serializers.IntegerField()
     overdue_leads = serializers.IntegerField()
     can_view_team_stats = serializers.BooleanField()
+    show_in_ranking = serializers.BooleanField()
 
 
 class AgentAccessBulkSerializer(serializers.Serializer):
@@ -326,9 +431,13 @@ class AgentAccessBulkSerializer(serializers.Serializer):
 
 
 class AgentAccessSerializer(serializers.Serializer):
-    """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager)."""
+    """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager).
 
-    can_view_team_stats = serializers.BooleanField()
+    Agentowi zmienia się `can_view_team_stats`, managerowi `show_in_ranking`.
+    """
+
+    can_view_team_stats = serializers.BooleanField(required=False)
+    show_in_ranking = serializers.BooleanField(required=False)
 
 
 class DueLeadsSerializer(serializers.Serializer):
@@ -393,6 +502,13 @@ class AgentStatsSerializer(serializers.Serializer):
     wrong_number = serializers.IntegerField()
     answer_rate = serializers.FloatField(allow_null=True)
     interest_rate = serializers.FloatField(allow_null=True)
+    offers = serializers.IntegerField()
+    commission = serializers.DecimalField(max_digits=14, decimal_places=2)
+    calls_per_sale = serializers.FloatField(allow_null=True)
+    # tylko w widoku całego zespołu (manager): minuty rozmów, cel i czas pracy w okresie
+    minutes = serializers.FloatField(required=False)
+    goal = serializers.IntegerField(required=False)
+    worked_minutes = serializers.IntegerField(required=False)
 
 
 class DailyCallsSerializer(serializers.Serializer):
@@ -423,6 +539,9 @@ class StatsSerializer(serializers.Serializer):
     revenue = serializers.DecimalField(
         max_digits=14, decimal_places=2, help_text="Przychód ze sprzedaży w okresie (zł)."
     )
+    commission = serializers.DecimalField(
+        max_digits=14, decimal_places=2, default=0, help_text="Prowizja ze sprzedaży w okresie (zł)."
+    )
     sales_by_product = ProductSalesSerializer(many=True)
     total_leads = serializers.IntegerField()
     pool_leads = serializers.IntegerField(allow_null=True)
@@ -447,6 +566,12 @@ class ImportLeadsSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.all(), required=False, allow_null=True
     )
+    assigned_to = serializers.PrimaryKeyRelatedField(
+        queryset=get_user_model().objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+        help_text="Agent, dla którego jest ta baza (puste = wspólna pula)",
+    )
 
     def validate_file(self, value):
         if not value.name.lower().endswith(".xlsx"):
@@ -469,8 +594,10 @@ class ImportResultSerializer(serializers.Serializer):
     batch = serializers.DictField(allow_null=True)
     total_rows = serializers.IntegerField()
     created = serializers.IntegerField()
+    layout = serializers.CharField(help_text="headers = kolumny po nazwach, ceidg = układ bazy z CEIDG")
     duplicates = ImportIssueSerializer(many=True)
     errors = ImportIssueSerializer(many=True)
+    warnings = ImportIssueSerializer(many=True)
 
 
 class LeaderboardRowSerializer(serializers.Serializer):
@@ -485,6 +612,8 @@ class LeaderboardRowSerializer(serializers.Serializer):
     answered = serializers.IntegerField()
     interested = serializers.IntegerField()
     answer_rate = serializers.FloatField(allow_null=True)
+    minutes = serializers.FloatField(help_text="Minuty rozmów z dialera w okresie")
+    commission = serializers.DecimalField(max_digits=14, decimal_places=2)
     is_me = serializers.BooleanField()
 
 
@@ -512,9 +641,11 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             "retry_after_next_minutes",
             "work_start_hour",
             "work_end_hour",
-            "callback_retry_minutes",
+            "work_days",
+            "callback_retry_steps",
             "claim_timeout_hours",
             "unreachable_cooldown_days",
+            "companies_last",
             "updated_at",
             "updated_by_name",
         )
@@ -522,11 +653,26 @@ class TeamRulesSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         for name, value in attrs.items():
+            if name not in FIELD_LIMITS:
+                continue
             lo, hi, unit, _ = FIELD_LIMITS[name]
             if not lo <= value <= hi:
                 raise serializers.ValidationError(
                     {name: f"Wartość musi być z zakresu od {lo} do {hi} ({unit})."}
                 )
+        if "work_days" in attrs:
+            raw = str(attrs["work_days"] or "")
+            if not raw or any(c not in "1234567" for c in raw):
+                raise serializers.ValidationError({"work_days": "Zaznacz co najmniej jeden dzień pracy."})
+            attrs["work_days"] = "".join(sorted(set(raw)))
+        if "callback_retry_steps" in attrs:
+            steps, (lo, hi) = attrs["callback_retry_steps"], CALLBACK_STEP_LIMITS
+            if not isinstance(steps, list) or not 1 <= len(steps) <= CALLBACK_STEPS_MAX:
+                raise serializers.ValidationError(
+                    {"callback_retry_steps": f"Ustaw od 1 do {CALLBACK_STEPS_MAX} prób."})
+            if any(isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi for v in steps):
+                raise serializers.ValidationError(
+                    {"callback_retry_steps": f"Każda próba: od {lo} min do {hi // 1440} dni."})
         start = attrs.get("work_start_hour", getattr(self.instance, "work_start_hour", 8))
         end = attrs.get("work_end_hour", getattr(self.instance, "work_end_hour", 20))
         if start >= end:

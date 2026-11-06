@@ -1,7 +1,7 @@
 """Zasady pracy z leadami ustawiane przez managera (limit prób, ponowne próby, zwroty do puli).
 
 `get_rules()` zwraca jedyny wiersz TeamRules; gdy go jeszcze nie ma, powstaje z wartości
-domyślnych z config/settings.py (LEAD_* i CALLBACK_RETRY_MINUTES).
+domyślnych z config/settings.py (LEAD_*, CALLBACK_RETRY_STEPS, WORK_DAYS).
 """
 
 from datetime import timedelta
@@ -20,10 +20,15 @@ FIELD_LIMITS = {
     "retry_after_next_minutes": (5, 43200, "min", None),
     "work_start_hour": (0, 23, "godz.", None),
     "work_end_hour": (1, 24, "godz.", None),
-    "callback_retry_minutes": (5, 1440, "min", "CALLBACK_RETRY_MINUTES"),
     "claim_timeout_hours": (1, 720, "godz.", "LEAD_CLAIM_TIMEOUT_HOURS"),
     "unreachable_cooldown_days": (1, 365, "dni", "LEAD_UNREACHABLE_COOLDOWN_DAYS"),
 }
+
+# Ponowne próby po nieodebranym umówionym terminie: ile kroków i jaki zakres jednego kroku (min)
+CALLBACK_STEPS_MAX = 8
+CALLBACK_STEP_LIMITS = (5, 10080)
+DEFAULT_CALLBACK_STEPS = [15, 60, 120, 1440]
+DEFAULT_WORK_DAYS = "12345"
 
 
 def default_values():
@@ -34,7 +39,54 @@ def default_values():
             values[name] = getattr(settings, setting)
         else:
             values[name] = TeamRules._meta.get_field(name).default
+    values["callback_retry_steps"] = list(getattr(settings, "CALLBACK_RETRY_STEPS", DEFAULT_CALLBACK_STEPS))
+    values["work_days"] = getattr(settings, "WORK_DAYS", DEFAULT_WORK_DAYS)
     return values
+
+
+# ---------- dni pracy ----------
+
+def work_days(rules):
+    """Dni pracy jako zbiór numerów ISO (1 = poniedziałek … 7 = niedziela); pusty zapis = pon–pt."""
+    days = {int(c) for c in (rules.work_days or "") if c in "1234567"}
+    return days or {1, 2, 3, 4, 5}
+
+
+def is_work_day(rules, moment):
+    return timezone.localtime(moment).isoweekday() in work_days(rules)
+
+
+def next_work_day(rules, moment):
+    """Ten sam moment przesunięty na najbliższy dzień pracy (ten sam dzień, jeśli jest dniem pracy)."""
+    for _ in range(7):
+        if is_work_day(rules, moment):
+            return moment
+        moment = moment + timedelta(days=1)
+    return moment
+
+
+def fit_work_time(rules, moment):
+    """Moment w godzinach i dniach pracy: dzień wolny -> ta sama godzina najbliższego dnia pracy,
+    przed otwarciem -> otwarcie, po zamknięciu -> otwarcie następnego dnia pracy."""
+    local = next_work_day(rules, timezone.localtime(moment))
+    opening = local.replace(hour=rules.work_start_hour, minute=0, second=0, microsecond=0)
+    if local < opening:
+        return opening
+    if local.hour + local.minute / 60 < rules.work_end_hour:
+        return local
+    return next_work_day(rules, opening + timedelta(days=1))
+
+
+def callback_retry_at(rules, missed_before, now=None):
+    """Termin ponownej próby po nieodebranym umówionym kontakcie.
+
+    `missed_before` = ile razy klient już wcześniej nie odebrał w umówionym terminie (0 przy pierwszym).
+    Kolejne kroki z ustawień (np. 15 min, 1 h, 2 h, 1 dzień); po ostatnim kolejne co tyle, ile ostatni.
+    """
+    now = now or timezone.now()
+    steps = [int(s) for s in (rules.callback_retry_steps or []) if str(s).isdigit()] or DEFAULT_CALLBACK_STEPS
+    delay = steps[min(max(missed_before, 0), len(steps) - 1)]
+    return fit_work_time(rules, now + timedelta(minutes=delay))
 
 
 def get_rules():
@@ -97,6 +149,8 @@ def _gap_time(rules, day, previous, earliest=None):
     grid = range(rules.work_start_hour * 60 + 30, rules.work_end_hour * 60, 30)
     for offset in range(0, 15):
         base = day + timedelta(days=offset)
+        if not is_work_day(rules, base):   # dni wolne (np. sobota, niedziela) pomijamy
+            continue
         cands = [m for m in grid if earliest is None or offset > 0
                  or base.replace(hour=m // 60, minute=m % 60, second=0, microsecond=0) >= earliest]
         if cands:
@@ -126,10 +180,12 @@ def suggest_retry(rules, tries_before, now=None, previous=()):
         return base.replace(hour=t // 60, minute=t % 60, second=0, microsecond=0)
 
     forced_day = None
-    if moment < day_start:
+    if not is_work_day(rules, moment):   # wypada w dzień wolny: najbliższy dzień pracy
+        forced_day = next_work_day(rules, day_start)
+    elif moment < day_start:
         forced_day = day_start
     elif moment.hour + moment.minute / 60 >= end:
-        forced_day = day_start + timedelta(days=1)
+        forced_day = next_work_day(rules, day_start + timedelta(days=1))
     if forced_day is not None:
         # wybór pory z rotacją: próba 0 -> rano, 1 -> środek dnia, 2 -> popołudnie, ...
         order = [(tries_before + i) % SLOTS for i in range(SLOTS)]
@@ -147,7 +203,7 @@ def suggest_retry(rules, tries_before, now=None, previous=()):
     for slot in range(here + 1, SLOTS):   # później tego samego dnia
         if slot not in used:
             return at(moment, slot)
-    next_day = day_start + timedelta(days=1)   # inaczej następnego dnia, od pierwszej wolnej pory
+    next_day = next_work_day(rules, day_start + timedelta(days=1))   # inaczej następnego dnia pracy, od pierwszej wolnej pory
     for slot in list(range(here + 1, SLOTS)) + list(range(0, here)):
         if slot not in used:
             return at(next_day, slot)
