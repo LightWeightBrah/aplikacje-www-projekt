@@ -452,7 +452,13 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .w-quick .btn-mini{flex:1;justify-content:center;padding:.45rem .5rem;font-size:.82rem}
 .dialbar #db-dial{margin-left:.4rem}
 /* skróty klawiszowe wyłączone w „Moje ustawienia”: chowamy podpowiedzi */
-.no-keys .w-out kbd,.no-keys .w-next kbd,.no-keys .w-kbd,.no-keys #db-keys,.no-keys .w-out-title small{display:none}
+.no-keys .w-out kbd,.no-keys .w-next kbd,.no-keys .w-kbd,.no-keys .gs-key,.no-keys .w-out-title small{display:none}
+/* „Moje ustawienia”: lista skrótów schowana pod „Jakie są skróty?” */
+.keys-help{margin:-.3rem 0 .9rem 1.9rem;font-size:.85rem}
+.keys-help summary{cursor:pointer;color:var(--brand-text);font-weight:600;width:max-content}
+.keys-help dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem .8rem;margin:.6rem 0 .4rem;align-items:center}
+.keys-help dt{margin:0;white-space:nowrap}.keys-help dd{margin:0;color:var(--muted)}
+.keys-help kbd{display:inline-block;min-width:1.5rem;text-align:center;padding:.05rem .4rem;border:1px solid var(--line);border-radius:6px;background:var(--track,transparent);font:inherit;font-size:.78rem;font-weight:700;color:var(--ink)}
 .podium{display:grid;grid-template-columns:repeat(3,minmax(0,200px));justify-content:center;align-items:end}
 .pod{min-width:0}
 .pod-empty{visibility:hidden;border:0}

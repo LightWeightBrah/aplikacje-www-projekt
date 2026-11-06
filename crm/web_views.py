@@ -19,7 +19,26 @@ def lead_list(request):
 
 def login_page(request):
     """Ekran logowania aplikacji. Logowanie robi JavaScript przez /api/token/."""
-    return render(request, "crm/login.html")
+    from django.conf import settings
+    # podpowiedź z kontami demo tylko lokalnie – na serwerze firmy jej nie ma
+    return render(request, "crm/login.html", {"show_demo": not settings.IS_SERVER})
+
+
+def dialer_apk(request):
+    """Aplikacja Solid Dialer do pobrania prosto na telefon: /crm/dialer.apk.
+
+    Plik nie jest w repo (to zbudowany program): wrzuca się go na serwer do folderu
+    `downloads/solid-dialer.apk` (instrukcja: docs/HOSTING.md).
+    """
+    from django.conf import settings
+    from django.http import FileResponse, HttpResponse
+
+    apk = settings.BASE_DIR / "downloads" / "solid-dialer.apk"
+    if not apk.exists():
+        return HttpResponse("Aplikacji Solid Dialer jeszcze tu nie ma – poproś managera.", status=404,
+                            content_type="text/plain; charset=utf-8")
+    return FileResponse(apk.open("rb"), as_attachment=True, filename="solid-dialer.apk",
+                        content_type="application/vnd.android.package-archive")
 
 
 def queue_page(request):

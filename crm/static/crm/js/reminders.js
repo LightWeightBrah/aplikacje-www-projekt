@@ -51,6 +51,7 @@ CRM.initReminders = function initReminders() {
   CRM.undoBarEnabled = () => cfg().undoBar !== false;
   /* Skróty klawiszowe (N, Z, 1–8, Enter) – można wyłączyć dla mniej technicznych agentów */
   CRM.keysEnabled = () => cfg().keys !== false;
+  document.body.classList.toggle("no-keys", !CRM.keysEnabled());   // na każdej stronie (np. „/” w wyszukiwarce)
 
   /* ---------- zapamiętywanie, o czym już przypomniano ---------- */
   function readSeen() {
@@ -399,6 +400,7 @@ CRM.initReminders = function initReminders() {
     $("notif-undo").addEventListener("change", () => saveCfg({ undoBar: $("notif-undo").checked }));
     $("notif-keys").addEventListener("change", () => {
       saveCfg({ keys: $("notif-keys").checked });
+      document.body.classList.toggle("no-keys", !$("notif-keys").checked);   // chowa też „/” w wyszukiwarce
       document.dispatchEvent(new CustomEvent("crm:view"));   // kolejka chowa / pokazuje podpowiedzi klawiszy
     });
     $("tour-again").addEventListener("click", () => {

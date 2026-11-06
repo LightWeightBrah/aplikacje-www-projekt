@@ -8,8 +8,8 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232456d6'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='17' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
     {# motyw: domyślnie jasny (jak CRM-y, do których przywykł zespół); „auto” = jak w systemie #}
     <script>try{var t=localStorage.getItem("crm_theme")||"light";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=72">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=72">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=73">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=73">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -106,7 +106,19 @@
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
         <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Panel „Dziś” przy dzwonieniu</strong><small class="muted">Liczby dnia, minuty rozmów i informacje zespołu po prawej stronie.</small></span></label>
-        <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe przy dzwonieniu</strong><small class="muted">N – następny klient, Z – zadzwoń, 1–8 – wynik, Enter – zapisz. Wyłącz, jeśli przypadkiem w coś klikasz.</small></span></label>
+        <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe</strong><small class="muted">Jeden klawisz zamiast klikania. Wyłącz, jeśli przypadkiem w coś wciskasz.</small></span></label>
+        <details class="keys-help">
+            <summary>Jakie są skróty?</summary>
+            <dl>
+                <dt><kbd>N</kbd></dt><dd>następny klient</dd>
+                <dt><kbd>Z</kbd></dt><dd>zadzwoń do klienta</dd>
+                <dt><kbd>1</kbd>–<kbd>8</kbd></dt><dd>wynik rozmowy (Nie odebrał … Pomiń firmę)</dd>
+                <dt><kbd>Enter</kbd></dt><dd>zapisz i weź następnego</dd>
+                <dt><kbd>Esc</kbd></dt><dd>wyczyść wybrany wynik</dd>
+                <dt><kbd>/</kbd></dt><dd>szukaj klienta (numer, NIP albo firma) – działa na każdej stronie</dd>
+            </dl>
+            <small class="muted">Skróty nie działają, gdy piszesz w polu tekstowym.</small>
+        </details>
         <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
         <div class="field">Samouczek<button type="button" class="btn btn-secondary" id="tour-again">Pokaż samouczek jeszcze raz</button><small class="muted">Krótkie oprowadzenie po ekranie „Dzwonienie”.</small></div>
         <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Kalendarz” zostaje, żeby żaden termin Ci nie umknął.</p>
@@ -120,7 +132,7 @@
         <div class="dialer-state" id="dialer-state">Sprawdzam…</div>
         <div class="dialer-code" id="dialer-code" hidden></div>
         <ol class="small dialer-steps">
-            <li>Zainstaluj na telefonie aplikację <b>Solid Dialer</b> (plik od managera).</li>
+            <li>Na telefonie otwórz <b>{{ request.scheme }}://{{ request.get_host }}/crm/dialer.apk</b> i zainstaluj <b>Solid Dialer</b>. Telefon zapyta o zgodę na instalację spoza Sklepu Play – zezwól.</li>
             <li>Kliknij niżej „Pokaż kod parowania”.</li>
             <li>W aplikacji wpisz adres CRM i ten kod.</li>
         </ol>
@@ -132,11 +144,11 @@
     </form>
 </dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=72"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=72"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=72"></script>
-<script src="{% static 'crm/js/search.js' %}?v=72"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=72"></script>
+<script src="{% static 'crm/js/app.js' %}?v=73"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=73"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=73"></script>
+<script src="{% static 'crm/js/search.js' %}?v=73"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=73"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();</script>
 {% block scripts %}{% endblock %}
 </body>

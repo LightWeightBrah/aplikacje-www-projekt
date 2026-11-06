@@ -98,6 +98,11 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        from django.conf import settings
+        from django.core.management.base import CommandError
+        if settings.IS_SERVER:
+            # na serwerze firmy nie zakładamy kont demo ze znanym hasłem ani fikcyjnych klientów
+            raise CommandError("seed_demo działa tylko lokalnie (DJANGO_DEBUG=1). Na serwerze użyj: manage.py start_firm")
         batch = LeadBatch.objects.filter(name=BATCH_NAME).first()
         if batch and not options["reset"]:
             self.stdout.write("Dane demo już istnieją. Użyj --reset, aby utworzyć je od nowa.")
