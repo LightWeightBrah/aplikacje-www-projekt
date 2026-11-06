@@ -23,7 +23,7 @@
         <div class="table-wrap">
             <table class="table products-table" id="products-table"></table>
         </div>
-        <p class="card-desc rank-note">Agent wybiera taryfę przy ofercie i przy wyniku „Sprzedane”. Taryfa z dopłatą za kolejny numer liczy się jak we wzorniku ofert: pierwszy numer (z promocją albo bez) + każdy kolejny po dopłacie. Prowizja = zobowiązanie miesięczne × mnożnik z „Ustawienia i oferty”. Zmiana ceny dotyczy tylko nowych sprzedaży: dawne zostają z ceną z dnia sprzedaży, więc przychód z poprzednich okresów się nie zmienia. Produktu nie usuwa się, tylko wyłącza: znika z listy wyboru, ale historia sprzedaży zostaje.</p>
+        <p class="card-desc rank-note">Agent wybiera taryfę przy ofercie i przy wyniku „Sprzedane”. Taryfa z dopłatą za kolejny numer liczy się jak we wzorniku ofert: pierwszy numer (z promocją albo bez) + każdy kolejny po dopłacie. Prowizja = zobowiązanie miesięczne × mnożnik z „Ustawienia i oferty”. Zmiana ceny dotyczy tylko nowych sprzedaży: dawne zostają z ceną z dnia sprzedaży, więc przychód z poprzednich okresów się nie zmienia. Sprzedawany już produkt się wyłącza (znika z listy wyboru, historia sprzedaży zostaje); „Usuń” jest dla produktu dodanego przez pomyłkę, którego nikt jeszcze nie sprzedał ani nie ofertował.</p>
         <p class="card-desc rank-note"><b>Plik taryf:</b> „Pobierz plik taryf” zapisuje wszystkie taryfy do Excela. Zmień w nim ceny albo dopisz wiersz i wgraj przyciskiem „Wgraj plik taryf…”: taryfa o tej samej nazwie dostaje nowe ceny, nowa nazwa to nowa taryfa, a taryfy spoza pliku zostają bez zmian. Tak samo przeniesiesz cennik na inny serwer.</p>
     </section>
 </div>
@@ -67,5 +67,5 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/products.js' %}?v=88"></script>
+{% block scripts %}<script src="{% static 'crm/js/products.js' %}?v=89"></script>
 <script>CRM.initProducts();</script>{% endblock %}

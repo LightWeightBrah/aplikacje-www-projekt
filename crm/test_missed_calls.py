@@ -168,7 +168,8 @@ class ActivityTimelineTests(CrmTestBase):
         self.assertEqual(activity.planned_at, planned)
         lead.refresh_from_db()
         self.assertEqual(activity.rescheduled_to, lead.next_contact_at)
-        self.assertGreater(activity.rescheduled_to, timezone.now() + timedelta(minutes=55))
+        # 1. próba wg ustawień (domyślnie za 15 min, przesunięta w godziny i dni pracy)
+        self.assertGreaterEqual(activity.rescheduled_to, timezone.now() + timedelta(minutes=14))
 
     def test_explicit_new_term_is_recorded(self):
         planned = timezone.now() - timedelta(minutes=10)

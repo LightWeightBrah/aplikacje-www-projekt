@@ -262,3 +262,32 @@ class DemoSalesTests(CrmTestBase):
         self.assertTrue(SaleItem.objects.exists())
         data = self.api(self.manager).get("/api/stats/?days=1").data
         self.assertGreater(Decimal(data["revenue"]), Decimal("0"))
+
+
+class ProductDeleteTests(SalesBase):
+    """Usuwanie produktu dodanego przez pomyłkę (Taryfy i produkty → „Usuń”)."""
+
+    def test_manager_deletes_unused_product(self):
+        r = self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_agent_cannot_delete(self):
+        r = self.api(self.agent1).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_sold_product_is_kept_and_manager_is_told_to_switch_it_off(self):
+        lead = self.make_lead(owner=self.agent1)
+        self.assertEqual(self.sell(self.agent1, lead, [(self.sim, 1)]).status_code, 201)
+        r = self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("Wyłącz", r.data["detail"])
+        self.assertTrue(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_lead_interested_in_deleted_product_keeps_working(self):
+        lead = self.make_lead(owner=self.agent1, product=self.sim)
+        self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        lead.refresh_from_db()
+        self.assertIsNone(lead.product)
+

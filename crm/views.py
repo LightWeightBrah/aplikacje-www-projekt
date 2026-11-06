@@ -110,6 +110,19 @@ class ProductViewSet(viewsets.ModelViewSet):
     filterset_fields = ["is_active"]
     search_fields = ["name"]
 
+    @extend_schema(responses={204: None, 409: OpenApiTypes.OBJECT})
+    def destroy(self, request, *args, **kwargs):
+        """Usuwa produkt dodany przez pomyłkę. Produkt, który jest już w sprzedażach albo ofertach,
+        zostaje (409) – wtedy wystarczy go wyłączyć, żeby historia i statystyki się zgadzały."""
+        product = self.get_object()
+        if product.sale_items.exists() or product.offers.exists():
+            return Response(
+                {"detail": f"„{product.name}” jest już w sprzedażach albo ofertach, więc nie można go usunąć. "
+                           "Kliknij „Wyłącz” – agenci nie wybiorą go już przy sprzedaży, a historia zostanie."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
     @extend_schema(
         request=None,
         responses=inline_serializer("StandardTariffsResult", {

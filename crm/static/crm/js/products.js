@@ -68,7 +68,8 @@ CRM.initProducts = function initProducts() {
         <td class="num">${Number(p.extra_price) > 0 ? "+ " + esc(CRM.money(p.extra_price)) : "–"}</td>
         <td>${p.is_active ? '<span class="chip" style="--c:#16a34a">Do sprzedaży</span>' : '<span class="chip" style="--c:#94a3b8">Wyłączony</span>'}</td>
         <td class="row-actions"><button type="button" class="btn-mini" data-act="edit" data-id="${p.id}">Edytuj</button>` +
-        `<button type="button" class="btn-mini${p.is_active ? " danger" : ""}" data-act="toggle" data-id="${p.id}">${p.is_active ? "Wyłącz" : "Włącz"}</button></td></tr>`).join("") + "</tbody>";
+        `<button type="button" class="btn-mini${p.is_active ? " danger" : ""}" data-act="toggle" data-id="${p.id}">${p.is_active ? "Wyłącz" : "Włącz"}</button>` +
+        `<button type="button" class="btn-mini ghost danger" data-act="delete" data-id="${p.id}" title="Usuń produkt dodany przez pomyłkę">Usuń</button></td></tr>`).join("") + "</tbody>";
   }
 
   /* Taryfy z wzornika ofert zespołu (ceny potem można zmienić przyciskiem „Edytuj”) */
@@ -172,6 +173,22 @@ CRM.initProducts = function initProducts() {
     const p = products.find((x) => x.id === Number(btn.dataset.id));
     if (!p) return;
     if (btn.dataset.act === "edit") { openDialog(p); return; }
+    if (btn.dataset.act === "delete") {
+      if (!confirm(`Usunąć produkt „${p.name}”?
+
+Tego nie da się cofnąć. Jeśli produkt był już sprzedawany, CRM go nie usunie – wtedy kliknij „Wyłącz”.`)) return;
+      btn.disabled = true;
+      try {
+        const r = await api(`/api/products/${p.id}/`, { method: "DELETE" });
+        if (!r.ok) throw new Error(errorText(await r.json().catch(() => ({})), r.status));
+        toast(`Usunięto produkt: ${p.name}.`);
+        await load();
+      } catch (ex) {
+        toast(ex.message, true);
+        btn.disabled = false;
+      }
+      return;
+    }
     btn.disabled = true;
     try {
       const r = await api(`/api/products/${p.id}/`, { method: "PATCH", headers: JSON_HEADERS, body: JSON.stringify({ is_active: !p.is_active }) });
