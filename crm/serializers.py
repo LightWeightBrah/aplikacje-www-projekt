@@ -12,7 +12,14 @@ from .roles import AGENT, MANAGER
 from .models import (
     OPERATOR_CODES, Activity, Company, Lead, LeadAssignment, LeadBatch, Product, SaleItem, TeamRules,
 )
-from .rules import FIELD_LIMITS, attempt_times, get_rules, suggest_retry
+from .rules import (
+    CALLBACK_STEP_LIMITS,
+    CALLBACK_STEPS_MAX,
+    FIELD_LIMITS,
+    attempt_times,
+    get_rules,
+    suggest_retry,
+)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -634,7 +641,8 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             "retry_after_next_minutes",
             "work_start_hour",
             "work_end_hour",
-            "callback_retry_minutes",
+            "work_days",
+            "callback_retry_steps",
             "claim_timeout_hours",
             "unreachable_cooldown_days",
             "companies_last",
@@ -652,6 +660,19 @@ class TeamRulesSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {name: f"Wartość musi być z zakresu od {lo} do {hi} ({unit})."}
                 )
+        if "work_days" in attrs:
+            raw = str(attrs["work_days"] or "")
+            if not raw or any(c not in "1234567" for c in raw):
+                raise serializers.ValidationError({"work_days": "Zaznacz co najmniej jeden dzień pracy."})
+            attrs["work_days"] = "".join(sorted(set(raw)))
+        if "callback_retry_steps" in attrs:
+            steps, (lo, hi) = attrs["callback_retry_steps"], CALLBACK_STEP_LIMITS
+            if not isinstance(steps, list) or not 1 <= len(steps) <= CALLBACK_STEPS_MAX:
+                raise serializers.ValidationError(
+                    {"callback_retry_steps": f"Ustaw od 1 do {CALLBACK_STEPS_MAX} prób."})
+            if any(isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi for v in steps):
+                raise serializers.ValidationError(
+                    {"callback_retry_steps": f"Każda próba: od {lo} min do {hi // 1440} dni."})
         start = attrs.get("work_start_hour", getattr(self.instance, "work_start_hour", 8))
         end = attrs.get("work_end_hour", getattr(self.instance, "work_end_hour", 20))
         if start >= end:

@@ -429,8 +429,12 @@ class TeamRules(models.Model):
     )
     work_start_hour = models.PositiveSmallIntegerField("początek dnia pracy (godzina)", default=9)
     work_end_hour = models.PositiveSmallIntegerField("koniec dnia pracy (godzina)", default=17)
-    callback_retry_minutes = models.PositiveIntegerField(
-        "ponowna próba po nieodebranym umówionym kontakcie (min)", default=60
+    # Dni pracy: cyfry 1–7 (1 = poniedziałek … 7 = niedziela), np. „12345” = pon–pt, „123456” = pon–sob
+    work_days = models.CharField("dni pracy", max_length=7, default="12345")
+    # Kolejne ponowne próby, gdy klient nie odebrał w umówionym terminie (minuty po nieodebranym telefonie):
+    # 1. próba za [0], 2. za [1] … po ostatniej kolejne co tyle, ile ostatnia
+    callback_retry_steps = models.JSONField(
+        "ponowne próby po nieodebranym umówionym kontakcie (min)", default=list
     )
     claim_timeout_hours = models.PositiveIntegerField(
         "po ilu godzinach nietknięty lead wraca do puli", default=24

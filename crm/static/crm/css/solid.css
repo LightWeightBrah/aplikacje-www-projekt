@@ -495,3 +495,24 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 .w-info-by{font-size:.78rem;color:var(--muted)}.w-info-by b{color:var(--ink);font-weight:600}
 .w-info-head .w-status{margin-left:auto}
 .w-info textarea{width:100%;background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;font:inherit;resize:vertical;min-height:2.8rem}
+
+/* Ustawienia: dni pracy (przełączniki) i kolejne próby po nieodebranym umówionym terminie */
+.rule .rule-label{font-weight:700;font-size:.9rem}
+.rule-span2{grid-column:span 2}
+.rule-wide{grid-column:1/-1}
+@media(max-width:760px){.rule-span2{grid-column:auto}}
+.day-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.day-chip{position:relative;cursor:pointer}
+.day-chip input{position:absolute;opacity:0;width:1px;height:1px}
+.day-chip span{display:inline-grid;place-items:center;min-width:3.4rem;height:2.6rem;padding:0 .7rem;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--muted);font-weight:600;font-size:.9rem;user-select:none}
+.day-chip input:checked+span{background:var(--brand,#2456d6);border-color:var(--brand,#2456d6);color:#fff}
+.day-chip input:focus-visible+span{outline:2px solid var(--brand,#2456d6);outline-offset:2px}
+.steps-row{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem}
+.steps{display:flex;flex-wrap:wrap;gap:.5rem;margin:0;padding:0;list-style:none}
+.step{display:flex;align-items:center;gap:.35rem;padding:.3rem .35rem .3rem .65rem;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.step-n{font-size:.85rem;color:var(--muted);white-space:nowrap}
+.step input.select{width:4.2rem}
+.step select.select{width:auto}
+.step-del{border:0;background:none;color:var(--muted);font-size:1.15rem;line-height:1;padding:.2rem .4rem;border-radius:8px;cursor:pointer}
+.step-del:hover:not(:disabled){color:#ef4444;background:var(--track)}
+.step-del:disabled{opacity:.3;cursor:default}

@@ -538,14 +538,19 @@
 
   /* ================= WYNIK ROZMOWY ================= */
   const atHour = (days, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d; };
-  const nextWorkday = (h, m = 0) => { const d = atHour(1, h, m); while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1); return d; };
+  /* Dni pracy z ustawień managera (1 = pon … 7 = niedz.); domyślnie pon–pt. Dzień wolny w podpowiedziach jest pomijany. */
+  let workDays = new Set([1, 2, 3, 4, 5]);
+  const isWorkDay = (d) => workDays.has(d.getDay() || 7);
+  const toWorkday = (d) => { for (let i = 0; i < 7 && !isWorkDay(d); i++) d.setDate(d.getDate() + 1); return d; };
+  const nextWorkday = (h, m = 0) => toWorkday(atHour(1, h, m));
+  const inWorkdays = (days, h, m = 0) => toWorkday(atHour(days, h, m));   // „Za 2 dni” w piątek -> poniedziałek
   const DAY_SHORT = ["Niedz.", "Pon.", "Wt.", "Śr.", "Czw.", "Pt.", "Sob."];
-  /* „Jutro 10:00”, a w piątek / sobotę „Pon. 10:00” – żeby było widać, że weekend jest pomijany */
+  /* „Jutro 10:00”, a przed dniem wolnym np. „Pon. 10:00” – żeby było widać, że dzień wolny jest pomijany */
   const wdLabel = (h, text) => () => { const d = nextWorkday(h), t = new Date(Date.now() + 864e5); return `${d.toDateString() === t.toDateString() ? "Jutro" : DAY_SHORT[d.getDay()]} ${text}`; };
   const PRESETS = {
-    callback: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Za 2 h", () => new Date(Date.now() + 7200e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(9, "9:00"), () => nextWorkday(9)], [wdLabel(13, "13:00"), () => nextWorkday(13)], ["Za tydzień", () => atHour(7, 10)]],
-    interested: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(10, "10:00"), () => nextWorkday(10)], ["Za 2 dni", () => atHour(2, 10)], ["Za tydzień", () => atHour(7, 10)]],
-    offer: [[wdLabel(10, "10:00"), () => nextWorkday(10)], [wdLabel(15, "15:00"), () => nextWorkday(15)], ["Za 2 dni", () => atHour(2, 10)], ["Za tydzień", () => atHour(7, 10)]],
+    callback: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Za 2 h", () => new Date(Date.now() + 7200e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(9, "9:00"), () => nextWorkday(9)], [wdLabel(13, "13:00"), () => nextWorkday(13)], ["Za tydzień", () => inWorkdays(7, 10)]],
+    interested: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(10, "10:00"), () => nextWorkday(10)], ["Za 2 dni", () => inWorkdays(2, 10)], ["Za tydzień", () => inWorkdays(7, 10)]],
+    offer: [[wdLabel(10, "10:00"), () => nextWorkday(10)], [wdLabel(15, "15:00"), () => nextWorkday(15)], ["Za 2 dni", () => inWorkdays(2, 10)], ["Za tydzień", () => inWorkdays(7, 10)]],
     no_answer: [["Za 2 h", () => new Date(Date.now() + 7200e3)], [wdLabel(9, "rano"), () => nextWorkday(9)], [wdLabel(15, "po 15"), () => nextWorkday(15, 30)]],
   };
   function whenField(kind, label, value, required) {
@@ -1077,7 +1082,8 @@
   setInterval(() => { if (!document.hidden) { loadSummary(); loadDialer(); } }, 20000);
   setInterval(() => { if (!document.hidden) loadSideData(); }, 120000);
   (async () => {
-    const [pr, cf] = await Promise.all([api("/api/products/?is_active=true").catch(() => null), api("/api/offer-config/").catch(() => null)]);
+    const [pr, cf, rl] = await Promise.all([api("/api/products/?is_active=true").catch(() => null), api("/api/offer-config/").catch(() => null), api("/api/settings/").catch(() => null)]);
+    try { if (rl && rl.ok) { const d = await rl.json(); if (d.work_days) workDays = new Set([...d.work_days].map(Number)); } } catch { /* pon–pt */ }
     try { if (pr && pr.ok) { const d = await pr.json(); plans = (d.results || d).filter((p) => p.is_active); } } catch { /* bez taryf */ }
     try { if (cf && cf.ok) config = { ...config, ...(await cf.json()) }; } catch { /* domyślne ustawienia */ }
     await Promise.all([loadLeads(), loadSummary(), loadDialer(), loadSideData(), loadHistory()]);

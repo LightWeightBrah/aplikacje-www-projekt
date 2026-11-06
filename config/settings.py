@@ -175,10 +175,12 @@ MAILERS = {
 }
 
 # --- Reguły cyklu życia leadów (CRM) ---
-LEAD_MAX_ATTEMPTS_PER_AGENT = 3        # ile prób dodzwonienia ma jeden agent
+LEAD_MAX_ATTEMPTS_PER_AGENT = 5        # ile prób dodzwonienia ma jeden agent
 LEAD_UNREACHABLE_AFTER_AGENTS = 5      # ilu różnych agentów musi nie zdołać, by lead był "nieosiągalny"
 LEAD_CLAIM_TIMEOUT_HOURS = 24          # po ilu godzinach nietknięty lead wraca do puli
-CALLBACK_RETRY_MINUTES = 60            # za ile minut system ponawia kontakt, gdy klient nie odebrał w umówionym terminie
+# Gdy klient nie odebrał w umówionym terminie: kolejne próby za 15 min, 1 h, 2 h, potem co 1 dzień
+CALLBACK_RETRY_STEPS = [15, 60, 120, 1440]
+WORK_DAYS = "12345"                    # dni pracy: 1 = poniedziałek … 7 = niedziela (pon–pt)
 LEAD_UNREACHABLE_COOLDOWN_DAYS = 30   # po ilu dniach manager może zwrócić nieosiągalne leady do obiegu
 
 # --- Django REST Framework ---

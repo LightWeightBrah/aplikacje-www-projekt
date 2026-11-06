@@ -21,7 +21,7 @@ class RulesApiTests(CrmTestBase):
     def test_agent_can_read_but_not_change(self):
         r = self.api(self.agent1).get("/api/settings/")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["max_attempts_per_agent"], 3)
+        self.assertEqual(r.data["max_attempts_per_agent"], 5)
         self.assertEqual(r.data["retry_after_first_minutes"], 120)
         patch = self.api(self.agent1).patch("/api/settings/", {"max_attempts_per_agent": 5}, format="json")
         self.assertEqual(patch.status_code, 403)
@@ -54,7 +54,7 @@ class RulesApiTests(CrmTestBase):
         self.api(self.manager).patch("/api/settings/", {"max_attempts_per_agent": 7}, format="json")
         r = self.api(self.manager).post("/api/settings/reset/")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["max_attempts_per_agent"], 3)
+        self.assertEqual(r.data["max_attempts_per_agent"], 5)
 
     def test_attempt_limit_from_settings_returns_lead_to_pool(self):
         self.api(self.manager).patch("/api/settings/", {"max_attempts_per_agent": 2}, format="json")
@@ -171,7 +171,7 @@ class AutoRetryTests(CrmTestBase):
 
     def test_last_attempt_returns_lead_to_pool_without_term(self):
         lead = self.make_lead(owner=self.agent1)
-        for _ in range(3):
+        for _ in range(5):  # domyślny limit: 5 prób
             self.post(lead, "no_answer")
         lead.refresh_from_db()
         self.assertIsNone(lead.owner)

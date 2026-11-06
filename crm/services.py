@@ -18,7 +18,7 @@ from rest_framework.renderers import BaseRenderer
 
 from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, Lead, LeadAssignment, SaleItem
 from .roles import AGENT
-from .rules import attempt_times, get_rules, suggest_retry
+from .rules import attempt_times, callback_retry_at, get_rules, suggest_retry
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
 ACTIVE_STATUSES = (
@@ -352,7 +352,8 @@ def register_activity(
     - "nie odebrał" w umówionym terminie (albo po nim) liczy się jako nieodebrany
       umówiony kontakt: rośnie `missed_calls`, umówiony termin zostaje w
       `agreed_contact_at`, a jeśli agent nie wskazał nowego terminu, system sam
-      ustawia ponowną próbę za `callback_retry_minutes` minut (ustawienie managera). Dzięki temu lead
+      ustawia ponowną próbę wg `callback_retry_steps` (np. za 15 min, 1 h, 2 h, potem co dzień; w dniach
+      i godzinach pracy – ustawienia managera). Dzięki temu lead
       nie zostaje "zaległy" w nieskończoność i nie blokuje pobrania kolejnego,
     - wynik "sprzedane" może mieć `sale_items` (lista par produkt + ilość): z cen katalogu
       powstają pozycje sprzedaży, z których liczy się przychód.
@@ -362,7 +363,7 @@ def register_activity(
         rules = get_rules()
         undo_state = _snapshot(lead.pk)
         before = Lead.objects.values(
-            "next_contact_at", "agreed_contact_at", "status", "owner_id"
+            "next_contact_at", "agreed_contact_at", "status", "owner_id", "missed_calls"
         ).get(pk=lead.pk)
         changes = {"last_activity_at": now}
         if outcome not in NON_CALL_OUTCOMES:
@@ -436,7 +437,7 @@ def register_activity(
                 changes["next_contact_note"] = next_contact_note
         elif missed:
             # Brak nowego terminu od agenta: ponowna próba za chwilę, sprawa zostaje ta sama
-            changes["next_contact_at"] = now + timedelta(minutes=rules.callback_retry_minutes)
+            changes["next_contact_at"] = callback_retry_at(rules, before["missed_calls"], now)
         elif auto_retry_at is not None:
             changes["next_contact_at"] = auto_retry_at
         elif new_status and new_status != Lead.Status.CALLBACK:

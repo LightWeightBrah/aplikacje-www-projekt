@@ -5,6 +5,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from .models import Lead
+from .rules import callback_retry_at, get_rules
 from .tests import CrmTestBase
 
 
@@ -27,6 +28,7 @@ class MissedCallTests(CrmTestBase):
     def test_no_answer_after_agreed_time_counts_as_missed_and_schedules_retry(self):
         lead = self.appointment(-30)
         agreed = lead.agreed_contact_at
+        before = timezone.now()
         r = self.post(lead, "no_answer")
         self.assertEqual(r.status_code, 201)
         lead.refresh_from_db()
@@ -34,7 +36,10 @@ class MissedCallTests(CrmTestBase):
         self.assertEqual(lead.agreed_contact_at, agreed)
         self.assertEqual(lead.status, Lead.Status.INTERESTED)
         self.assertEqual(lead.next_contact_note, "Wycena")
-        self.assertGreater(lead.next_contact_at, timezone.now() + timedelta(minutes=55))
+        # 1. próba wg ustawień (domyślnie za 15 min, w godzinach i dniach pracy)
+        expected = callback_retry_at(get_rules(), 0, before)
+        self.assertLess(abs((lead.next_contact_at - expected).total_seconds()), 60)
+        self.assertGreaterEqual(lead.next_contact_at, before + timedelta(minutes=15))
 
     def test_lead_is_not_overdue_after_missed_call_so_next_lead_can_be_taken(self):
         lead = self.appointment(-30)

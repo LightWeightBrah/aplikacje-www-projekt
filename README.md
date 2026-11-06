@@ -224,15 +224,15 @@ Format: pierwszy arkusz, **pierwszy wiersz to nagłówki**, max 5 MB i 5000 wier
 
 ## Zasady pracy z leadami
 
-Manager ustawia je na stronie **Ustawienia** (`/crm/settings/`) albo przez `PATCH /api/settings/`. Wartości domyślne bierze się z `config/settings.py` (`LEAD_*`, `CALLBACK_RETRY_MINUTES`), po pierwszej zmianie obowiązują te zapisane w bazie (`TeamRules`).
+Manager ustawia je na stronie **Ustawienia** (`/crm/settings/`) albo przez `PATCH /api/settings/`. Wartości domyślne bierze się z `config/settings.py` (`LEAD_*`, `CALLBACK_RETRY_STEPS`, `WORK_DAYS`), po pierwszej zmianie obowiązują te zapisane w bazie (`TeamRules`).
 
 | Zasada | Domyślnie |
 |---|---|
-| limit nieodebranych prób jednego agenta; potem lead wraca do puli, a ten agent go już nie dostanie | 3 |
+| limit nieodebranych prób jednego agenta; potem lead wraca do puli, a ten agent go już nie dostanie | 5 |
 | tylu różnych agentów bez skutku i lead dostaje status „nieosiągalny” | 5 |
 | ponowna próba po 1. / 2. / kolejnym nieodebraniu | 2 godz. / 1 dzień / 2 dni |
-| godziny pracy, w które system ustawia ponowne próby | 9:00–17:00 |
-| ponowna próba po nieodebranym umówionym kontakcie | 60 min |
+| dni i godziny pracy, w które system ustawia ponowne próby (dni wolne są pomijane) | pon–pt, 9:00–17:00 |
+| kolejne próby po nieodebranym umówionym kontakcie (lista, po ostatniej co tyle samo) | 15 min / 1 godz. / 2 godz. / 1 dzień |
 | po tylu godzinach bez ruchu lead wraca do puli (`release_stale_leads`) | 24 godz. |
 | po tylu dniach manager może zwrócić nieosiągalne leady do obiegu | 30 dni |
 
