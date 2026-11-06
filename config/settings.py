@@ -39,6 +39,9 @@ _load_env_file(BASE_DIR / ".env")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 # Serwer firmy (osobno od DEBUG, bo testy Django zawsze wyłączają DEBUG): bez kont demo i podpowiedzi haseł.
 IS_SERVER = not DEBUG
+# Aktywacja urządzeń (crm/device_lock.py): na serwerze CRM otwiera się tylko na urządzeniach
+# aktywowanych kodem od managera. Domyślnie włączona na serwerze, lokalnie wyłączona.
+DEVICE_LOCK = os.environ.get("DJANGO_DEVICE_LOCK", "1" if IS_SERVER else "0") == "1"
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get(
@@ -80,6 +83,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'crm.device_lock.DeviceLockMiddleware',   # tylko aktywowane urządzenia (na serwerze)
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -195,7 +199,7 @@ REST_FRAMEWORK = {
     # parowanie telefonu (6-cyfrowy kod) ma limit prób, żeby kodu nie dało się zgadnąć
     # logowanie: najwyżej 10 prób na minutę z jednego adresu (zgadywanie haseł);
     # w testach wyżej, bo setki testów logują się z tego samego „adresu”
-    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min',
+    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min', 'device_activate': '10/min',
                                'login': '10000/min' if 'test' in __import__('sys').argv else '10/min'},
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }

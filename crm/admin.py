@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin
 
 from .models import (
+    AccessDevice,
     Activity,
     AgentProfile,
     Company,
@@ -108,6 +109,12 @@ class TeamRulesAdmin(admin.ModelAdmin):
 
 
 from .models import WorkDay  # noqa: E402  (dzień pracy: przyjście / wyjście agenta)
+
+
+@admin.register(AccessDevice)
+class AccessDeviceAdmin(admin.ModelAdmin):
+    list_display = ("name", "created_at", "last_seen", "revoked_at")
+    exclude = ("token_hash",)
 
 
 @admin.register(WorkDay)

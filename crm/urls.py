@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import rules_api, users_api, views, work_api
+from . import device_api, rules_api, users_api, views, work_api
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -24,6 +24,10 @@ urlpatterns = [
     path("work/summary/", work_api.WorkSummaryView.as_view(), name="work-summary"),
     # oferty
     path("work/contact/", work_api.WorkContactView.as_view(), name="work-contact"),
+    path("device/activate/", device_api.DeviceActivateView.as_view(), name="device-activate"),
+    path("devices/", device_api.DeviceListView.as_view(), name="devices"),
+    path("devices/code/", device_api.DeviceCodeView.as_view(), name="device-code"),
+    path("devices/<int:pk>/revoke/", device_api.DeviceRevokeView.as_view(), name="device-revoke"),
     path("work/login/", work_api.WorkLoginView.as_view(), name="work-login"),
     path("work/logout/", work_api.WorkLogoutView.as_view(), name="work-logout"),
     path("work/attendance/", work_api.AttendanceView.as_view(), name="work-attendance"),

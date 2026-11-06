@@ -9,7 +9,10 @@ from django.test import TestCase, override_settings
 
 from .roles import MANAGER
 
+FAST = override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 
+
+@FAST
 class StartFirmTests(TestCase):
     def test_creates_manager_with_typed_password(self):
         with mock.patch("getpass.getpass", side_effect=["Mocne-Haslo-2026", "Mocne-Haslo-2026"]):
@@ -44,6 +47,7 @@ class LoginDemoHintTests(TestCase):
         self.assertContains(self.client.get("/crm/login/"), "Konta demo")
 
 
+@FAST
 class LoginThrottleTests(TestCase):
     def setUp(self):
         from django.core.cache import cache

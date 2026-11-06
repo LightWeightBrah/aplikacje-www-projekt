@@ -24,6 +24,18 @@ def login_page(request):
     return render(request, "crm/login.html", {"show_demo": not settings.IS_SERVER})
 
 
+def activate_page(request):
+    """Ekran „To urządzenie nie ma dostępu” z polem na kod aktywacji (crm/device_lock.py)."""
+    from django.conf import settings
+    from django.shortcuts import redirect
+
+    from .device_lock import device_for
+
+    if not settings.DEVICE_LOCK or device_for(request):
+        return redirect("/crm/login/")   # blokada wyłączona albo urządzenie już aktywne
+    return render(request, "crm/activate.html")
+
+
 def dialer_apk(request):
     """Aplikacja Solid Dialer do pobrania prosto na telefon: /crm/dialer.apk.
 

@@ -51,6 +51,8 @@ const CRM = (() => {
     const r = await fetch(path, { ...options, headers });
     if (r.status === 401 && retry && (await refreshToken())) return api(path, options, false);
     if (r.status === 401) { logout(); throw new Error("Sesja wygasła"); }
+    // manager zablokował to urządzenie – wracamy na ekran aktywacji
+    if (r.status === 403 && r.headers.get("X-Device-Lock")) { location.href = "/crm/activate/"; throw new Error("Urządzenie bez dostępu"); }
     return r;
   }
 
@@ -256,6 +258,27 @@ const CRM = (() => {
         err.hidden = false;
         btn.disabled = false;
       }
+    });
+  }
+
+  /* Ekran „To urządzenie nie ma dostępu”: kod od managera + nazwa urządzenia → ciasteczko urządzenia. */
+  function initActivate() {
+    initTheme();
+    const form = $("act-form"), err = $("act-error");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const code = $("act-code").value.trim(), name = $("act-name").value.trim();
+      if (!code || !name) { err.textContent = "Wpisz kod i nazwę urządzenia."; err.hidden = false; return; }
+      const btn = form.querySelector("button"); btn.disabled = true;
+      try {
+        const r = await fetch("/api/device/activate/", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, name }),
+        });
+        if (r.status === 429) throw new Error("Za dużo prób. Odczekaj minutę.");
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Nie udało się aktywować.");
+        location.href = LOGIN_URL;
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     });
   }
 
@@ -523,5 +546,5 @@ const CRM = (() => {
     load();
   }
 
-  return { initLogin, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser };
+  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser };
 })();

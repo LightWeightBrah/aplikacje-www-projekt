@@ -97,8 +97,27 @@ application = get_wsgi_application()
 - **Static files:** URL `/static/` → Directory `/home/TWOJLOGIN/aplikacje-www-projekt/staticfiles`
 - **Force HTTPS:** włączone.
 
-Kliknij zielony **Reload** na górze. Wejdź na `https://TWOJLOGIN.eu.pythonanywhere.com` i zaloguj się
-kontem managera.
+Kliknij zielony **Reload** na górze.
+
+## 5a. Aktywacja pierwszego urządzenia
+
+Na serwerze CRM otwiera się **tylko na aktywowanych urządzeniach** – obcy, który zna adres,
+widzi wyłącznie „To urządzenie nie ma dostępu” (bez ekranu logowania). Pierwszy kod weź z konsoli:
+
+```bash
+cd ~/aplikacje-www-projekt
+workon solidcrm
+python manage.py device_code
+```
+
+Wejdź na `https://TWOJLOGIN.eu.pythonanywhere.com`, wpisz kod i nazwę urządzenia (np. „Laptop Juliana”),
+potem zaloguj się kontem managera. Kolejne urządzenia: w CRM **Zarządzanie → Ustawienia i oferty →
+Urządzenia z dostępem → „Nowy kod aktywacji”**. Tam też blokujesz urządzenie (np. zgubiony laptop,
+odejście agenta). Kod działa raz i 24 godziny.
+
+Aplikacja Solid Dialer na telefonie nie potrzebuje aktywacji przeglądarki – łączy się własnym kodem
+parowania. Ale żeby agent mógł na telefonie pobrać aplikację i otworzyć CRM w przeglądarce telefonu,
+telefon też trzeba aktywować kodem.
 
 ## 6. Pierwsze kroki w CRM
 

@@ -8,8 +8,8 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232456d6'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='17' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
     {# motyw: domyślnie jasny (jak CRM-y, do których przywykł zespół); „auto” = jak w systemie #}
     <script>try{var t=localStorage.getItem("crm_theme")||"light";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=74">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=74">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=76">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=76">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -144,11 +144,11 @@
     </form>
 </dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=74"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=74"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=74"></script>
-<script src="{% static 'crm/js/search.js' %}?v=74"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=74"></script>
+<script src="{% static 'crm/js/app.js' %}?v=76"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=76"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=76"></script>
+<script src="{% static 'crm/js/search.js' %}?v=76"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=76"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();</script>
 {% block scripts %}{% endblock %}
 </body>

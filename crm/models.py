@@ -613,3 +613,45 @@ class WorkDay(models.Model):
 
     def __str__(self):
         return f"{self.user} {self.date}"
+
+
+class AccessDevice(models.Model):
+    """Komputer albo telefon, który może otworzyć CRM (jak certyfikat w przeglądarce).
+
+    Na serwerze firmy (DEVICE_LOCK) urządzenie bez aktywacji widzi tylko ekran
+    „To urządzenie nie ma dostępu” – nawet ekranu logowania. Aktywacja = jednorazowy kod
+    od managera; przeglądarka dostaje wtedy tajny klucz w ciasteczku. W bazie trzymamy
+    tylko skrót (hash) klucza, więc wyciek bazy nie daje dostępu.
+    """
+
+    name = models.CharField("nazwa urządzenia", max_length=80)
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+", verbose_name="kod wydał")
+    created_at = models.DateTimeField("aktywowane", auto_now_add=True)
+    last_seen = models.DateTimeField("ostatnio używane", null=True, blank=True)
+    revoked_at = models.DateTimeField("zablokowane", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Urządzenie z dostępem"
+        verbose_name_plural = "Urządzenia z dostępem"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name
+
+
+class ActivationCode(models.Model):
+    """Jednorazowy kod aktywacji urządzenia (ważny 24 h). W bazie tylko skrót kodu."""
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    device = models.ForeignKey(AccessDevice, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        verbose_name = "Kod aktywacji urządzenia"
+        verbose_name_plural = "Kody aktywacji urządzeń"

@@ -68,8 +68,23 @@
         </form>
         <div class="ann-list" id="ann-list"></div>
     </section>
+
+    <section class="card" id="dev-card">
+        <div class="dev-head">
+            <div><h2>Urządzenia z dostępem</h2>
+                <p class="card-desc">Jak certyfikat w przeglądarce: CRM otwiera się tylko na komputerach i telefonach, które aktywujesz. Obcy, który zna adres, widzi tylko „To urządzenie nie ma dostępu” – nawet ekranu logowania. Na nowym urządzeniu wpisuje się jednorazowy kod (ważny 24 h).</p>
+                <p class="card-desc" id="dev-state"></p></div>
+            <button type="button" class="btn btn-primary" id="dev-new">Nowy kod aktywacji</button>
+        </div>
+        <div class="dev-code" id="dev-code" hidden></div>
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>Urządzenie</th><th>Aktywowane</th><th>Ostatnio używane</th><th>Kod wydał</th><th></th></tr></thead>
+            <tbody id="dev-list"></tbody>
+        </table></div>
+    </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=74"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=74"></script>
-<script>CRM.initSettings();CRM.initOfferSettings();</script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=76"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=76"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=76"></script>
+<script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();</script>{% endblock %}

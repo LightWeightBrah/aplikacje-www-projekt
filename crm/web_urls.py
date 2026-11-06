@@ -19,4 +19,5 @@ urlpatterns = [
     path("leads/", web_views.lead_list, name="lead-list"),
     path("sw.js", web_views.service_worker, name="sw"),
     path("dialer.apk", web_views.dialer_apk, name="dialer-apk"),
+    path("activate/", web_views.activate_page, name="activate"),
 ]
