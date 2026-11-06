@@ -1100,19 +1100,20 @@ class ExcelImportTests(CrmTestBase):
     def test_invalid_rows_are_reported_with_row_numbers(self):
         upload = make_xlsx(
             [
-                ["", "600100210"],
+                ["", ""],
                 ["X", "123"],
                 ["Y", "600100211", "zly-mail"],
                 ["Z", "600100212", "", "Firma", "12345"],
                 ["Dobry", "600100213"],
+                ["", "600100214", "", "Sama Firma"],   # bez osoby kontaktowej: wystarczy telefon
             ]
         )
 
         response = self.do_import(upload)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["created"], 1)
-        self.assertEqual([e["row"] for e in response.data["errors"]], [2, 3, 4, 5])
+        self.assertEqual(response.data["created"], 2)
+        self.assertEqual([e["row"] for e in response.data["errors"]], [3, 4, 5])
         self.assertEqual(response.data["total_rows"], 5)
 
     # Nagłówki rozpoznajemy też w innych zapisach
@@ -1145,7 +1146,7 @@ class ExcelImportTests(CrmTestBase):
 
     # Gdy żaden wiersz nie jest poprawny, nie powstaje pusta paczka
     def test_no_valid_rows_creates_nothing(self):
-        response = self.do_import(make_xlsx([["X", "123"], ["", "600100230"]]))
+        response = self.do_import(make_xlsx([["X", "123"], ["Y", "12"]]))
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(LeadBatch.objects.count(), 0)

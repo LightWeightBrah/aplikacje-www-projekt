@@ -1,11 +1,11 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Ustawienia zespołu – LeadCRM{% endblock %}
+{% block title %}Ustawienia zespołu – Solid CRM{% endblock %}
 {% block nav_settings %}active{% endblock %}
 {% block content %}
 <header class="page-head">
     <div>
-        <h1>Ustawienia zespołu</h1>
+        <h1>Ustawienia i oferty</h1>
         <p class="muted">Zasady pracy z leadami dla wszystkich agentów. Zmiany działają od razu dla nowych rozmów.</p>
     </div>
 </header>
@@ -27,7 +27,49 @@
             <span class="muted small" id="rules-meta"></span>
         </div>
     </form>
+
+    <section class="card" id="draw-card">
+        <h2>Losowanie nowych firm</h2>
+        <p class="card-desc">Dotyczy całego zespołu: z jakiej kolejności „Następny klient” bierze nowe firmy z bazy i puli. Spółki (sp. z o.o., S.A., sp.j., sp.k.) rozpoznajemy po nazwie.</p>
+        <label class="check"><input type="radio" name="draw" value="random"> <span><strong>Wszystko losowo</strong><small class="muted">Firmy jednoosobowe i spółki w jednej puli – spółki też są obdzwaniane na bieżąco.</small></span></label>
+        <label class="check"><input type="radio" name="draw" value="last"> <span><strong>Najpierw firmy jednoosobowe, potem spółki</strong><small class="muted">Spółki trafią do agentów dopiero, gdy w bazie skończą się firmy jednoosobowe.</small></span></label>
+        <p class="muted small" id="draw-msg" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="offer-card">
+        <h2>Oferty dla klientów</h2>
+        <p class="card-desc">Agent wybiera „4 Wyślij ofertę”, taryfę i termin follow-upu. Oferta idzie e-mailem tam, gdzie ustawisz niżej: sformatowana jak we wzorniku ofert, a dodatkowo jako załącznik (plik do przesłania klientowi). Bez skonfigurowanego serwera poczty agent kopiuje gotową ofertę albo pobiera plik.</p>
+        <p class="card-desc" id="mail-state"></p>
+        <form id="offer-form" class="form-grid" novalidate>
+            <label class="field">Sposób wysyłki
+                <select id="oc-mode" class="select"><option value="forward">Na jeden adres (np. Czarek wysyła klientom)</option><option value="direct">Od razu do klienta</option></select></label>
+            <label class="field">Adres do przekazywania ofert<input id="oc-email" type="email" class="select" placeholder="np. czarek@firma.pl"></label>
+            <label class="field">Kto wysyła oferty (imię)<input id="oc-name" class="select" maxlength="60" placeholder="Czarek"></label>
+            <label class="field">Domyślny okres umowy<select id="oc-term" class="select"><option value="36">36 miesięcy</option><option value="24">24 miesiące</option></select></label>
+            <label class="field">Mnożnik prowizji – 36 mies.<input id="oc-c36" class="select" inputmode="decimal" placeholder="9"></label>
+            <label class="field">Mnożnik prowizji – 24 mies.<input id="oc-c24" class="select" inputmode="decimal" placeholder="6"></label>
+            <label class="field">Nazwa promocji<input id="oc-promo" class="select" maxlength="80" placeholder="6 miesięcy gratis"></label>
+            <label class="field full">Początek oferty<textarea id="oc-greeting" class="select" rows="3"></textarea></label>
+            <label class="field full">Zakończenie oferty<textarea id="oc-closing" class="select" rows="2"></textarea></label>
+            <label class="field">Podpis pod ofertą<input id="oc-signature" class="select" maxlength="120" placeholder="Zespół Ofert T-Mobile"></label>
+            <label class="field">Telefon do kontaktu w ofercie (opcjonalnie)<input id="oc-phone" class="select" maxlength="30" inputmode="tel" placeholder="np. 600 123 456"></label>
+            <div class="full actions"><button type="submit" class="btn btn-primary">Zapisz ustawienia ofert</button><span class="muted small" id="oc-msg"></span></div>
+        </form>
+    </section>
+
+    <section class="card" id="ann-card">
+        <h2>Solid info – informacje dla zespołu</h2>
+        <p class="card-desc">Widzą je wszyscy agenci w prawym panelu przy dzwonieniu: aktualne promocje, argumenty, cele dnia.</p>
+        <form id="ann-form" class="form-grid" novalidate>
+            <label class="field">Tytuł<input id="ann-title" class="select" maxlength="120" placeholder="np. Nowa promocja od poniedziałku"></label>
+            <label class="check" style="align-self:end"><input type="checkbox" id="ann-pinned"> <span>Przypnij na górze</span></label>
+            <label class="field full">Treść<textarea id="ann-body" class="select" rows="3"></textarea></label>
+            <div class="full actions"><button type="submit" class="btn btn-primary">Dodaj informację</button></div>
+        </form>
+        <div class="ann-list" id="ann-list"></div>
+    </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=59"></script>
-<script>CRM.initSettings();</script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=65"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=65"></script>
+<script>CRM.initSettings();CRM.initOfferSettings();</script>{% endblock %}

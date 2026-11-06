@@ -30,6 +30,41 @@ SAMPLE_ROWS = [
 ]
 
 
+# Baza w układzie z CEIDG (taki plik dostają agenci): nagłówki mają tylko kolumny A, B, C i F,
+# reszta jest bez nazw. Wszystkie dane są zmyślone (numery 555…, NIP/REGON fikcyjne).
+CEIDG_HEADERS = ["tel", "data kontaktu", "termin oddzwonki-opis klienta(co do kiedy)", None, None, "nip"] + [None] * 12
+
+
+def _ceidg_row(phone, nip, regon, name, phone_raw, street, building, apartment, city, postal, post=None):
+    from datetime import datetime
+    return [phone, None, None, 1, datetime(2020, 7, 6, 23, 59), nip, regon, "F", name, phone_raw,
+            street, building, apartment, None, city, postal, post or city, None]
+
+
+CEIDG_ROWS = [
+    _ceidg_row(555020101, 5550001001, 555001001, "ZAKŁAD STOLARSKI ADAM PRZYKŁADOWY", 555020101, "ul. Leśna", 4, None, "Olsztyn", "10-001"),
+    _ceidg_row(555020102, 5550001002, 55500102, "\"KWIACIARNIA POD LIPĄ\" BEATA TESTOWA", "555 02 01 02", "ul. Lipowa", 12, 3, "Ostróda", "14-100"),
+    _ceidg_row(555020103, 5550001003, 555001003, "USŁUGI BUDOWLANE CEZARY FIKCYJNY", "48555020103", None, 27, None, "Kolonia Wzorcowa", "-", "Barczewo"),
+    # przesunięty wiersz: cudzysłów rozbił nazwę firmy na dwie kolumny (jak w prawdziwych plikach)
+    ["555020104", None, None, 1, None, 5550001004, 555001004, "F", "\"HURTOWNIA \\\"ZEFIR\\\"", " DOROTA PRZYKŁAD\"",
+     "555-020-104", "ul. Polna", 8, None, None, "Elbląg", "82-300", "Elbląg"],
+    # numer budynku zamieniony przez Excela na datę (5/2 -> 5 lutego)
+    _ceidg_row(555020105, 5550001005, 555001005, "SKLEP SPOŻYWCZY EMIL WZÓR", 555020105, "ul. Długa", None, None, "Iława", "14-200"),
+]
+
+
+def build_ceidg_sample_workbook():
+    from datetime import datetime
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Arkusz1"
+    sheet.append(CEIDG_HEADERS)
+    for row in CEIDG_ROWS:
+        sheet.append(row)
+    sheet.cell(row=6, column=12, value=datetime(2026, 2, 5))  # „5/2” zapisane jako data
+    return workbook
+
+
 def build_sample_workbook():
     workbook = Workbook()
     sheet = workbook.active

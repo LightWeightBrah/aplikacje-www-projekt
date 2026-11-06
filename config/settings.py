@@ -153,6 +153,8 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # parowanie telefonu (6-cyfrowy kod) ma limit prób, żeby kodu nie dało się zgadnąć
+    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min'},
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
@@ -170,3 +172,23 @@ SIMPLE_JWT = {
     "CHECK_REVOKE_TOKEN": True,
     "UPDATE_LAST_LOGIN": True,  # panel użytkowników pokazuje ostatnie logowanie
 }
+
+# Wysyłka ofert e-mailem: działa, gdy w środowisku jest ustawiony serwer poczty (EMAIL_HOST itd.).
+# Bez niego CRM nie wysyła sam, tylko przygotowuje gotową wiadomość (przycisk „Otwórz w poczcie” / „Kopiuj”).
+import os as _os
+
+if _os.environ.get("EMAIL_HOST"):
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "OPTIONS": {
+                "host": _os.environ["EMAIL_HOST"],
+                "port": int(_os.environ.get("EMAIL_PORT", "587")),
+                "username": _os.environ.get("EMAIL_HOST_USER", ""),
+                "password": _os.environ.get("EMAIL_HOST_PASSWORD", ""),
+                "use_tls": _os.environ.get("EMAIL_USE_TLS", "1") == "1",
+            },
+        },
+    }
+DEFAULT_FROM_EMAIL = _os.environ.get("DEFAULT_FROM_EMAIL", _os.environ.get("EMAIL_HOST_USER") or "crm@localhost")
+OFFER_EMAIL_ENABLED = bool(_os.environ.get("EMAIL_HOST"))

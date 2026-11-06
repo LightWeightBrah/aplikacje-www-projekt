@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.renderers import BaseRenderer
 
-from .models import Activity, AgentProfile, Lead, LeadAssignment, SaleItem
+from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, Lead, LeadAssignment, SaleItem
 from .roles import AGENT
 from .rules import attempt_times, get_rules, suggest_retry
 
@@ -36,6 +36,16 @@ OUTCOME_TO_STATUS = {
     Activity.Outcome.SOLD: Lead.Status.WON,
     Activity.Outcome.REFUSED: Lead.Status.LOST,
     Activity.Outcome.WRONG_NUMBER: Lead.Status.DO_NOT_CALL,
+    Activity.Outcome.OFFER: Lead.Status.OFFER,
+}
+
+# Pominięcie bez dzwonienia zamyka leada; status zależy od powodu
+SKIP_TO_STATUS = {
+    Activity.SkipReason.CLOSED: Lead.Status.DO_NOT_CALL,
+    Activity.SkipReason.HAS_TMOBILE: Lead.Status.LOST,
+    Activity.SkipReason.NO_PHONE: Lead.Status.DO_NOT_CALL,
+    Activity.SkipReason.DUPLICATE: Lead.Status.DO_NOT_CALL,
+    Activity.SkipReason.OTHER: Lead.Status.LOST,
 }
 
 # Zamknięte leady nie mają już kolejnego kroku
@@ -53,6 +63,14 @@ OUTCOMES_THAT_END_MISSES = (
     Activity.Outcome.SOLD,
     Activity.Outcome.REFUSED,
     Activity.Outcome.WRONG_NUMBER,
+    Activity.Outcome.OFFER,
+)
+# Po tych wynikach klient wie, z jaką ofertą dzwonimy
+OUTCOMES_THAT_INTRODUCE = (
+    Activity.Outcome.INTERESTED,
+    Activity.Outcome.OFFER,
+    Activity.Outcome.SOLD,
+    Activity.Outcome.REFUSED,
 )
 
 CLAIM_ATTEMPTS = 5  # tyle razy próbujemy, gdy ktoś inny zdąży przejąć wylosowany lead
@@ -106,7 +124,7 @@ def with_owner_tries(queryset):
     )
     # ostatni kontakt z leadem (bez samych notatek): wynik, kiedy i kto, do linii „Ostatnio: …” na listach
     last = (
-        Activity.objects.filter(lead=OuterRef("pk")).exclude(outcome=Activity.Outcome.NOTE)
+        Activity.objects.filter(lead=OuterRef("pk")).exclude(outcome__in=NON_CALL_OUTCOMES)
         .order_by("-created_at", "-pk")
     )
     return queryset.annotate(
@@ -144,8 +162,21 @@ def due_leads(user, minutes):
     return overdue, upcoming
 
 
-def claim_next_lead(user, batch_id=None):
+# Spółki (sp. z o.o., S.A., spółki osobowe) rozpoznajemy po nazwie z bazy: w CEIDG są tylko firmy
+# jednoosobowe, spółki przychodzą z KRS. Wielu agentów woli najpierw dzwonić do firm jednoosobowych.
+COMPANY_ENTITY_RE = r"(sp\.?\s*z\s*o\.?\s*o|spółka|spolka|s\.\s?a\.|s\.a$|sp\.\s?[jkp]\.)"
+
+
+def is_company_entity(name):
+    """Czy nazwa firmy wygląda na spółkę (sp. z o.o., S.A., sp.j., sp.k., „spółka”)."""
+    return bool(re.search(COMPANY_ENTITY_RE, name or "", re.IGNORECASE))
+
+
+def claim_next_lead(user, batch_id=None, companies_last=None):
     """Losuje lead z puli i przypisuje go agentowi.
+
+    companies_last=True: spółki dostaje dopiero wtedy, gdy skończą się firmy jednoosobowe
+    (domyślnie decyduje ustawienie zespołu TeamRules.companies_last, które zmienia manager).
 
     Przypisanie jest atomowe: warunkowy UPDATE zadziała tylko wtedy, gdy lead
     nadal nie ma opiekuna, więc dwóch agentów nie dostanie tego samego leada.
@@ -158,12 +189,25 @@ def claim_next_lead(user, batch_id=None):
         Lead.objects.filter(owner__isnull=True, status=Lead.Status.NEW)
         # ten sam agent nie dostaje leada, który już wcześniej prowadził
         .exclude(assignments__from_agent=user)
+        # bazy przypisane innym agentom są tylko dla nich
+        .filter(Q(batch__isnull=True) | Q(batch__assigned_to__isnull=True) | Q(batch__assigned_to=user))
     )
     if batch_id is not None:
         pool = pool.filter(batch_id=batch_id)
+    # najpierw własna baza agenta (jak „swój Excel”), dopiero gdy się skończy: wspólna pula
+    sources = [pool.filter(batch__assigned_to=user), pool]
+    if companies_last is None:
+        companies_last = get_rules().companies_last
+    if companies_last:
+        not_company = ~Q(company__name__iregex=COMPANY_ENTITY_RE)
+        sources = [src.filter(not_company) for src in sources] + sources
 
     for _ in range(CLAIM_ATTEMPTS):
-        lead_id = pool.order_by("?").values_list("id", flat=True).first()
+        lead_id = None
+        for source in sources:
+            lead_id = source.order_by("?").values_list("id", flat=True).first()
+            if lead_id is not None:
+                break
         if lead_id is None:
             break
         with transaction.atomic():
@@ -180,10 +224,31 @@ def claim_next_lead(user, batch_id=None):
     raise NoLeadsAvailable
 
 
-UNDO_WINDOW_SECONDS = 30   # serwer jest łaskawszy niż pasek w kolejce (10 s), żeby opóźnienie sieci nie psuło cofania
+def base_progress(user):
+    """Postęp w bazach przypisanych agentowi: ile leadów w bazie, ile jeszcze czeka na pierwszy telefon.
+
+    `left` = leady, które „Daj kolejnego” może jeszcze wylosować z tej bazy; `done` = reszta
+    (wylosowane, obdzwonione, pominięte albo zamknięte).
+    """
+    from .models import LeadBatch  # lokalnie: unikamy zmiany kolejności importów na górze pliku
+
+    rows = []
+    for batch in LeadBatch.objects.filter(assigned_to=user).order_by("created_at"):
+        leads = batch.leads.all()
+        total = leads.count()
+        left = (
+            leads.filter(owner__isnull=True, status=Lead.Status.NEW)
+            .exclude(assignments__from_agent=user)
+            .count()
+        )
+        rows.append({"id": batch.pk, "name": batch.name, "total": total, "left": left, "done": total - left})
+    return rows
+
+
+UNDO_WINDOW_SECONDS = 30  # serwer jest łaskawszy niż pasek w kolejce (10 s), żeby opóźnienie sieci nie psuło cofania
 UNDO_FIELDS = (
     "owner_id", "status", "claimed_at", "next_contact_at", "next_contact_note",
-    "agreed_contact_at", "missed_calls", "attempts_count", "last_activity_at",
+    "agreed_contact_at", "missed_calls", "attempts_count", "last_activity_at", "knows_caller",
 )
 
 
@@ -231,6 +296,8 @@ def undo_activity(activity, user, is_manager=False):
         ).delete()
         restored = {k: _restore_value(k, v) for k, v in state.items()}
         Lead.objects.filter(pk=lead.pk).update(**restored)
+        from .models import Offer
+        Offer.objects.filter(activity=activity).delete()   # cofnięta „Wysłana oferta” znika razem z ofertą
         activity.delete()
     return Lead.objects.get(pk=lead.pk)
 
@@ -238,28 +305,39 @@ def undo_activity(activity, user, is_manager=False):
 def add_sale_items(activity, lines):
     """Zapisuje pozycje sprzedaży do rozmowy „Sprzedane”.
 
-    `lines` to lista par (produkt, ilość). Nazwa, jednostka i cena są kopiowane z katalogu
-    w chwili sprzedaży, a wartość pozycji to ilość × cena jednostkowa.
+    `lines` to lista krotek (produkt, ilość[, okres w miesiącach[, promocja]]). Nazwa, jednostka
+    i cena są kopiowane z katalogu w chwili sprzedaży. Wartość pozycji: dla taryf pierwszy numer
+    + kolejne po dopłacie (Product.monthly_total), dla zwykłych produktów ilość × cena.
+    Prowizja = wartość miesięczna × mnożnik z ustawień ofert (dla umów z okresem).
     """
-    return SaleItem.objects.bulk_create(
-        [
-            SaleItem(
-                activity=activity,
-                product=product,
-                product_name=product.name,
-                unit=product.unit,
-                unit_price=product.price,
-                quantity=quantity,
-                total=product.price * quantity,
-            )
-            for product, quantity in lines
-        ]
-    )
+    from .models import OfferConfig
+
+    config = OfferConfig.get()
+    items = []
+    for line in lines:
+        product, quantity = line[0], line[1]
+        term = line[2] if len(line) > 2 else None
+        promo = bool(line[3]) if len(line) > 3 else False
+        total = product.monthly_total(quantity, promo)
+        commission = (total * config.multiplier(term)).quantize(Decimal("0.01")) if term else Decimal("0.00")
+        items.append(SaleItem(
+            activity=activity,
+            product=product,
+            product_name=product.name,
+            unit=product.unit,
+            unit_price=product.promo_price if promo and product.promo_price is not None else product.price,
+            quantity=quantity,
+            total=total,
+            term_months=term,
+            promo=promo,
+            commission=commission,
+        ))
+    return SaleItem.objects.bulk_create(items)
 
 
 def register_activity(
     lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None,
-    sale_items=None,
+    sale_items=None, skip_reason="", introduced=None,
 ):
     """Zapisuje rozmowę (Activity) i od razu aktualizuje lead.
 
@@ -287,7 +365,7 @@ def register_activity(
             "next_contact_at", "agreed_contact_at", "status", "owner_id"
         ).get(pk=lead.pk)
         changes = {"last_activity_at": now}
-        if outcome != Activity.Outcome.NOTE:
+        if outcome not in NON_CALL_OUTCOMES:
             changes["attempts_count"] = F("attempts_count") + 1
 
         # Umówiony kontakt, do którego nie dodzwoniono (termin minął lub właśnie nadszedł)
@@ -335,10 +413,17 @@ def register_activity(
         elif outcome in OUTCOMES_THAT_END_MISSES:
             # Rozmowa się odbyła: licznik zerujemy, a nowy umówiony termin zapamiętujemy
             changes["missed_calls"] = 0
-            agreed = outcome in (Activity.Outcome.CALLBACK, Activity.Outcome.INTERESTED)
+            agreed = outcome in (Activity.Outcome.CALLBACK, Activity.Outcome.INTERESTED, Activity.Outcome.OFFER)
             changes["agreed_contact_at"] = next_contact_at if agreed else None
 
+        if outcome in OUTCOMES_THAT_INTRODUCE or introduced:
+            changes["knows_caller"] = True
+        elif introduced is False and outcome == Activity.Outcome.CALLBACK:
+            changes["knows_caller"] = False
+
         new_status = OUTCOME_TO_STATUS.get(outcome)
+        if outcome == Activity.Outcome.SKIPPED:
+            new_status = SKIP_TO_STATUS.get(skip_reason, Lead.Status.LOST)
         if new_status:
             changes["status"] = new_status
 
@@ -359,12 +444,13 @@ def register_activity(
             changes["next_contact_note"] = ""
 
         # Do historii: na kiedy był zaplanowany ten kontakt i na kiedy ustawiono następny
-        is_call = outcome != Activity.Outcome.NOTE
+        is_call = outcome not in NON_CALL_OUTCOMES
         rescheduled = changes.get("next_contact_at")
         activity = Activity.objects.create(
             lead=lead,
             agent=agent,
             outcome=outcome,
+            skip_reason=skip_reason if outcome == Activity.Outcome.SKIPPED else "",
             note=note,
             planned_at=before["next_contact_at"] if is_call else None,
             rescheduled_to=rescheduled if is_call else None,
@@ -611,7 +697,7 @@ def day_summary(user):
     start, end = day_bounds(timezone.localdate())
     now = timezone.now()
     mine = Activity.objects.filter(agent=user, created_at__gte=start, created_at__lt=end).exclude(
-        outcome=Activity.Outcome.NOTE
+        outcome__in=NON_CALL_OUTCOMES
     )
     waiting = _scheduled_leads(user)
     past = waiting.filter(next_contact_at__lt=now)
@@ -642,26 +728,65 @@ def _ics_escape(text):
     )
 
 
+ICS_SUMMARY_PREFIX = {
+    Lead.Status.CALLBACK: "Oddzwonić",
+    Lead.Status.INTERESTED: "Zainteresowany",
+    Lead.Status.OFFER: "Follow-up oferty",
+    Lead.Status.NEW: "Ponowna próba",
+}
+
+
+def _ics_fold(line):
+    """Zawija linię co 75 bajtów (wymóg formatu iCalendar, RFC 5545); polskie znaki nie są dzielone."""
+    out, current = [], ""
+    for char in line:
+        limit = 75 if not out else 74   # linie kontynuacji zaczynają się od spacji
+        if len((current + char).encode("utf-8")) > limit:
+            out.append(current)
+            current = char
+        else:
+            current += char
+    out.append(current)
+    return "\r\n ".join(out)
+
+
 def calendar_ics(leads):
-    """Buduje plik kalendarza (.ics): każdy termin kontaktu to 15-minutowe wydarzenie."""
+    """Buduje plik kalendarza (.ics): każdy termin kontaktu to 15-minutowe wydarzenie.
+
+    Plik ma wszystko, czego wymaga import w Google Calendar i Outlooku: METHOD, DTSTAMP,
+    unikalny UID (z godziną terminu, więc przełożony kontakt to nowe wydarzenie) i zawijanie linii.
+    """
     utc = dt_timezone.utc
     stamp = timezone.now().astimezone(utc).strftime("%Y%m%dT%H%M%SZ")
-    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//LeadCRM//PL", "CALSCALE:GREGORIAN"]
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Solid CRM//PL", "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH", "X-WR-CALNAME:Solid CRM – kontakty", "X-WR-TIMEZONE:Europe/Warsaw",
+    ]
     for lead in leads:
         start = lead.next_contact_at.astimezone(utc).strftime("%Y%m%dT%H%M%SZ")
-        description = f"Tel: {lead.phone}. {lead.next_contact_note}".strip()
+        prefix = ICS_SUMMARY_PREFIX.get(lead.status, "Kontakt")
+        description = f"Tel: {lead.phone}"
+        if lead.next_contact_note:
+            description += f"\nSprawa: {lead.next_contact_note}"
+        if lead.contact_name and lead.contact_name != lead.display_name:
+            description += f"\nOsoba: {lead.contact_name}"
         lines += [
             "BEGIN:VEVENT",
-            f"UID:lead-{lead.pk}@leadcrm",
+            f"UID:lead-{lead.pk}-{start}@solidcrm",
             f"DTSTAMP:{stamp}",
             f"DTSTART:{start}",
             "DURATION:PT15M",
-            f"SUMMARY:{_ics_escape('Oddzwonić: ' + lead.contact_name)}",
+            f"SUMMARY:{_ics_escape(prefix + ': ' + lead.display_name)}",
             f"DESCRIPTION:{_ics_escape(description)}",
+            "STATUS:CONFIRMED",
+            "TRANSP:OPAQUE",
+            "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT5M",
+            f"DESCRIPTION:{_ics_escape(prefix)}",
+            "END:VALARM",
             "END:VEVENT",
         ]
     lines.append("END:VCALENDAR")
-    return "\r\n".join(lines) + "\r\n"
+    return "\r\n".join(_ics_fold(line) for line in lines) + "\r\n"
 
 
 class CalendarRenderer(BaseRenderer):
@@ -725,9 +850,9 @@ def agent_stats(users, since, until=None):
         .order_by()
         .values("agent")
         .annotate(
-            calls=Count("id", filter=~Q(outcome=Outcome.NOTE)),
+            calls=Count("id", filter=~Q(outcome__in=NON_CALL_OUTCOMES)),
             answered=Count(
-                "id", filter=~Q(outcome__in=[Outcome.NOTE, Outcome.NO_ANSWER])
+                "id", filter=~Q(outcome__in=[*NON_CALL_OUTCOMES, Outcome.NO_ANSWER])
             ),
             interested=Count("id", filter=Q(outcome=Outcome.INTERESTED)),
             refused=Count("id", filter=Q(outcome=Outcome.REFUSED)),
@@ -798,7 +923,7 @@ def daily_calls(first, last, agent_ids=None):
     _, until = day_bounds(last)
 
     queryset = Activity.objects.filter(created_at__gte=since, created_at__lt=until).exclude(
-        outcome=Activity.Outcome.NOTE
+        outcome__in=NON_CALL_OUTCOMES
     )
     if agent_ids is not None:
         queryset = queryset.filter(agent__in=agent_ids)
@@ -820,7 +945,7 @@ def hourly_calls(day, agent_ids=None):
     """Liczba rozmów (bez notatek) w każdej godzinie (0-23) wskazanego dnia, także z zerami."""
     since, until = day_bounds(day)
     queryset = Activity.objects.filter(created_at__gte=since, created_at__lt=until).exclude(
-        outcome=Activity.Outcome.NOTE
+        outcome__in=NON_CALL_OUTCOMES
     )
     if agent_ids is not None:
         queryset = queryset.filter(agent__in=agent_ids)
@@ -908,6 +1033,7 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
         "date_from": date_from,
         "date_to": date_to,
         "revenue": revenue,
+        "commission": sale_items_in_range(since, until, agent_ids).aggregate(c=Sum("commission"))["c"] or Decimal("0.00"),
         "sales_by_product": by_product,
         "total_leads": leads.count(),
         "pool_leads": pool,
@@ -921,7 +1047,7 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
     }
 
 
-LEADERBOARD_SORT_KEYS = ("sold", "calls", "interested", "revenue")
+LEADERBOARD_SORT_KEYS = ("sold", "calls", "interested", "revenue", "minutes", "commission")
 
 
 def leaderboard(date_from, date_to, sort="sold", me_id=None):
@@ -941,6 +1067,16 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
     avatars = dict(
         AgentProfile.objects.filter(user__in=users).exclude(avatar="").values_list("user_id", "avatar")
     )
+    from .models import CallRequest
+    seconds = dict(
+        CallRequest.objects.filter(user__in=users, state=CallRequest.State.DONE, answered=True,
+                                   ended_at__gte=since, ended_at__lt=until)
+        .order_by().values("user").annotate(s=Sum("duration_seconds")).values_list("user", "s")
+    )
+    commission = dict(
+        sale_items_in_range(since, until, [u.pk for u in users]).order_by()
+        .values("activity__agent").annotate(c=Sum("commission")).values_list("activity__agent", "c")
+    )
     rows = [
         {
             "agent": row["agent"],
@@ -953,6 +1089,8 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
             "answered": row["answered"],
             "interested": row["interested"],
             "answer_rate": row["answer_rate"],
+            "minutes": round((seconds.get(user.pk) or 0) / 60, 1),
+            "commission": commission.get(user.pk) or Decimal("0.00"),
             "is_me": row["agent"] == me_id,
         }
         for user, row in zip(users, agent_stats(users, since, until))
@@ -1014,9 +1152,9 @@ def lookup_leads(queryset, query, limit=8):
         if len(digits) < 3:
             return []
         exact, partial = [], []
-        for pk, phone, nip, krs in queryset.values_list("id", "phone", "company__nip", "company__krs"):
+        for pk, phone, alt, nip, krs in queryset.values_list("id", "phone", "phone_alt", "company__nip", "company__krs"):
             local = _local_phone(phone)
-            if digits == local:
+            if digits == local or (alt and digits == _local_phone(alt)):   # oddzwania z drugiego numeru
                 exact.append((pk, "exact", "phone"))
             elif digits == nip:
                 exact.append((pk, "exact", "nip"))
@@ -1039,7 +1177,7 @@ def lookup_leads(queryset, query, limit=8):
             | Q(company__name__icontains=query)
             | Q(email__icontains=query)
         )
-        .order_by("contact_name")[:limit]
+        .order_by("company__name", "contact_name")[:limit]
     )
     result = []
     for lead in found:

@@ -3,70 +3,76 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}LeadCRM{% endblock %}</title>
+    <title>{% block title %}Solid CRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
-    <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=59">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232456d6'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='17' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+    {# motyw: domyślnie jasny (jak CRM-y, do których przywykł zespół); „auto” = jak w systemie #}
+    <script>try{var t=localStorage.getItem("crm_theme")||"light";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}</script>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=65">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=65">
+    {% block head %}{% endblock %}
 </head>
-<body>
-<div class="shell">
-    <aside class="sidebar">
-        <div class="brand">Lead<span>CRM</span></div>
-        <nav>
-            <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
-            <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Moja kolejka</a>
-            <a href="{% url 'crm:plan' %}" class="{% block nav_plan %}{% endblock %}">Plan dnia<span class="nav-badge" id="plan-badge" hidden></span></a>
-            <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
-            <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Panel managera</a>
-            <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport</a>
-            <a href="{% url 'crm:products' %}" data-manager-only class="{% block nav_products %}{% endblock %}">Produkty</a>
-            <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
-            <a href="{% url 'crm:settings' %}" data-manager-only class="{% block nav_settings %}{% endblock %}">Ustawienia</a>
-            <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
-        </nav>
-        <div class="user-menu">
-            <div class="popover" id="user-popover" hidden>
-                <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
-                <div class="pop-label">Zdjęcie profilowe</div>
-                <div class="avatar-row">
-                    <span class="avatar avatar-lg" id="pop-avatar">?</span>
-                    <div class="avatar-actions">
-                        <button type="button" class="btn-mini" id="avatar-change">Zmień zdjęcie</button>
-                        <button type="button" class="btn-mini ghost" id="avatar-remove" hidden>Usuń</button>
-                    </div>
-                    <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
-                </div>
-                <small class="avatar-msg" id="avatar-msg" role="status" hidden></small>
-                <div class="pop-label">Motyw</div>
-                <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
-                    <button type="button" data-theme-choice="light">Jasny</button>
-                    <button type="button" data-theme-choice="dark">Ciemny</button>
-                    <button type="button" data-theme-choice="auto">Auto</button>
-                </div>
-                <button type="button" class="pop-item" id="notif-open">Powiadomienia i widok…</button>
-                <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
-                <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
-            </div>
-            <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
-                <span class="avatar" id="user-avatar">?</span>
-                <span class="who"><strong id="user-name">…</strong><small id="user-role"></small></span>
-                <span class="chev" aria-hidden="true">&#8963;</span>
-            </button>
-        </div>
-    </aside>
-    <main class="content">
-        <div class="topbar">
-            <div class="gsearch" id="gsearch" role="search">
-                <svg class="gs-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" id="gsearch-input" placeholder="Szukaj leada: numer telefonu, NIP lub nazwisko" autocomplete="off" spellcheck="false" aria-label="Szukaj leada po numerze telefonu, NIP lub nazwisku">
-                <kbd class="gs-key" aria-hidden="true">/</kbd>
-                <button type="button" class="gs-clear" id="gsearch-clear" aria-label="Wyczyść wyszukiwanie">&times;</button>
-                <span class="gs-enter" aria-hidden="true">Enter: otwórz w kolejce</span>
+<body class="{% block body_class %}{% endblock %}">
+<header class="topnav">
+    <a class="logo" href="{% url 'crm:queue' %}" aria-label="Solid CRM – dzwonienie"><span class="logo-mark">S</span><span class="logo-text">SOLID<b>CRM</b></span></a>
+    <nav class="mainnav" aria-label="Menu główne">
+        <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Dzwonienie</a>
+        <a href="{% url 'crm:plan' %}" class="{% block nav_plan %}{% endblock %}">Kalendarz<span class="nav-badge" id="plan-badge" hidden></span></a>
+        <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Wyniki</a>
+        <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
+        <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Zespół</a>
+        <div class="nav-more" data-manager-only>
+            <button type="button" class="nav-more-btn" id="nav-more-btn" aria-haspopup="true" aria-expanded="false">Zarządzanie <span aria-hidden="true">▾</span></button>
+            <div class="nav-more-menu" id="nav-more-menu" hidden>
+                <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport baz</a>
+                <a href="{% url 'crm:products' %}" data-manager-only class="{% block nav_products %}{% endblock %}">Taryfy i produkty</a>
+                <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
+                <a href="{% url 'crm:settings' %}" data-manager-only class="{% block nav_settings %}{% endblock %}">Ustawienia i oferty</a>
+                <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
             </div>
         </div>
-        {% block content %}{% endblock %}
-    </main>
-</div>
+    </nav>
+    <div class="gsearch" id="gsearch" role="search">
+        <svg class="gs-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="gsearch-input" placeholder="Szukaj: numer, NIP albo firma" autocomplete="off" spellcheck="false" aria-label="Szukaj klienta po numerze telefonu, NIP albo nazwie firmy">
+        <kbd class="gs-key" aria-hidden="true">/</kbd>
+        <button type="button" class="gs-clear" id="gsearch-clear" aria-label="Wyczyść wyszukiwanie">&times;</button>
+        <span class="gs-enter" aria-hidden="true">Enter: otwórz</span>
+    </div>
+    <div class="user-menu">
+        <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
+            <span class="avatar" id="user-avatar">?</span>
+            <span class="who"><strong id="user-name">…</strong><small id="user-role"></small></span>
+            <span class="chev" aria-hidden="true">▾</span>
+        </button>
+        <div class="popover" id="user-popover" hidden>
+            <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
+            <div class="pop-label">Zdjęcie profilowe</div>
+            <div class="avatar-row">
+                <span class="avatar avatar-lg" id="pop-avatar">?</span>
+                <div class="avatar-actions">
+                    <button type="button" class="btn-mini" id="avatar-change">Zmień zdjęcie</button>
+                    <button type="button" class="btn-mini ghost" id="avatar-remove" hidden>Usuń</button>
+                </div>
+                <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
+            <small class="avatar-msg" id="avatar-msg" role="status" hidden></small>
+            <div class="pop-label">Motyw</div>
+            <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
+                <button type="button" data-theme-choice="light">Jasny</button>
+                <button type="button" data-theme-choice="dark">Ciemny</button>
+                <button type="button" data-theme-choice="auto">Auto</button>
+            </div>
+            <button type="button" class="pop-item" id="dialer-open">Telefon (dialer)…</button>
+            <button type="button" class="pop-item" id="notif-open">Moje ustawienia…</button>
+            <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
+            <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
+        </div>
+    </div>
+</header>
+<main class="content {% block content_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+</main>
 <dialog id="pw-dialog" class="dialog">
     <form id="pw-form" novalidate>
         <h2 id="pw-title">Zmiana hasła</h2>
@@ -83,7 +89,7 @@
 </dialog>
 <dialog id="notif-dialog" class="dialog">
     <form id="notif-form" method="dialog" novalidate>
-        <h2>Powiadomienia i widok</h2>
+        <h2>Moje ustawienia</h2>
         <label class="check"><input type="checkbox" id="notif-enabled"> <span><strong>Przypomnienia na ekranie</strong><small class="muted">Karta w rogu ekranu, gdy zbliża się termin kontaktu albo już minął.</small></span></label>
         <div class="field">Powiadom mnie przed terminem
             <div class="lead-row">
@@ -92,23 +98,46 @@
             </div>
             <small class="muted">Zaległe kontakty przypominają się zawsze od razu.</small>
         </div>
+        <button type="button" class="btn btn-secondary" id="notif-sample">Pokaż przykładowe przypomnienie w CRM</button>
         <label class="check"><input type="checkbox" id="notif-sound"> <span><strong>Dźwięk</strong><small class="muted">Krótki sygnał przy nowym przypomnieniu.</small></span></label>
         <div class="field">Powiadomienia przeglądarki
             <button type="button" class="btn btn-secondary" id="notif-btn">Powiadomienia przeglądarki</button>
             <button type="button" class="btn-mini notif-test" id="notif-test" hidden>Wyślij powiadomienie testowe</button>
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
-        <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Pasek dnia nad kolejką</strong><small class="muted">Ile kontaktów wykonano dziś i ile jeszcze czeka.</small></span></label>
-        <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Plan dnia” zostaje, żeby żaden termin Ci nie umknął.</p>
+        <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Panel „Dziś” przy dzwonieniu</strong><small class="muted">Liczby dnia, minuty rozmów i informacje zespołu po prawej stronie.</small></span></label>
+        <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe przy dzwonieniu</strong><small class="muted">N – następny klient, Z – zadzwoń, 1–8 – wynik, Enter – zapisz. Wyłącz, jeśli przypadkiem w coś klikasz.</small></span></label>
+        <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
+        <div class="field">Samouczek<button type="button" class="btn btn-secondary" id="tour-again">Pokaż samouczek jeszcze raz</button><small class="muted">Krótkie oprowadzenie po ekranie „Dzwonienie”.</small></div>
+        <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Kalendarz” zostaje, żeby żaden termin Ci nie umknął.</p>
         <div class="dialog-actions"><button type="submit" class="btn btn-primary" id="notif-close">Gotowe</button></div>
     </form>
 </dialog>
+<dialog id="dialer-dialog" class="dialog">
+    <form method="dialog" novalidate>
+        <h2>Telefon do dzwonienia</h2>
+        <p class="muted small" id="dialer-intro">Połącz swój telefon z aplikacją Solid Dialer: wtedy przycisk „Zadzwoń” w CRM sam wybierze numer na telefonie, a CRM policzy minuty rozmów.</p>
+        <div class="dialer-state" id="dialer-state">Sprawdzam…</div>
+        <div class="dialer-code" id="dialer-code" hidden></div>
+        <ol class="small dialer-steps">
+            <li>Zainstaluj na telefonie aplikację <b>Solid Dialer</b> (plik od managera).</li>
+            <li>Kliknij niżej „Pokaż kod parowania”.</li>
+            <li>W aplikacji wpisz adres CRM i ten kod.</li>
+        </ol>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="dialer-unpair" hidden>Odłącz telefon</button>
+            <button type="button" class="btn btn-secondary" id="dialer-code-btn">Pokaż kod parowania</button>
+            <button type="submit" class="btn btn-primary">Gotowe</button>
+        </div>
+    </form>
+</dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=59"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=59"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=59"></script>
-<script src="{% static 'crm/js/search.js' %}?v=59"></script>
-<script>CRM.initShell();CRM.initReminders();CRM.initSearch();</script>
+<script src="{% static 'crm/js/app.js' %}?v=65"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=65"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=65"></script>
+<script src="{% static 'crm/js/search.js' %}?v=65"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=65"></script>
+<script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

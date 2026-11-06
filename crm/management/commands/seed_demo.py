@@ -1,4 +1,7 @@
+import io
 from datetime import timedelta
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -17,16 +20,45 @@ from crm.models import (
     LeadBatch,
     Product,
 )
+from crm.excel import import_leads
 from crm.roles import AGENT
+from crm.sample_data import build_ceidg_sample_workbook
+from crm.models import Announcement, OfferConfig
 from crm.services import register_activity
+from crm.work import create_offer
 
 BATCH_NAME = "Demo - baza startowa"
+CEIDG_BATCH_NAME = "Demo - baza CEIDG agent1"
 
-# nazwa, cena jednostkowa (zł), jednostka; ceny w katalogu zmienia manager na stronie „Produkty”
+# Taryfy firmowe (jak we wzorniku ofert zespołu): nazwa, cena netto 1. numeru, cena z promocją,
+# każdy kolejny numer, punkty oferty. Ceny zmienia manager na stronie „Taryfy i produkty”.
+COMMON = [
+    "Nielimitowane rozmowy, SMS-y i MMS-y w kraju",
+    "Roaming w UE: 23 GB",
+    "Prędkość internetu: 150 Mb/s",
+]
+UNLIMITED = ["Internet bez limitu", "Karta internetowa bez limitu"]
+
+
+def features(*extra):
+    return chr(10).join(COMMON + list(extra))   # chr(10) = nowa linia: jeden punkt oferty w linii
+
+
 PRODUCTS = (
-    ("Internet światłowodowy", Decimal("1200.00"), "umowa"),
-    ("Abonament komórkowy", Decimal("49.00"), "szt."),
-    ("Leasing samochodowy", Decimal("3500.00"), "umowa"),
+    ("S", Decimal("45"), Decimal("50"), Decimal("25"),
+     features("Internet: 50 GB przez 3 miesiące, potem 40 GB (współdzielony)", "Karta internetowa: 40 GB")),
+    ("M100", Decimal("55"), Decimal("65"), Decimal("25"),
+     features("Internet: 100 GB (współdzielony)", "Karta internetowa: 100 GB")),
+    ("M", Decimal("70"), Decimal("85"), Decimal("25"), features(*UNLIMITED)),
+    ("L", Decimal("85"), Decimal("105"), Decimal("25"), features(*UNLIMITED)),
+    ("VIP", Decimal("105"), Decimal("140"), Decimal("25"), features(*UNLIMITED)),
+)
+
+ANNOUNCEMENTS = (
+    ("Promocja: 6 miesięcy gratis", "Przy umowie na 36 miesięcy klient może dostać 6 miesięcy gratis (cena pierwszego numeru wyższa – patrz taryfy). Zawsze proponuj najpierw 36 miesięcy.", True),
+    ("Cel dnia", "Minimum 15 minut rozmów na każdą godzinę pracy. Licznik minut jest w prawym panelu.", False),
+    ("Jak zacząć rozmowę", "Dzień dobry, dzwonię w sprawie usług komórkowych dla firmy – czy rozmawiam z osobą, która decyduje o abonamentach?", False),
+    ("Spółka na linii? (plakietka „Spółka”)", "Najpierw zapytaj, kto decyduje o telefonach (zarząd, właściciel, biuro). Gdy odbiera sekretariat: poproś o imię decydującego i dobrą godzinę, zapisz to w „Oddzwonić”. Spółki mają zwykle więcej numerów, więc i większą prowizję.", False),
 )
 
 COMPANIES = (
@@ -81,14 +113,22 @@ class Command(BaseCommand):
         manager = User.objects.get(username="manager1")
 
         products = []
-        for name, price, unit in PRODUCTS:
-            product, _ = Product.objects.get_or_create(
-                name=name, defaults={"price": price, "unit": unit}
+        for order, (name, price, promo, extra, features) in enumerate(PRODUCTS, start=1):
+            product, _ = Product.objects.update_or_create(
+                name=name, defaults={"price": price, "promo_price": promo, "extra_price": extra,
+                                     "features": features, "unit": "mies.", "sort_order": order, "is_active": True},
             )
-            if product.price == 0:  # produkt z wcześniejszego seeda, sprzed wprowadzenia cen
-                product.price, product.unit = price, unit
-                product.save(update_fields=["price", "unit"])
             products.append(product)
+        # stare ogólne produkty demo (sprzed taryf T-Mobile) usuwamy; sprzedaże pamiętają nazwę i cenę,
+        # więc historia i przychód zostają bez zmian
+        Product.objects.exclude(pk__in=[p.pk for p in products]).filter(
+            name__in=("Internet światłowodowy", "Abonament komórkowy", "Leasing samochodowy")).delete()
+        config = OfferConfig.get()
+        if not config.forward_email:
+            config.forward_email = "oferty@example.com"
+            config.save(update_fields=["forward_email"])
+        for title, body, pinned in ANNOUNCEMENTS:
+            Announcement.objects.get_or_create(title=title, defaults={"body": body, "pinned": pinned, "author": manager})
         companies = [
             Company.objects.get_or_create(
                 name=name, defaults={"nip": nip, "krs": krs, "city": city}
@@ -151,14 +191,12 @@ class Command(BaseCommand):
         )
 
         lead = new_lead("Ewa Baran", owner=agent1)
-        register_activity(
-            lead,
-            agent1,
-            Activity.Outcome.INTERESTED,
-            "Zainteresowana abonamentem",
-            next_contact_at=now + timedelta(days=1),
-            next_contact_note="Wysłać ofertę abonamentu i dopytać o decyzję",
-        )
+        create_offer(lead, agent1, products[2], 3, 36, True, lead.email, now + timedelta(days=1),
+                     "Zapytać, czy oferta M dla 3 numerów jest OK")
+        # oferta, której follow-up właśnie mija: „Następny klient” poda ją jako pierwszą
+        lead = new_lead("Karol Nowicki", owner=agent1)
+        create_offer(lead, agent1, products[3], 2, 36, False, lead.email, now + timedelta(minutes=1),
+                     "Klient miał przeczytać ofertę do dziś")
 
         lead = new_lead("Tomasz Pawlak", owner=agent1)
         register_activity(lead, agent1, Activity.Outcome.REFUSED, "Ma już ofertę")
@@ -197,7 +235,7 @@ class Command(BaseCommand):
                 owner,
                 Activity.Outcome.SOLD,
                 "Podpisana umowa",
-                sale_items=[(products[index], quantity) for index, quantity in basket],
+                sale_items=[(products[index], quantity, 36, False) for index, quantity in basket],
             )
 
         # Nowy agent z wyłączonym podglądem rankingu (pokaz blokady 403).
@@ -210,9 +248,20 @@ class Command(BaseCommand):
             user=agent3, defaults={"can_view_team_stats": False}
         )
 
+        # Własna baza agent1 w układzie z CEIDG (fikcyjne firmy), jak Excel od managera
+        ceidg = LeadBatch.objects.filter(name=CEIDG_BATCH_NAME).first()
+        if ceidg:
+            ceidg.leads.all().delete()
+            ceidg.delete()
+        buffer = io.BytesIO()
+        build_ceidg_sample_workbook().save(buffer)
+        upload = SimpleUploadedFile("baza_ceidg_demo.xlsx", buffer.getvalue())
+        report = import_leads(upload, manager, CEIDG_BATCH_NAME, assigned_to=agent1)
+
         self.stdout.write(
             self.style.SUCCESS(
-                f"Gotowe: {batch.leads.count()} leadów w bazie '{BATCH_NAME}'."
+                f"Gotowe: {batch.leads.count()} leadów w bazie '{BATCH_NAME}' "
+                f"i {report['created']} firm w bazie agent1 '{CEIDG_BATCH_NAME}'."
             )
         )
         self.stdout.write(

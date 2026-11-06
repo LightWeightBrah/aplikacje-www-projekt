@@ -37,8 +37,10 @@ CRM.initPlan = function initPlan() {
     return h < 24 ? "za " + h + " h" + (m % 60 ? " " + (m % 60) + " min" : "") : "";
   }
 
+  const KIND = { callback: "Oddzwonić", interested: "Zainteresowany", offer: "Follow-up oferty", new: "Ponowna próba" };
   function item(l, opts = {}) {
-    const company = l.company_name ? `<span class="muted"> · ${esc(l.company_name)}</span>` : "";
+    // nazwa firmy jest tytułem; osoba kontaktowa (jeśli znana) obok
+    const company = l.contact_name && l.company_name ? `<span class="muted"> · ${esc(l.contact_name)}</span>` : "";
     const date = opts.withDate ? `<span class="plan-date">${shortDay(l.next_contact_at)}</span>` : "";
     let sub = "";
     const retry = l.status === "new" && !!l.owner;   // ponowna próba (z leadem jeszcze nikt nie rozmawiał): termin minął, ale to nie zaległość wobec klienta
@@ -55,12 +57,12 @@ CRM.initPlan = function initPlan() {
     return `<article class="plan-item${opts.next ? " is-next" : ""}${opts.passed ? (retry ? " is-retry" : " is-passed") : ""}" data-href="/crm/queue/?lead=${l.id}">
       <div class="plan-time">${date}<span class="plan-hour">${hhmm(l.next_contact_at)}</span>${sub}</div>
       <div class="plan-body">
-        <div class="plan-title"><strong>${esc(l.contact_name)}</strong>${company}${l.product_name ? `<span class="muted small"> · ${esc(l.product_name)}</span>` : ""}</div>
+        <div class="plan-title"><strong>${esc(CRM.leadTitle(l))}</strong>${company}${l.product_name ? `<span class="muted small"> · ${esc(l.product_name)}</span>` : ""}</div>
+        ${l.next_contact_note ? `<div class="plan-topic">${ICON_NOTE}<span><em>${esc(KIND[l.status] || "Sprawa")}:</em> ${esc(l.next_contact_note)}</span></div>` : ""}
         <div class="plan-callrow"><a class="plan-phone" href="tel:${esc(l.phone.replace(/[^\d+]/g, ""))}">${esc(l.phone)}</a>${CRM.copyButton(l.phone)}${tryChip}${l.missed_calls > 0 ? `<span class="missed-chip">Nie odebrał w terminie${l.missed_calls > 1 ? " ×" + l.missed_calls : ""}</span>` : ""}</div>
-        ${l.next_contact_note ? `<div class="plan-note">${ICON_NOTE}<span><em>Sprawa:</em> ${esc(l.next_contact_note)}</span></div>` : ""}
         ${last || l.attempts_count ? `<div class="plan-hist">${last}${l.attempts_count ? `<small class="muted">Prób dotąd: <b>${l.attempts_count}</b></small>` : ""}</div>` : ""}
       </div>
-      <a class="plan-go" href="/crm/queue/?lead=${l.id}" aria-label="Otwórz leada ${esc(l.contact_name)}" title="Otwórz leada"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
+      <a class="plan-go" href="/crm/queue/?lead=${l.id}" aria-label="Otwórz leada ${esc(CRM.leadTitle(l))}" title="Otwórz leada"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
     </article>`;
   }
 
@@ -134,10 +136,10 @@ CRM.initPlan = function initPlan() {
       const r = await api("/api/my-leads/calendar/");
       if (!r.ok) throw new Error("Nie udało się pobrać kalendarza (" + r.status + ").");
       const url = URL.createObjectURL(await r.blob());
-      const a = Object.assign(document.createElement("a"), { href: url, download: "leadcrm.ics" });
+      const a = Object.assign(document.createElement("a"), { href: url, download: "solidcrm-kalendarz.ics" });
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      toast("Pobrano leadcrm.ics: otwórz plik, żeby dodać terminy do kalendarza.");
+      toast("Pobrano plik kalendarza. Google Calendar: Ustawienia → Importuj i eksportuj → wybierz plik → Importuj.");
     } catch (ex) { toast(ex.message, true); }
     btn.disabled = false;
   });

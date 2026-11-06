@@ -62,6 +62,11 @@ def users_page(request):
     return render(request, "crm/users.html")
 
 
+def calendar_page(request):
+    """Kalendarz miesięczny agenta. Dane z /api/my-leads/month/ (token JWT)."""
+    return render(request, "crm/calendar.html")
+
+
 def plan_page(request):
     """Szkielet planu dnia. Dane idą z /api/my-leads/schedule/ (token JWT)."""
     return render(request, "crm/plan.html")

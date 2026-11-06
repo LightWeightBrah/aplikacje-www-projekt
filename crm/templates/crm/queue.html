@@ -1,24 +1,90 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Moja kolejka – LeadCRM{% endblock %}
+{% block title %}Dzwonienie – Solid CRM{% endblock %}
 {% block nav_queue %}active{% endblock %}
+{% block content_class %}work-page{% endblock %}
 {% block content %}
-<header class="page-head">
-    <div>
-        <h1>Moja kolejka</h1>
-        <p class="muted" id="queue-sub">Twoje aktywne leady, najpilniejsze na górze</p>
-    </div>
-    <div class="day-bar" id="day-bar" hidden></div>
-</header>
-<div class="queue">
-    <aside class="card list-card">
-        <button class="btn btn-primary btn-block claim" id="claim-btn" type="button">+ Daj kolejnego leada</button>
-        <h2>Do obsłużenia <span class="count" id="lead-count"></span></h2>
-        <div id="lead-list" class="lead-list"></div>
+<div class="work" id="work">
+    <aside class="w-col w-left" aria-label="Moja lista">
+        <div class="w-panel">
+            <button class="w-next" id="claim-btn" type="button">▶ Następny klient <kbd>N</kbd></button>
+            <p class="w-next-hint" id="next-hint"></p>
+            <div class="w-quick">
+                <button type="button" class="btn-mini" id="contact-open" title="Np. klient z polecenia: „Kogo Pan zna, kto jeszcze mógłby skorzystać?”">+ Nowy kontakt</button>
+                <button type="button" class="btn-mini" id="dial-open" title="Zadzwoń na dowolny numer bez szukania klienta">☎ Zadzwoń na numer</button>
+            </div>
+        </div>
+        <div class="w-panel"><div class="w-segs" id="segs"></div></div>
+        <div class="w-panel w-base" id="base-progress" hidden></div>
+        <div class="w-panel">
+            <div class="w-tabs" role="tablist">
+                <button type="button" role="tab" id="tab-todo" aria-selected="true">Moi klienci <span id="lead-count"></span></button>
+                <button type="button" role="tab" id="tab-hist" aria-selected="false">Historia dziś</button>
+            </div>
+            <div class="w-items" id="lead-list"></div>
+        </div>
     </aside>
-    <section id="lead-pane" class="lead-pane"></section>
+    <section class="w-col w-center" id="lead-pane" aria-live="polite"></section>
+    <aside class="w-col w-side" id="side" aria-label="Dziś"></aside>
 </div>
+<footer class="dialbar" id="dialbar">
+    <span class="db-dot" id="db-dot"></span><span class="db-state" id="db-state">Telefon: sprawdzam…</span>
+    <span class="db-timer" id="db-timer" hidden>00:00</span>
+    <button type="button" id="db-setup">Połącz telefon</button>
+    <span class="db-min" id="db-min"></span>
+    <button type="button" id="db-dial">☎ Zadzwoń na numer</button>
+    <span class="db-keys" id="db-keys">Klawisze: <b>N</b> następny · <b>Z</b> zadzwoń · <b>1–8</b> wynik · <b>Enter</b> zapisz · <b>Esc</b> wyczyść</span>
+</footer>
+<dialog id="offer-dialog" class="dialog offer-done">
+    <form method="dialog">
+        <h2 id="od-title">Oferta przygotowana</h2>
+        <p class="muted" id="od-text"></p>
+        <ol class="od-steps" id="od-steps"></ol>
+        <div class="od-letter" id="od-letter" aria-label="Podgląd oferty"></div>
+        <textarea id="od-body" readonly hidden></textarea>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="od-copy">Kopiuj ofertę (z formatowaniem)</button>
+            <button type="button" class="btn btn-secondary" id="od-file">Pobierz plik oferty</button>
+            <a class="btn btn-secondary" id="od-mail" href="#">Otwórz w poczcie</a>
+            <button type="submit" class="btn btn-primary">Gotowe</button>
+        </div>
+    </form>
+</dialog>
+<dialog id="contact-dialog" class="dialog">
+    <form id="contact-form" novalidate>
+        <h2>Nowy kontakt</h2>
+        <p class="muted small">Np. klient z polecenia. Trafi od razu do Twoich klientów jako „Nowy”.</p>
+        <label class="field">Telefon *<input id="nc-phone" class="select" maxlength="30" inputmode="tel" autocomplete="off" placeholder="np. 600 100 200"></label>
+        <div class="field-row">
+            <label class="field">Firma<input id="nc-company" class="select" maxlength="200" autocomplete="off"></label>
+            <label class="field">Osoba kontaktowa<input id="nc-person" class="select" maxlength="150" autocomplete="off"></label>
+        </div>
+        <label class="field">E-mail<input id="nc-email" class="select" type="email" maxlength="254" autocomplete="off"></label>
+        <label class="check" id="nc-ref-row" hidden><input type="checkbox" id="nc-ref" checked> <span><strong id="nc-ref-text"></strong><small class="muted">Zapisze się w historii nowego klienta, skąd go masz.</small></span></label>
+        <label class="field">Notatka (opcjonalnie)<input id="nc-note" class="select" maxlength="500" autocomplete="off" placeholder="np. znajomy właściciela, ma 4 numery w Orange"></label>
+        <p class="form-error" id="nc-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="nc-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-secondary" id="nc-save">Dodaj</button>
+            <button type="button" class="btn btn-primary" id="nc-call">Dodaj i zadzwoń</button>
+        </div>
+    </form>
+</dialog>
+<dialog id="dial-dialog" class="dialog">
+    <form id="dial-form" novalidate>
+        <h2>Zadzwoń na numer</h2>
+        <p class="muted small">Szybkie połączenie bez szukania klienta. Minuty rozmowy liczą się normalnie (z aplikacją Solid Dialer).</p>
+        <label class="field">Numer<input id="dl-phone" class="select" maxlength="30" inputmode="tel" autocomplete="off" placeholder="np. 600 100 200"></label>
+        <p class="muted small" id="dl-found"></p>
+        <p class="form-error" id="dl-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="dl-cancel">Anuluj</button>
+            <button type="button" class="btn btn-secondary" id="dl-add">Dodaj jako klienta…</button>
+            <button type="submit" class="btn btn-primary" id="dl-go">Zadzwoń</button>
+        </div>
+    </form>
+</dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/when.js' %}?v=59"></script>
-<script src="{% static 'crm/js/queue.js' %}?v=59"></script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/when.js' %}?v=65"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=65"></script>{% endblock %}

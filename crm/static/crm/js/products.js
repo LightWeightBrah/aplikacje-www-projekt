@@ -57,11 +57,12 @@ CRM.initProducts = function initProducts() {
       $("products-table").innerHTML = `<tbody><tr><td class="muted">Katalog jest pusty. Dodaj pierwszy produkt, żeby agenci mogli wpisywać, co sprzedali. Dopóki katalog jest pusty, sprzedaż zapisuje się bez wartości.</td></tr></tbody>`;
       return;
     }
-    $("products-table").innerHTML = `<thead><tr><th>Produkt</th><th class="num">Cena</th><th>Jednostka</th><th>Status</th><th></th></tr></thead><tbody>` +
+    $("products-table").innerHTML = `<thead><tr><th>Taryfa / produkt</th><th class="num">Cena</th><th class="num">Z promocją</th><th class="num">Kolejny numer</th><th>Status</th><th></th></tr></thead><tbody>` +
       products.map((p) => `<tr class="${p.is_active ? "" : "inactive"}">
         <td><strong>${esc(p.name)}</strong>${p.description ? `<small class="muted block">${esc(p.description)}</small>` : ""}</td>
         <td class="num">${Number(p.price) > 0 ? esc(CRM.money(p.price)) : '<span class="chip" style="--c:#f59e0b">brak ceny</span>'}</td>
-        <td>${esc(p.unit)}</td>
+        <td class="num">${p.promo_price != null ? esc(CRM.money(p.promo_price)) : "–"}</td>
+        <td class="num">${Number(p.extra_price) > 0 ? "+ " + esc(CRM.money(p.extra_price)) : "–"}</td>
         <td>${p.is_active ? '<span class="chip" style="--c:#16a34a">Do sprzedaży</span>' : '<span class="chip" style="--c:#94a3b8">Wyłączony</span>'}</td>
         <td class="row-actions"><button type="button" class="btn-mini" data-act="edit" data-id="${p.id}">Edytuj</button>` +
         `<button type="button" class="btn-mini${p.is_active ? " danger" : ""}" data-act="toggle" data-id="${p.id}">${p.is_active ? "Wyłącz" : "Włącz"}</button></td></tr>`).join("") + "</tbody>";
@@ -74,6 +75,9 @@ CRM.initProducts = function initProducts() {
     $("prod-price").value = p ? priceInput(p.price) : "";
     $("prod-unit").value = p ? p.unit : "szt.";
     $("prod-desc").value = p ? p.description : "";
+    $("prod-promo").value = p && p.promo_price != null ? priceInput(p.promo_price) : "";
+    $("prod-extra").value = p && Number(p.extra_price) ? priceInput(p.extra_price) : "";
+    $("prod-features").value = p ? p.features || "" : "";
     $("prod-hint").textContent = p
       ? "Zmiana ceny dotyczy tylko nowych sprzedaży. Dawne sprzedaże zostają z ceną z dnia sprzedaży."
       : "Cena to wartość jednej sztuki (albo jednej umowy). Przy sprzedaży 3 sztuk system policzy 3 × cena.";
@@ -90,7 +94,10 @@ CRM.initProducts = function initProducts() {
     const name = $("prod-name").value.trim(), price = parsePrice($("prod-price").value), unit = $("prod-unit").value.trim() || "szt.";
     if (!name) { setError("Wpisz nazwę produktu."); return; }
     if (price === null) { setError("Cena musi być kwotą, np. 1200 albo 1200,50."); return; }
-    const body = { name, price, unit, description: $("prod-desc").value.trim() };
+    const promoRaw = $("prod-promo").value.trim(), promo = promoRaw ? parsePrice(promoRaw) : null, extra = parsePrice($("prod-extra").value);
+    if (promoRaw && promo === null) { setError("Cena z promocją musi być kwotą, np. 85 albo 85,50."); return; }
+    if (extra === null) { setError("Dopłata za kolejny numer musi być kwotą, np. 25."); return; }
+    const body = { name, price, unit, description: $("prod-desc").value.trim(), promo_price: promo, extra_price: extra, features: $("prod-features").value.trim() };
     $("prod-ok").disabled = true;
     try {
       const r = await api(editing ? `/api/products/${editing.id}/` : "/api/products/", {

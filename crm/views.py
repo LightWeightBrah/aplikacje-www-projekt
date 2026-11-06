@@ -67,6 +67,7 @@ from .services import (
     InvalidAssignment,
     NoLeadsAvailable,
     UndoNotPossible,
+    base_progress,
     day_summary,
     undo_activity,
     OverdueCallbacks,
@@ -146,6 +147,7 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
                 request.user,
                 data.get("name", ""),
                 data.get("product"),
+                assigned_to=data.get("assigned_to"),
             )
         except ImportFileError as error:
             return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
@@ -413,7 +415,7 @@ class ActivityViewSet(
 ):
     """Historia kontaktów: można dodawać i czytać, poprawiać tylko komentarz; usuwać nie można."""
 
-    queryset = Activity.objects.select_related("lead", "agent")
+    queryset = Activity.objects.select_related("lead", "lead__company", "agent")
     serializer_class = ActivitySerializer
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
     owner_lookup = "lead__owner"
@@ -434,8 +436,15 @@ class ActivityViewSet(
             # brak pola = zostaje dotychczasowa sprawa; puste pole = agent świadomie ją czyści
             next_contact_note=data.get("next_contact_note"),
             # sprzedane produkty (tylko przy wyniku „Sprzedane”): pary (produkt, ilość)
-            sale_items=[(line["product"], line["quantity"]) for line in data.get("sale_lines", [])],
+            sale_items=[
+                (line["product"], line["quantity"], line.get("term_months"), line.get("promo", False))
+                for line in data.get("sale_lines", [])
+            ],
+            skip_reason=data.get("skip_reason", ""),
+            introduced=data.get("introduced"),
         )
+        from .work import attach_call_time
+        attach_call_time(serializer.instance)   # czas rozmowy z dialera (jeśli dzwonił przez telefon)
 
     @extend_schema(request=ActivityNoteSerializer, responses=ActivitySerializer)
     def partial_update(self, request, pk=None):
@@ -533,6 +542,42 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         data = {"date": day, "overdue": overdue, "scheduled": scheduled}
         return Response(ScheduleSerializer(data).data)
 
+    @extend_schema(
+        responses=LeadSerializer(many=True),
+        parameters=[OpenApiParameter("month", str, description="Miesiąc RRRR-MM (domyślnie bieżący)")],
+    )
+    @action(detail=False, methods=["get"])
+    def month(self, request):
+        """Kalendarz miesięczny: aktywne leady z terminem kontaktu w danym miesiącu (bez paginacji)."""
+        raw = request.query_params.get("month") or timezone.localdate().strftime("%Y-%m")
+        try:
+            first = date.fromisoformat(raw + "-01")
+        except ValueError:
+            return Response({"detail": "Parametr month musi mieć format RRRR-MM."}, status=status.HTTP_400_BAD_REQUEST)
+        nxt = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+        # siatka kalendarza pokazuje też końcówkę poprzedniego i początek następnego miesiąca
+        since, until = first - timedelta(days=7), nxt + timedelta(days=14)
+        tz = timezone.get_current_timezone()
+        from datetime import datetime, time as dtime
+        leads = self.get_queryset().filter(
+            status__in=ACTIVE_STATUSES,
+            next_contact_at__gte=datetime.combine(since, dtime.min, tz),
+            next_contact_at__lt=datetime.combine(until, dtime.min, tz),
+        ).order_by("next_contact_at")[:2000]
+        return Response(LeadSerializer(leads, many=True, context=self.get_serializer_context()).data)
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"])
+    def base(self, request):
+        """Postęp w bazach przypisanych zalogowanemu agentowi: ile leadów, ile już ruszonych, ile czeka."""
+        rows = base_progress(request.user)
+        return Response({
+            "batches": rows,
+            "total": sum(r["total"] for r in rows),
+            "left": sum(r["left"] for r in rows),
+            "done": sum(r["done"] for r in rows),
+        })
+
     @extend_schema(responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=["get"])
     def summary(self, request):
@@ -548,7 +593,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def calendar(self, request):
         """Plik .ics z terminami kontaktów: można go zaimportować do kalendarza."""
         response = Response(calendar_ics(calendar_leads(request.user)))
-        response["Content-Disposition"] = 'attachment; filename="leadcrm.ics"'
+        response["Content-Disposition"] = 'attachment; filename="solidcrm-kalendarz.ics"'
         return response
 
 

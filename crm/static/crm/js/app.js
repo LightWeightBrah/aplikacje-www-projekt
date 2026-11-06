@@ -1,4 +1,4 @@
-/* LeadCRM – frontend: logowanie JWT, klient API i dashboard (bez bibliotek). */
+/* Solid CRM – frontend: logowanie JWT, klient API i dashboard (bez bibliotek). */
 const CRM = (() => {
   const LOGIN_URL = "/crm/login/";
   const HOME_URL = "/crm/";
@@ -60,12 +60,13 @@ const CRM = (() => {
 
   /* Motyw: domyślnie jak w systemie, wybór ręczny zapamiętany w przeglądarce. */
   const root = document.documentElement;
+  /* Domyślnie jasny; „auto” (jak w systemie) trzeba wybrać świadomie. */
   const themeMode = () => root.dataset.theme || "auto";
   const isDark = () => (root.dataset.theme
     ? root.dataset.theme === "dark"
     : matchMedia("(prefers-color-scheme: dark)").matches);
   function setTheme(mode) {
-    if (mode === "auto") { delete root.dataset.theme; store.del("crm_theme"); }
+    if (mode === "auto") { delete root.dataset.theme; store.set("crm_theme", "auto"); }
     else { root.dataset.theme = mode; store.set("crm_theme", mode); }
   }
 
@@ -221,7 +222,7 @@ const CRM = (() => {
 
   function initLogin() {
     initTheme();
-    if (store.get("crm_access") && currentUser()) { location.href = HOME_URL; return; }
+    if (store.get("crm_access") && currentUser()) { location.href = currentUser().role === "agent" ? "/crm/queue/" : HOME_URL; return; }
     const form = $("login-form"), err = $("login-error");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -243,7 +244,7 @@ const CRM = (() => {
           throw new Error("To konto nie ma roli Agent ani Manager. Skontaktuj się z administratorem.");
         }
         store.set("crm_user", JSON.stringify(me));
-        location.href = HOME_URL;
+        location.href = me.role === "agent" ? "/crm/queue/" : HOME_URL;   // agent zaczyna od dzwonienia
       } catch (ex) {
         err.textContent = ex.message || "Nie udało się zalogować.";
         err.hidden = false;
@@ -260,6 +261,8 @@ const CRM = (() => {
     document.querySelectorAll("[data-manager-only]").forEach((el) => { el.hidden = user.role !== "manager"; });
     applyTeamAccess(user);
     initUserMenu(user);
+    initNavMore();
+    initDialerDialog();
     paintAvatars(user);
     initAvatar(user);
     const password = initPassword(user);
@@ -279,6 +282,47 @@ const CRM = (() => {
     }).catch(() => { /* zostaje zapamiętana wartość */ });
   }
 
+  /* Menu „Zarządzanie ▾” (manager): rozwija się po kliknięciu, zwija po kliknięciu obok */
+  function initNavMore() {
+    const btn = $("nav-more-btn"), menu = $("nav-more-menu");
+    if (!btn || !menu) return;
+    const toggle = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", (e) => { e.stopPropagation(); toggle(menu.hidden); });
+    document.addEventListener("click", () => toggle(false));
+    if (menu.querySelector("a.active")) btn.classList.add("active");
+  }
+
+  /* Okno „Telefon (dialer)”: stan telefonu, kod parowania, odłączenie */
+  function initDialerDialog() {
+    const dlg = $("dialer-dialog"), open = $("dialer-open");
+    if (!dlg || !open) return;
+    const paint = async () => {
+      let d = null;
+      try { const r = await api("/api/dialer/status/"); if (r.ok) d = await r.json(); } catch { /* brak sieci */ }
+      const st = $("dialer-state");
+      if (!d) { st.textContent = "Nie udało się sprawdzić stanu telefonu."; return; }
+      st.className = "dialer-state " + (d.online ? "on" : d.paired ? "off" : "none");
+      st.textContent = d.online ? `Telefon połączony${d.device_name ? ": " + d.device_name : ""}. Przycisk „Zadzwoń” wybierze numer na telefonie.`
+        : d.paired ? "Telefon jest sparowany, ale teraz nie odpowiada. Otwórz aplikację Solid Dialer na telefonie."
+          : "Telefon nie jest połączony. „Zadzwoń” otworzy zwykłe wybieranie numeru (np. na komputerze z telefonem).";
+      $("dialer-unpair").hidden = !d.paired;
+    };
+    open.addEventListener("click", () => { $("user-popover").hidden = true; $("dialer-code").hidden = true; dlg.showModal(); paint(); });
+    $("dialer-code-btn").addEventListener("click", async () => {
+      const r = await api("/api/dialer/pairing/", { method: "POST" });
+      if (!r.ok) return;
+      const d = await r.json(), box = $("dialer-code");
+      box.hidden = false;
+      box.innerHTML = `<span>Adres CRM: <b>${esc(location.origin)}</b></span><span>Kod parowania (ważny ${d.valid_minutes} min):</span><strong>${esc(d.code.slice(0, 3))} ${esc(d.code.slice(3))}</strong>`;
+      const poll = setInterval(async () => { if (!dlg.open) { clearInterval(poll); return; } await paint(); if ($("dialer-state").classList.contains("on")) { clearInterval(poll); box.hidden = true; } }, 3000);
+    });
+    $("dialer-unpair").addEventListener("click", async () => {
+      if (!confirm("Odłączyć telefon od CRM? Trzeba będzie sparować go ponownie.")) return;
+      await api("/api/dialer/status/", { method: "DELETE" });
+      paint();
+    });
+  }
+
   /* Pozycja "Ranking" w menu: manager zawsze, agent dopóki manager nie wyłączył mu podglądu. */
   function applyTeamAccess(user) {
     const allowed = user.role === "manager" || user.can_view_team !== false;
@@ -289,15 +333,15 @@ const CRM = (() => {
 
   function renderKpis(d, manager) {
     const o = d.outcomes;
-    const calls = o.no_answer + o.callback + o.interested + o.sold + o.refused + o.wrong_number;
+    const calls = o.no_answer + o.callback + o.interested + (o.offer || 0) + o.sold + o.refused + o.wrong_number;
     const answered = calls - o.no_answer;
     const active = d.agents.reduce((s, a) => s + a.leads_active, 0);
     const cards = [
       ["Rozmowy", calls, "w wybranym okresie"],
       ["Dodzwoniłem się", pct(calls ? answered / calls : null), `${answered} z ${calls} rozmów`],
-      ["Zainteresowani", o.interested, answered ? `${pct(o.interested / answered)} odebranych` : ""],
+      ["Wysłane oferty", (o.offer || 0) + o.interested, answered ? `${pct(((o.offer || 0) + o.interested) / answered)} rozmów` : ""],
       ["Sprzedane", o.sold, "sprzedaże w wybranym okresie"],
-      ["Przychód", CRM.money(d.revenue), d.revenue && Number(d.revenue) > 0 ? "wartość sprzedanych produktów" : "wpisuj produkty przy sprzedaży"],
+      ["Prowizja", CRM.money(d.commission), `sprzedane abonamenty: ${CRM.money(d.revenue)} / mies.`],
       manager ? ["Czekają na agenta", d.pool_leads, "klienci, których nikt jeszcze nie prowadzi"] : ["Moi klienci w toku", active, "jeszcze niezamknięci, do obsłużenia"],
     ];
     $("kpis").innerHTML = cards.map(([label, value, sub]) =>
@@ -310,18 +354,20 @@ const CRM = (() => {
       <div class="track"><i style="width:${max ? (n / max) * 100 : 0}%;background:${color}"></i></div><b>${n}</b></div>`;
 
   function renderOutcomes(o) {
-    const calls = o.no_answer + o.callback + o.interested + o.sold + o.refused + o.wrong_number;
+    const calls = o.no_answer + o.callback + o.interested + (o.offer || 0) + o.sold + o.refused + o.wrong_number;
     const lost = o.refused + o.wrong_number;
     $("outcomes").innerHTML =
       `<div class="big-total"><b>${calls}</b> rozmów w wybranym okresie</div>` +
       [
         ["Nie odebrał", o.no_answer, "#64748b", ""],
         ["Oddzwonić", o.callback, "#f59e0b", "klient zostaje u Ciebie, wraca w terminie"],
+        ["Wysłana oferta", o.offer || 0, "#0f766e", "oferta poszła, follow-up w kalendarzu"],
         ["Zainteresowany", o.interested, "#10b981", "chce usłyszeć ofertę, jeszcze nie kupił"],
         ["Sprzedane", o.sold, "#16a34a", "klient kupił – sprawa zamknięta"],
         ["Odmowa", o.refused, "#ef4444", "klient nie chce – sprawa zamknięta"],
         ["Zły numer", o.wrong_number, "#a855f7", "nie ten numer – sprawa zamknięta"],
-      ].map(([l, n, c, h]) => orow(l, n, c, calls, h)).join("") +
+      ].filter(([l, n]) => n || l !== "Zainteresowany").map(([l, n, c, h]) => orow(l, n, c, calls, h)).join("") +
+      (o.skipped ? `<div class="closed-line"><span>Pominięte bez dzwonienia: <b>${o.skipped}</b></span></div>` : "") +
       `<div class="closed-line"><span>Sprawy zamknięte w okresie: <b>${o.sold + lost}</b></span>
         <span class="ok">ze sprzedażą: <b>${o.sold}</b></span><span class="bad">bez sprzedaży: <b>${lost}</b></span></div>`;
   }

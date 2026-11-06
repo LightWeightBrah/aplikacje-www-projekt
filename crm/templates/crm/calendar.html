@@ -1,0 +1,29 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Kalendarz – Solid CRM{% endblock %}
+{% block nav_plan %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <div class="cal-tabs" style="margin-bottom:.6rem"><a href="/crm/plan/">Dzień</a><a href="/crm/calendar/" class="active">Miesiąc</a></div>
+        <h1>Kalendarz kontaktów</h1>
+        <p class="muted">Wszystkie umówione kontakty: oferty, oddzwonienia i ponowne próby. Kliknij kontakt, żeby od razu do niego zadzwonić.</p>
+    </div>
+    <div class="cal-head">
+        <button type="button" class="btn-mini" id="m-prev" aria-label="Poprzedni miesiąc">&lsaquo;</button>
+        <h2 id="m-title">…</h2>
+        <button type="button" class="btn-mini" id="m-next" aria-label="Następny miesiąc">&rsaquo;</button>
+        <button type="button" class="btn-mini" id="m-today">Dziś</button>
+    </div>
+</header>
+<section class="card">
+    <div class="cal-grid" id="cal-grid" aria-live="polite"></div>
+    <div class="cal-legend">
+        <span><i style="--c:var(--seg-offer)"></i>Oferta / zainteresowany</span>
+        <span><i style="--c:var(--seg-callback)"></i>Umówione oddzwonienie</span>
+        <span><i style="--c:var(--seg-retry)"></i>Ponowna próba</span>
+        <span><i style="--c:var(--late)"></i>Spóźnione</span>
+    </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=65"></script>{% endblock %}

@@ -113,8 +113,8 @@ CRM.initManager = function initManager() {
           && ["callback", "interested", "offer"].includes(l.status);
         return `<tr data-id="${l.id}" class="${l.id === openId ? "open" : ""}">
           <td class="chk"><input type="checkbox" data-check="${l.id}" ${selected.has(l.id) ? "checked" : ""} aria-label="Zaznacz leada"></td>
-          <td><strong>${esc(l.contact_name)}</strong>${l.company_name
-            ? `<small class="sub">${esc(l.company_name)}${l.company_nip ? " · NIP " + esc(l.company_nip) : ""}</small>` : ""}</td>
+          <td><strong>${esc(CRM.leadTitle(l))}</strong><small class="sub">${[l.contact_name && l.company_name ? esc(l.contact_name) : "",
+            l.company_nip ? "NIP " + esc(l.company_nip) : "", l.company_city ? esc(l.company_city) : ""].filter(Boolean).join(" · ")}</small></td>
           <td class="nowrap">${esc(l.phone)}</td>
           <td>${chip(l.status)}</td>
           <td>${l.owner_name ? esc(l.owner_name) : '<span class="muted">pula</span>'}${l.transferred_from ? `<small class="sub">od ${esc(l.transferred_from)}</small>` : ""}</td>
@@ -208,7 +208,7 @@ CRM.initManager = function initManager() {
       try { await assign(id, agent, "Przypisanie z panelu managera"); ok++; }
       catch (ex) {
         const l = leads.find((x) => x.id === id);
-        problems.push(`${l ? l.contact_name : "#" + id}: ${ex.message}`);
+        problems.push(`${l ? CRM.leadTitle(l) : "#" + id}: ${ex.message}`);
       }
     }
     $("bulk-assign").disabled = $("bulk-pool").disabled = false;
@@ -240,7 +240,7 @@ CRM.initManager = function initManager() {
     const moves = (l.assignments || []).map((a) => `<li>${esc(agentName(a.from_agent))} → <strong>${esc(agentName(a.to_agent))}</strong>
       <time>${esc(fmt(a.assigned_at))}</time>${a.reason ? `<p>${esc(a.reason)}</p>` : ""}</li>`).join("") || `<li class="muted">Brak zmian opiekuna.</li>`;
     $("drawer-body").innerHTML = `
-      <h2 class="drawer-title">${esc(l.contact_name)}</h2>
+      <h2 class="drawer-title">${esc(CRM.leadTitle(l))}</h2>
       <p class="muted">${l.company_name ? esc(l.company_name) : "Bez firmy"}${l.company_nip ? " · NIP " + esc(l.company_nip) : ""}</p>
       <div class="drawer-chips">${chip(l.status)}</div>
       <dl class="kv">
