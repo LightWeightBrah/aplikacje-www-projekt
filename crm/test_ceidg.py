@@ -192,3 +192,20 @@ class LeadDetailsTests(CrmTestBase):
 
     def test_bad_alt_phone_is_rejected(self):
         self.assertEqual(self.patch({"phone_alt": "123"}).status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class DemoBaseTests(CrmTestBase):
+    """Większe fikcyjne bazy do pokazu: każda wchodzi bez błędów i nie nakłada się na inne."""
+
+    def test_each_demo_file_imports_cleanly_and_files_do_not_overlap(self):
+        from .sample_data import DEMO_PARTS, DEMO_ROWS_PER_PART, build_demo_ceidg_workbook
+        for part in range(1, DEMO_PARTS + 1):
+            buffer = io.BytesIO()
+            build_demo_ceidg_workbook(part).save(buffer)
+            upload = SimpleUploadedFile(f"pokaz_{part}.xlsx", buffer.getvalue(), content_type=XLSX_CONTENT_TYPE)
+            response = self.api(self.manager).post("/api/batches/import/", {"file": upload}, format="multipart")
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+            self.assertEqual(response.data["layout"], "ceidg")
+            self.assertEqual(response.data["created"], DEMO_ROWS_PER_PART, response.data)
+            self.assertEqual(response.data["errors"], [])
+        self.assertEqual(Lead.objects.filter(phone__startswith="555").count(), DEMO_PARTS * DEMO_ROWS_PER_PART)
