@@ -214,10 +214,10 @@
     const hours = t.minutes_by_hour.filter((h) => (h.hour >= 8 && h.hour <= 18) || h.minutes > 0);
     const pctHour = Math.min(100, Math.round((t.minutes_this_hour / goal) * 100));
     const minutesBlock = t.dialer_used || t.minutes_today
-      ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${t.minutes_this_hour} / ${goal} min</b></div>
+      ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${CRM.talk(t.minutes_this_hour)} / ${goal} min</b></div>
           <div class="g-track"><i class="${t.minutes_this_hour >= goal ? "ok" : ""}" style="width:${pctHour}%"></i></div>
-          <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div title="${h.hour}:00 – ${h.minutes} min"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}${h.hour === hourNow ? " now" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
-          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${t.minutes_today} min</b> rozmów, powinno być <b>${t.day_goal} min</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
+          <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div class="${h.hour === hourNow ? "now" : ""}" title="${h.hour}:00 – ${CRM.talk(h.minutes)}${h.hour === hourNow ? " (teraz)" : ""}"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
+          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${CRM.talk(t.minutes_today)}</b> rozmów, powinno być <b>${t.day_goal} min</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
       : `<p class="w-goal-note">Dziś powinno być <b>${t.day_goal} min</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
     const plan = dayPlan.slice().sort((a, b) => new Date(a.next_contact_at) - new Date(b.next_contact_at));
     side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3></div>
@@ -265,7 +265,7 @@
     if (dialing && !callTimer) { callStart = Date.now(); callTimer = setInterval(tick, 1000); tick(); }
     if (!dialing && callTimer) { clearInterval(callTimer); callTimer = null; }
     const t = summary && summary.today;
-    $("db-min").textContent = t ? `Dziś: ${t.calls} tel. · ${t.minutes_today} min rozmów · ta godzina ${t.minutes_this_hour}/${t.goal_minutes_per_hour} min` : "";
+    $("db-min").textContent = t ? `Dziś: ${t.calls} tel. · ${CRM.talk(t.minutes_today)} rozmów · ta godzina ${CRM.talk(t.minutes_this_hour)} / ${t.goal_minutes_per_hour} min` : "";
     const btn = $("call-btn");
     if (btn) { btn.classList.toggle("busy", !!dialing); btn.querySelector("span").textContent = dialing ? "Dzwonię…" : "Zadzwoń"; }
   }
@@ -319,11 +319,14 @@
       <p>„Następny klient” sam wybierze, do kogo zadzwonić: najpierw follow-upy po ofertach, potem umówione oddzwonienia, ponowne próby, a na końcu nowe firmy z Twojej bazy.</p>
       <button type="button" class="w-next" data-next-btn>▶ Następny klient <kbd>N</kbd></button></div>`;
   }
+  /* Nowy klient = karta od początku: środkowa kolumna ma własny pasek przewijania (window.scrollTo go nie rusza) */
+  function toTop() { $("lead-pane").scrollTop = 0; window.scrollTo({ top: 0 }); }
   async function openLead(id, reason) {
     const r = await api(`/api/leads/${id}/`);
     if (!r.ok) { toast("Nie udało się wczytać klienta.", true); return false; }
     current = await r.json(); current._reason = reason || null; form = null;
     renderCard(); renderList();
+    toTop();
     const item = document.querySelector(`#lead-list [data-id="${id}"]`); if (item) item.scrollIntoView({ block: "nearest" });
     return true;
   }

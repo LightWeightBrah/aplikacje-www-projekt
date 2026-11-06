@@ -395,6 +395,7 @@ class AgentSerializer(serializers.Serializer):
     active_leads = serializers.IntegerField()
     overdue_leads = serializers.IntegerField()
     can_view_team_stats = serializers.BooleanField()
+    show_in_ranking = serializers.BooleanField()
 
 
 class AgentAccessBulkSerializer(serializers.Serializer):
@@ -405,9 +406,13 @@ class AgentAccessBulkSerializer(serializers.Serializer):
 
 
 class AgentAccessSerializer(serializers.Serializer):
-    """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager)."""
+    """Zmiana uprawnienia agenta (PATCH /api/agents/{id}/, tylko manager).
 
-    can_view_team_stats = serializers.BooleanField()
+    Agentowi zmienia się `can_view_team_stats`, managerowi `show_in_ranking`.
+    """
+
+    can_view_team_stats = serializers.BooleanField(required=False)
+    show_in_ranking = serializers.BooleanField(required=False)
 
 
 class DueLeadsSerializer(serializers.Serializer):
@@ -472,6 +477,13 @@ class AgentStatsSerializer(serializers.Serializer):
     wrong_number = serializers.IntegerField()
     answer_rate = serializers.FloatField(allow_null=True)
     interest_rate = serializers.FloatField(allow_null=True)
+    offers = serializers.IntegerField()
+    commission = serializers.DecimalField(max_digits=14, decimal_places=2)
+    calls_per_sale = serializers.FloatField(allow_null=True)
+    # tylko w widoku całego zespołu (manager): minuty rozmów, cel i czas pracy w okresie
+    minutes = serializers.FloatField(required=False)
+    goal = serializers.IntegerField(required=False)
+    worked_minutes = serializers.IntegerField(required=False)
 
 
 class DailyCallsSerializer(serializers.Serializer):

@@ -23,6 +23,7 @@ from crm.models import (
 from crm.excel import import_leads
 from crm.roles import AGENT
 from crm.sample_data import build_ceidg_sample_workbook
+from crm.tariffs import STANDARD_TARIFFS, tariff_defaults
 from crm.models import Announcement, OfferConfig
 from crm.services import register_activity
 from crm.work import create_offer
@@ -30,29 +31,9 @@ from crm.work import create_offer
 BATCH_NAME = "Demo - baza startowa"
 CEIDG_BATCH_NAME = "Demo - baza CEIDG agent1"
 
-# Taryfy firmowe (jak we wzorniku ofert zespołu): nazwa, cena netto 1. numeru, cena z promocją,
-# każdy kolejny numer, punkty oferty. Ceny zmienia manager na stronie „Taryfy i produkty”.
-COMMON = [
-    "Nielimitowane rozmowy, SMS-y i MMS-y w kraju",
-    "Roaming w UE: 23 GB",
-    "Prędkość internetu: 150 Mb/s",
-]
-UNLIMITED = ["Internet bez limitu", "Karta internetowa bez limitu"]
-
-
-def features(*extra):
-    return chr(10).join(COMMON + list(extra))   # chr(10) = nowa linia: jeden punkt oferty w linii
-
-
-PRODUCTS = (
-    ("S", Decimal("45"), Decimal("50"), Decimal("25"),
-     features("Internet: 50 GB przez 3 miesiące, potem 40 GB (współdzielony)", "Karta internetowa: 40 GB")),
-    ("M100", Decimal("55"), Decimal("65"), Decimal("25"),
-     features("Internet: 100 GB (współdzielony)", "Karta internetowa: 100 GB")),
-    ("M", Decimal("70"), Decimal("85"), Decimal("25"), features(*UNLIMITED)),
-    ("L", Decimal("85"), Decimal("105"), Decimal("25"), features(*UNLIMITED)),
-    ("VIP", Decimal("105"), Decimal("140"), Decimal("25"), features(*UNLIMITED)),
-)
+# Taryfy firmowe (jak we wzorniku ofert zespołu) są w crm/tariffs.py – wspólne z przyciskiem
+# „Wgraj taryfy z wzornika” i komendą load_tariffs.
+PRODUCTS = STANDARD_TARIFFS
 
 ANNOUNCEMENTS = (
     ("Promocja: 6 miesięcy gratis", "Przy umowie na 36 miesięcy klient może dostać 6 miesięcy gratis (cena pierwszego numeru wyższa – patrz taryfy). Zawsze proponuj najpierw 36 miesięcy.", True),
@@ -120,8 +101,7 @@ class Command(BaseCommand):
         products = []
         for order, (name, price, promo, extra, features) in enumerate(PRODUCTS, start=1):
             product, _ = Product.objects.update_or_create(
-                name=name, defaults={"price": price, "promo_price": promo, "extra_price": extra,
-                                     "features": features, "unit": "mies.", "sort_order": order, "is_active": True},
+                name=name, defaults=tariff_defaults(order, price, promo, extra, features),
             )
             products.append(product)
         # stare ogólne produkty demo (sprzed taryf T-Mobile) usuwamy; sprzedaże pamiętają nazwę i cenę,

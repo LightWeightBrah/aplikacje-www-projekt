@@ -8,6 +8,7 @@ CRM.initProducts = function initProducts() {
     $("page-error").hidden = false;
     $("products-area").hidden = true;
     $("add-open").hidden = true;
+    $("tariff-export").hidden = $("tariff-import").hidden = true;
     $("subtitle").textContent = "";
     return;
   }
@@ -54,7 +55,9 @@ CRM.initProducts = function initProducts() {
     warn.hidden = !noPrice.length;
     warn.textContent = noPrice.length ? `Produkty bez ceny: ${noPrice.map((p) => p.name).join(", ")}. Sprzedaż takiego produktu liczy się jako 0 zł, więc uzupełnij cenę.` : "";
     if (!products.length) {
-      $("products-table").innerHTML = `<tbody><tr><td class="muted">Katalog jest pusty. Dodaj pierwszy produkt, żeby agenci mogli wpisywać, co sprzedali. Dopóki katalog jest pusty, sprzedaż zapisuje się bez wartości.</td></tr></tbody>`;
+      $("products-table").innerHTML = `<tbody><tr><td class="muted">Katalog jest pusty. Wgraj taryfy z wzornika ofert, wgraj swój plik taryf („Wgraj plik taryf…”) albo dodaj taryfę przyciskiem „+ Dodaj taryfę”. Dopóki katalog jest pusty, sprzedaż zapisuje się bez wartości.
+        <div class="empty-actions"><button type="button" class="btn btn-primary" id="load-standard">Wgraj taryfy z wzornika (S, M100, M, L, VIP)</button></div></td></tr></tbody>`;
+      $("load-standard").addEventListener("click", loadStandard);
       return;
     }
     $("products-table").innerHTML = `<thead><tr><th>Taryfa / produkt</th><th class="num">Cena</th><th class="num">Z promocją</th><th class="num">Kolejny numer</th><th>Status</th><th></th></tr></thead><tbody>` +
@@ -66,6 +69,21 @@ CRM.initProducts = function initProducts() {
         <td>${p.is_active ? '<span class="chip" style="--c:#16a34a">Do sprzedaży</span>' : '<span class="chip" style="--c:#94a3b8">Wyłączony</span>'}</td>
         <td class="row-actions"><button type="button" class="btn-mini" data-act="edit" data-id="${p.id}">Edytuj</button>` +
         `<button type="button" class="btn-mini${p.is_active ? " danger" : ""}" data-act="toggle" data-id="${p.id}">${p.is_active ? "Wyłącz" : "Włącz"}</button></td></tr>`).join("") + "</tbody>";
+  }
+
+  /* Taryfy z wzornika ofert zespołu (ceny potem można zmienić przyciskiem „Edytuj”) */
+  async function loadStandard(e) {
+    e.target.disabled = true;
+    try {
+      const r = await api("/api/products/load-standard/", { method: "POST" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(errorText(data, r.status), true); e.target.disabled = false; return; }
+      toast(data.created.length ? `Dodano taryfy: ${data.created.join(", ")}.` : "Te taryfy już są w katalogu.");
+      await load();
+    } catch {
+      toast("Brak połączenia z serwerem. Spróbuj ponownie.", true);
+      e.target.disabled = false;
+    }
   }
 
   function openDialog(p) {
@@ -87,6 +105,39 @@ CRM.initProducts = function initProducts() {
   }
 
   $("add-open").addEventListener("click", () => openDialog(null));
+
+  /* Plik taryf (.xlsx): pobranie całego cennika i wgranie poprawionego / z innego serwera */
+  $("tariff-export").addEventListener("click", async () => {
+    const btn = $("tariff-export"); btn.disabled = true;
+    try {
+      const r = await api("/api/products/export/");
+      if (!r.ok) throw new Error("Nie udało się pobrać pliku (" + r.status + ").");
+      const url = URL.createObjectURL(await r.blob());
+      const a = Object.assign(document.createElement("a"), { href: url, download: "taryfy.xlsx" });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast("Pobrano taryfy.xlsx.");
+    } catch (ex) { toast(ex.message, true); }
+    btn.disabled = false;
+  });
+  $("tariff-import").addEventListener("click", () => $("tariff-file").click());
+  $("tariff-file").addEventListener("change", async () => {
+    const file = $("tariff-file").files[0]; if (!file) return;
+    const btn = $("tariff-import"); btn.disabled = true;
+    const body = new FormData(); body.append("file", file);
+    try {
+      const r = await api("/api/products/import/", { method: "POST", body });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(errorText(d, r.status), true); return; }
+      const parts = [];
+      if (d.created.length) parts.push(`dodane: ${d.created.join(", ")}`);
+      if (d.updated.length) parts.push(`zaktualizowane: ${d.updated.join(", ")}`);
+      if (d.errors.length) parts.push(`pominięte wiersze: ${d.errors.join("; ")}`);
+      toast(parts.length ? "Plik taryf wgrany – " + parts.join(" · ") + "." : "W pliku nie było żadnej taryfy.", !!d.errors.length);
+      await load();
+    } catch { toast("Brak połączenia z serwerem. Spróbuj ponownie.", true); }
+    finally { btn.disabled = false; $("tariff-file").value = ""; }
+  });
   $("prod-cancel").addEventListener("click", () => $("prod-dialog").close());
   $("prod-form").addEventListener("submit", async (e) => {
     e.preventDefault();

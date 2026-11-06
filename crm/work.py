@@ -152,7 +152,7 @@ def minutes_by_hour(user, day=None):
     seconds = [0] * 24
     for ended, duration in calls:
         seconds[timezone.localtime(ended).hour] += duration or 0
-    return [{"hour": h, "minutes": round(s / 60, 1)} for h, s in enumerate(seconds)]
+    return [{"hour": h, "minutes": round(s / 60, 2)} for h, s in enumerate(seconds)]
 
 
 # ------------------------------------------------------------------ dzień pracy (przyjście / wyjście)
@@ -232,7 +232,7 @@ def day_minutes(user, day):
     więc godzina z 30 minutami nadrabia słabszą godzinę obok.
     """
     by_hour = minutes_by_hour(user, day)
-    minutes = round(sum(h["minutes"] for h in by_hour), 1)
+    minutes = round(sum(h["minutes"] for h in by_hour), 2)
     began, ended, finished = work_span(user, day)
     worked = int((ended - began).total_seconds() // 60) if began else 0
     from .models import WorkDay
@@ -286,7 +286,7 @@ def minutes_report(user, date_from, date_to):
     while day <= date_to:
         days.append(day_minutes(user, day))
         day += timedelta(days=1)
-    total = round(sum(d["minutes"] for d in days), 1)
+    total = round(sum(d["minutes"] for d in days), 2)
     goal = sum(d["goal"] for d in days)
     worked = sum(d["worked_minutes"] for d in days)
     return {
@@ -295,6 +295,62 @@ def minutes_report(user, date_from, date_to):
         "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
         "days": [{k: v for k, v in d.items() if k != "by_hour"} for d in days],
         "by_hour": days[0]["by_hour"] if len(days) == 1 else None,
+    }
+
+
+def team_minutes_report(users, date_from, date_to):
+    """Jak `minutes_report`, ale dla kilku osób naraz (manager → Wyniki → „Cały zespół”).
+
+    Minuty, czas pracy i „powinno być” to sumy wszystkich osób; `per_user` ma te liczby
+    osobno dla każdej osoby (tabela „Wyniki agentów”). `day_minutes` liczymy tylko dla dni,
+    w których ktoś cokolwiek robił – reszta to zera, więc długi okres nie obciąża serwera.
+    """
+    from .models import WorkDay
+
+    ids = [u.pk for u in users]
+    since, _ = day_bounds(date_from)
+    _, until = day_bounds(date_to)
+    local = lambda t: timezone.localtime(t).date()  # noqa: E731
+    pairs = {(uid, d) for uid, d in WorkDay.objects.filter(user__in=ids, date__gte=date_from, date__lte=date_to)
+             .values_list("user", "date")}
+    pairs |= {(uid, local(t)) for uid, t in Activity.objects.filter(agent__in=ids, created_at__gte=since, created_at__lt=until)
+              .values_list("agent", "created_at")}
+    pairs |= {(uid, local(t)) for uid, t in CallRequest.objects.filter(user__in=ids, created_at__gte=since, created_at__lt=until)
+              .values_list("user", "created_at")}
+    by_user = {u.pk: u for u in users}
+    days, per_user = {}, {uid: {"minutes": 0.0, "goal": 0, "worked_minutes": 0} for uid in ids}
+    single = date_from == date_to
+    by_hour = [0.0] * 24
+    for uid, d in sorted(pairs, key=lambda p: p[1]):
+        if not (date_from <= d <= date_to):
+            continue
+        dm = day_minutes(by_user[uid], d)
+        row = days.setdefault(d, {"minutes": 0.0, "goal": 0, "worked_minutes": 0})
+        for key in ("minutes", "goal", "worked_minutes"):
+            row[key] += dm[key]
+            per_user[uid][key] += dm[key]
+        if single:
+            for h in dm["by_hour"]:
+                by_hour[h["hour"]] += h["minutes"]
+    day_rows, day = [], date_from
+    while day <= date_to:
+        r = days.get(day, {"minutes": 0.0, "goal": 0, "worked_minutes": 0})
+        day_rows.append({"date": day.isoformat(), "minutes": round(r["minutes"], 2), "goal": r["goal"],
+                         "worked_minutes": r["worked_minutes"], "hours": round(r["worked_minutes"] / 60, 2)})
+        day += timedelta(days=1)
+    worked = sum(r["worked_minutes"] for r in day_rows)
+    for v in per_user.values():
+        v["minutes"] = round(v["minutes"], 2)
+    return {
+        "scope": "team", "people": len(ids),
+        "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
+        "minutes": round(sum(r["minutes"] for r in day_rows), 2), "goal": sum(r["goal"] for r in day_rows),
+        "worked_minutes": worked, "hours": round(worked / 60, 2),
+        "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
+        "started_at": None, "ended_at": None,
+        "days": day_rows,
+        "by_hour": [{"hour": h, "minutes": round(m, 2)} for h, m in enumerate(by_hour)] if single else None,
+        "per_user": per_user,
     }
 
 
@@ -313,7 +369,7 @@ def today_stats(user):
         "offers": acts.filter(outcome=Activity.Outcome.OFFER).count(),
         "sold": acts.filter(outcome=Activity.Outcome.SOLD).count(),
         "commission": sales.aggregate(s=Sum("commission"))["s"] or Decimal("0.00"),
-        "minutes_today": round(sum(h["minutes"] for h in by_hour), 1),
+        "minutes_today": round(sum(h["minutes"] for h in by_hour), 2),
         "minutes_this_hour": by_hour[hour_now]["minutes"],
         "minutes_by_hour": by_hour,
         "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
@@ -611,4 +667,4 @@ def team_minutes_today(users):
         CallRequest.objects.filter(user__in=users, state=CallRequest.State.DONE, answered=True, ended_at__gte=start, ended_at__lt=end)
         .values("user").annotate(s=Sum("duration_seconds"))
     )
-    return {r["user"]: round((r["s"] or 0) / 60, 1) for r in rows}
+    return {r["user"]: round((r["s"] or 0) / 60, 2) for r in rows}

@@ -173,6 +173,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .head-actions{display:flex;gap:.6rem;flex-wrap:wrap}.head-actions .btn{padding:.6rem 1rem}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .tabs{display:inline-flex;gap:2px;background:var(--track);border-radius:12px;padding:3px;margin-bottom:1rem}
+.tabs-row{display:flex;justify-content:space-between;align-items:flex-start;gap:.8rem;flex-wrap:wrap}.tabs-row .head-actions{margin-bottom:1rem}
 .tabs button{border:0;background:none;color:var(--muted);border-radius:9px;padding:.5rem 1.1rem;font:inherit;font-weight:500;cursor:pointer}
 .tabs button small{font-size:.8rem;opacity:.85}
 .tabs button[aria-selected=true]{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.25)}
@@ -273,6 +274,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .access-row:first-child{border-top:0}
 .access-row .who{display:flex;flex-direction:column;flex:1}
 .access-row .saved{font-size:.8rem;min-height:1em}
+.access-sub{margin:1.4rem 0 .2rem;font-size:1rem;padding-top:1rem;border-top:1px solid var(--line)}
 .switch{position:relative;display:inline-block;width:2.8rem;height:1.55rem;flex:none}
 .switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;z-index:1}
 .switch i{position:absolute;inset:0;border-radius:99px;background:var(--track);border:1px solid var(--line);transition:background .15s}
@@ -434,6 +436,11 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .rule-input{display:flex;align-items:center;gap:.5rem}.rule-input input.select{width:6.5rem}.rule-input select.select{width:auto}
 .rule small{line-height:1.35}
 .rules-actions{align-items:center;margin-top:1rem}.rules-actions .link-btn{margin-left:.4rem}
+/* pasek „Zapisz ustawienia”: osobna karta pod zasadami, przyklejona do dołu ekranu, dopóki przewijasz zasady */
+.rules-bar{position:sticky;bottom:12px;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:.9rem 1.2rem;margin:0 0 2rem;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.rules-bar .rules-actions{margin-top:0}
+.rules-bar.dirty{border-color:#3b82f6;box-shadow:0 0 0 1px #3b82f6,0 6px 20px rgba(0,0,0,.18)}
+.rules-actions .meta-right,#rules-meta{margin-left:auto;text-align:right}
 /* v43: plakietki prób i pas „jeszcze nie rozmawiałeś” */
 .try-chip{display:inline-block;border-radius:99px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;white-space:nowrap;background:color-mix(in srgb,#64748b 20%,transparent);color:var(--muted);border:1px solid color-mix(in srgb,#64748b 35%,transparent)}
 .try-chip.fresh{background:color-mix(in srgb,#6366f1 18%,transparent);color:#6366f1;border-color:color-mix(in srgb,#6366f1 40%,transparent)}
@@ -618,6 +625,7 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 .products-table th.num,.products-table td.num{text-align:right;font-variant-numeric:tabular-nums}
 .products-table tr.inactive td:not(.row-actions){opacity:.55}
 .products-table small.block{display:block;font-weight:400}
+.products-table .empty-actions{margin-top:12px}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
 .dialog textarea.select{resize:vertical;font:inherit}
 @media(max-width:640px){
@@ -676,3 +684,10 @@ h1,h2{margin:0}h1{font-size:1.6rem;letter-spacing:-.02em}h2{font-size:1rem;margi
 /* pasek przy przewijaniu: długa nazwa firmy z CEIDG ucina się wielokropkiem zamiast wchodzić na numer */
 .lm-name strong{min-width:0;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
 .lm-name span{flex:0 10 auto}
+/* v78: tabela „Wyniki agentów” – układanie po kolumnach, wiersz całego zespołu */
+.agents-table th.sortable{cursor:pointer;user-select:none;white-space:normal;line-height:1.25;vertical-align:bottom;max-width:7.5rem}.agents-table th.sortable:hover{color:var(--ink)}
+.agents-table th.sorted{color:#3b82f6}
+.agents-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.agents-table th.num{text-align:right}
+.agents-table th,.agents-table td{padding-left:.55rem;padding-right:.55rem}
+.agents-table .ok-num{color:#16a34a;font-weight:700}.agents-table .low-num{color:#ef4444;font-weight:700}
+.agents-table tfoot td{border-top:2px solid var(--line);font-weight:700;background:color-mix(in srgb,var(--track) 60%,transparent)}

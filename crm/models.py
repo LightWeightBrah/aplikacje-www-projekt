@@ -371,6 +371,11 @@ class AgentProfile(models.Model):
         default=True,
         help_text="Odznacz, aby ukryć ranking i statystyki innych agentów przed tym agentem.",
     )
+    show_in_ranking = models.BooleanField(
+        "pokazuj w rankingu",
+        default=True,
+        help_text="Dotyczy managerów (agenci są w rankingu zawsze): odznacz, gdy manager nie dzwoni.",
+    )
     must_change_password = models.BooleanField(
         "musi ustawić nowe hasło",
         default=False,
@@ -471,6 +476,9 @@ class OfferConfig(models.Model):
         help_text="Puste: w ofercie nie ma linii z telefonem (osoba wysyłająca może ją dopisać).",
     )
     updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
 
     class Meta:
         verbose_name = "Ustawienia ofert"

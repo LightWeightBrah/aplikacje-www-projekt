@@ -62,7 +62,7 @@ const CRM = (() => {
 
   /* Motyw: domyślnie jak w systemie, wybór ręczny zapamiętany w przeglądarce. */
   const root = document.documentElement;
-  /* Domyślnie jasny; „auto” (jak w systemie) trzeba wybrać świadomie. */
+  /* Domyślnie ciemny (jak lubi zespół); jasny albo „auto” (jak w systemie) wybiera się w menu konta. */
   const themeMode = () => root.dataset.theme || "auto";
   const isDark = () => (root.dataset.theme
     ? root.dataset.theme === "dark"
@@ -369,7 +369,7 @@ const CRM = (() => {
       ["Rozmowy", calls, "w wybranym okresie"],
       ["Dodzwoniłem się", pct(calls ? answered / calls : null), `${answered} z ${calls} rozmów`],
       ["Wysłane oferty", (o.offer || 0) + o.interested, answered ? `${pct(((o.offer || 0) + o.interested) / answered)} rozmów` : ""],
-      ["Sprzedane", o.sold, "sprzedaże w wybranym okresie"],
+      ["Sprzedane", o.sold, o.sold ? `1 sprzedaż na ${String(Math.round((calls / o.sold) * 10) / 10).replace(".", ",")} rozmów` : "sprzedaże w wybranym okresie"],
       ["Prowizja", CRM.money(d.commission), `sprzedane abonamenty: ${CRM.money(d.revenue)} / mies.`],
       manager ? ["Czekają na agenta", d.pool_leads, "klienci, których nikt jeszcze nie prowadzi"] : ["Moi klienci w toku", active, "jeszcze niezamknięci, do obsłużenia"],
     ];
@@ -475,15 +475,45 @@ const CRM = (() => {
     $("daily").innerHTML = `<div class="bars" style="gap:${gap}">${bars}</div><div class="axis" style="gap:${gap}">${axis}</div>`;
   }
 
-  function renderAgents(rows) {
-    $("agents").innerHTML = `<thead><tr><th>Agent</th><th>Klienci w toku</th><th>Sprzedani klienci (łącznie)</th>
-      <th>Rozmowy</th><th>Nie odebrał</th><th>Oddzwonić</th><th>Zainteresowani</th>
-      <th>Sprzedaże w okresie</th><th>Przychód</th><th>Odmowy</th><th>Zły numer</th><th>Dodzwonienia</th></tr></thead><tbody>` +
-      rows.map((a) => `<tr><td><strong>${esc(a.username)}</strong></td><td>${a.leads_active}</td>
-        <td>${a.leads_won}</td><td>${a.calls}</td><td>${a.no_answer}</td><td>${a.callbacks}</td>
-        <td>${a.interested}</td><td>${a.sold}</td><td class="nowrap">${esc(CRM.money(a.revenue))}</td><td>${a.refused}</td><td>${a.wrong_number}</td>
-        <td>${pct(a.answer_rate)}</td></tr>`).join("") + "</tbody>";
+  /* Tabela „Wyniki agentów” (manager → Cały zespół): każda osoba + wiersz całego zespołu, układanie po kliknięciu nagłówka */
+  let agentRows = [], agentSort = "minutes";
+  const perSale = (calls, sold) => (sold ? Math.round((calls / sold) * 10) / 10 : null);
+  const fmt1 = (v) => String(v).replace(".", ",");
+  const durHM = (m) => { m = Math.max(0, Math.round(m || 0)); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} h${r ? ` ${r} min` : ""}` : `${r} min`; };
+  const AGENT_COLS = [
+    ["minutes", "Minuty / powinno być"], ["worked_minutes", "Czas pracy"], ["calls", "Rozmowy"], ["answer_rate", "Dodzwonienia"],
+    ["no_answer", "Nie odebrał"], ["callbacks", "Oddzwonić"], ["interested", "Zainteresowani"], ["offers", "Oferty"],
+    ["sold", "Sprzedane"], ["calls_per_sale", "Rozmów na 1 sprzedaż"], ["commission", "Prowizja"], ["leads_active", "Klienci w toku"],
+  ];
+  function agentCells(a) {
+    const minutes = a.minutes || 0, goal = a.goal || 0;
+    return [
+      `<span class="${goal ? (minutes >= goal ? "ok-num" : "low-num") : ""}">${talk(minutes)}</span> / ${goal} min`,
+      a.worked_minutes ? durHM(a.worked_minutes) : "–",
+      a.calls, pct(a.answer_rate), a.no_answer, a.callbacks, a.interested, a.offers, a.sold,
+      a.calls_per_sale != null ? fmt1(a.calls_per_sale) : "–",
+      `<span class="nowrap">${esc(CRM.money(a.commission))}</span>`, a.leads_active,
+    ].map((v) => `<td class="num">${v}</td>`).join("");
   }
+  function drawAgents() {
+    const val = (a) => { const v = a[agentSort]; return v == null ? (agentSort === "calls_per_sale" ? Infinity : -Infinity) : Number(v); };
+    // „rozmów na 1 sprzedaż”: mniej = lepiej, więc rosnąco; reszta malejąco
+    const rows = agentRows.slice().sort((x, y) => (agentSort === "calls_per_sale" ? val(x) - val(y) : val(y) - val(x)) || x.username.localeCompare(y.username));
+    const sum = (k) => agentRows.reduce((s, a) => s + Number(a[k] || 0), 0);
+    const calls = sum("calls"), answered = sum("answered"), sold = sum("sold");
+    const total = { minutes: sum("minutes"), goal: sum("goal"), worked_minutes: sum("worked_minutes"), calls,
+      answer_rate: calls ? answered / calls : null, no_answer: sum("no_answer"), callbacks: sum("callbacks"), interested: sum("interested"),
+      offers: sum("offers"), sold, calls_per_sale: perSale(calls, sold), commission: sum("commission"), leads_active: sum("leads_active") };
+    $("agents").innerHTML = `<thead><tr><th>Osoba</th>${AGENT_COLS.map(([k, label]) =>
+      `<th class="num sortable${k === agentSort ? " sorted" : ""}" data-agent-sort="${k}">${label}${k === agentSort ? (k === "calls_per_sale" ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>` +
+      rows.map((a) => `<tr><td><strong>${esc(a.username)}</strong></td>${agentCells(a)}</tr>`).join("") +
+      `</tbody><tfoot><tr class="team-total"><td><strong>Cały zespół</strong></td>${agentCells(total)}</tr></tfoot>`;
+  }
+  function renderAgents(rows) { agentRows = rows; drawAgents(); }
+  document.addEventListener("click", (e) => {
+    const th = e.target.closest("[data-agent-sort]"); if (!th) return;
+    agentSort = th.dataset.agentSort; drawAgents();
+  });
 
   function initDashboard() {
     const user = currentUser();
@@ -546,5 +576,14 @@ const CRM = (() => {
     load();
   }
 
-  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser };
+  /* Czas rozmów z minut (np. 0.23) na czytelny tekst – najważniejsze są minuty, sekundy to dodatek:
+     „0 min”, „0 min 14 s”, „3 min 5 s”, „2 h 4 min” */
+  function talk(minutes) {
+    const s = Math.round((Number(minutes) || 0) * 60);
+    if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? `${m} min ${r} s` : `${m} min`; }
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return m ? `${h} h ${m} min` : `${h} h`;
+  }
+
+  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser, talk };
 })();

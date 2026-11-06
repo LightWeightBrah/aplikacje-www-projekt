@@ -1,3 +1,4 @@
+from decimal import Decimal
 import io
 from datetime import datetime, time, timedelta
 
@@ -1303,6 +1304,13 @@ class TeamAccessFlagTests(CrmTestBase):
 class LeaderboardTests(CrmTestBase):
     """Ranking agentów, cudze statystyki i blokada 403 ustawiana przez managera."""
 
+    def setUp(self):
+        super().setUp()
+        from .models import AgentProfile
+
+        # manager domyślnie jest w rankingu; te testy sprawdzają samych agentów
+        AgentProfile.objects.create(user=self.manager, show_in_ranking=False)
+
     def add_calls(self, agent, outcome, count, created_at=None):
         lead = self.make_lead(owner=agent)
         for _ in range(count):
@@ -1348,6 +1356,117 @@ class LeaderboardTests(CrmTestBase):
         rows = self.ranking(self.agent1).data["results"]
         self.assertEqual({r["username"] for r in rows}, {"agent1", "agent2"})
         self.assertEqual([r["username"] for r in rows if r["is_me"]], ["agent1"])
+
+    # Manager jest w rankingu domyślnie; sam może się ukryć (show_in_ranking), agent nie może tego zmienić
+    def test_manager_in_ranking_by_default_and_can_hide(self):
+        from .models import AgentProfile
+
+        AgentProfile.objects.filter(user=self.manager).delete()
+        self.add_calls(self.manager, Activity.Outcome.INTERESTED, 2)
+        rows = {r["username"]: r for r in self.ranking(self.manager, "?days=1").data["results"]}
+        self.assertEqual(set(rows), {"agent1", "agent2", "manager1"})
+        self.assertEqual(rows["manager1"]["calls"], 2)
+        self.assertTrue(rows["manager1"]["is_me"])
+        listed = {a["username"]: a for a in self.api(self.manager).get("/api/agents/").data}
+        self.assertTrue(listed["manager1"]["show_in_ranking"])
+        r = self.api(self.manager).patch(f"/api/agents/{self.manager.pk}/", {"show_in_ranking": False}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        rows = {r["username"] for r in self.ranking(self.manager, "?days=1").data["results"]}
+        self.assertEqual(rows, {"agent1", "agent2"})
+        # dla managera can_view_team_stats nie ma sensu, dla agenta show_in_ranking też nie
+        self.assertEqual(self.api(self.manager).patch(f"/api/agents/{self.manager.pk}/", {"can_view_team_stats": False}, format="json").status_code, 400)
+        self.assertEqual(self.api(self.manager).patch(f"/api/agents/{self.agent1.pk}/", {"show_in_ranking": False}, format="json").status_code, 400)
+        self.assertEqual(self.api(self.agent1).patch(f"/api/agents/{self.manager.pk}/", {"show_in_ranking": True}, format="json").status_code, 403)
+
+    # Krótka rozmowa (14 s) nie ginie w zaokrągleniu: minuty mają dokładność do części sekundy
+    def test_short_call_keeps_seconds(self):
+        from .models import CallRequest
+
+        CallRequest.objects.create(user=self.agent1, phone="500100200", state=CallRequest.State.DONE, answered=True,
+                                   duration_seconds=14, ended_at=timezone.now())
+        minutes = self.api(self.agent1).get("/api/work/minutes/?days=1").data["minutes"]
+        self.assertAlmostEqual(minutes * 60, 14, delta=0.6)
+
+    # Wyniki → Cały zespół: minuty i cel to suma osób, tabela ma minuty, oferty i rozmów na 1 sprzedaż
+    def test_team_minutes_and_agent_table(self):
+        from .models import CallRequest
+
+        now = timezone.now()
+        for agent, secs in ((self.agent1, 600), (self.agent2, 300)):
+            CallRequest.objects.create(user=agent, phone="500100200", state=CallRequest.State.DONE, answered=True,
+                                       duration_seconds=secs, ended_at=now)
+        self.add_calls(self.agent1, Activity.Outcome.NO_ANSWER, 3)
+        self.add_calls(self.agent1, Activity.Outcome.SOLD, 1)
+        self.add_calls(self.agent1, Activity.Outcome.OFFER, 1)
+        team = self.api(self.manager).get("/api/work/minutes/?days=1&scope=team")
+        self.assertEqual(team.status_code, status.HTTP_200_OK)
+        self.assertEqual(team.data["minutes"], 15.0)
+        self.assertEqual(team.data["scope"], "team")
+        self.assertEqual(self.api(self.agent1).get("/api/work/minutes/?days=1&scope=team").status_code, 403)
+        own = self.api(self.manager).get("/api/work/minutes/?days=1")
+        self.assertEqual(own.data["minutes"], 0)
+        agents = {a["username"]: a for a in self.api(self.manager).get("/api/stats/?days=1").data["agents"]}
+        self.assertEqual(agents["agent1"]["minutes"], 10.0)
+        self.assertEqual(agents["agent1"]["offers"], 1)
+        self.assertEqual(agents["agent1"]["calls_per_sale"], 5.0)
+        self.assertIsNone(agents["agent2"]["calls_per_sale"])
+
+    # Plik taryf: eksport → zmiana ceny w Excelu → import aktualizuje i dodaje, błędny wiersz jest pomijany
+    def test_tariff_file_export_and_import(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook, load_workbook
+
+        from .models import Product
+
+        self.api(self.manager).post("/api/products/load-standard/")
+        self.assertEqual(self.api(self.agent1).get("/api/products/export/").status_code, status.HTTP_403_FORBIDDEN)
+        r = self.api(self.manager).get("/api/products/export/")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        wb = load_workbook(io.BytesIO(r.content))
+        ws = wb.active
+        self.assertEqual(ws.cell(1, 1).value, "Nazwa")
+        rows = {ws.cell(i, 1).value: i for i in range(2, ws.max_row + 1)}
+        self.assertEqual(set(rows), {"S", "M100", "M", "L", "VIP"})
+        ws.cell(rows["VIP"], 2).value = "110,50"          # nowa cena VIP
+        ws.append(["XL", 150, 180, 30, "mies.", "Internet bez limitu", "", "tak", 6])
+        ws.append(["Zła", "dużo"])                        # pominięty wiersz
+        out = io.BytesIO(); wb.save(out)
+        upload = SimpleUploadedFile("taryfy.xlsx", out.getvalue())
+        self.assertEqual(self.api(self.agent1).post("/api/products/import/", {"file": upload}, format="multipart").status_code,
+                         status.HTTP_403_FORBIDDEN)
+        upload.seek(0)
+        r = self.api(self.manager).post("/api/products/import/", {"file": upload}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["created"], ["XL"])
+        self.assertIn("VIP", r.data["updated"])
+        self.assertEqual(len(r.data["errors"]), 1)
+        self.assertEqual(Product.objects.get(name="VIP").price, Decimal("110.50"))
+        xl = Product.objects.get(name="XL")
+        self.assertEqual((xl.promo_price, xl.extra_price, xl.sort_order), (Decimal("180"), Decimal("30"), 6))
+        self.assertFalse(Product.objects.filter(name="Zła").exists())
+        # plik bez nagłówków / nie-Excel
+        bad = Workbook(); bad.active.append(["coś", "innego"]); out = io.BytesIO(); bad.save(out)
+        r = self.api(self.manager).post("/api/products/import/", {"file": SimpleUploadedFile("x.xlsx", out.getvalue())}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        r = self.api(self.manager).post("/api/products/import/", {"file": SimpleUploadedFile("x.xlsx", b"to nie excel")}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # Taryfy z wzornika: przycisk dodaje S/M100/M/L/VIP, nie nadpisuje cen managera, agent nie może
+    def test_load_standard_tariffs(self):
+        from .models import Product
+
+        Product.objects.create(name="M", price=Decimal("99"))
+        self.assertEqual(self.api(self.agent1).post("/api/products/load-standard/").status_code,
+                         status.HTTP_403_FORBIDDEN)
+        response = self.api(self.manager).post("/api/products/load-standard/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["created"], ["S", "M100", "L", "VIP"])
+        self.assertEqual(Product.objects.get(name="M").price, Decimal("99"))
+        vip = Product.objects.get(name="VIP")
+        self.assertEqual((vip.price, vip.promo_price, vip.extra_price), (Decimal("105"), Decimal("140"), Decimal("25")))
+        self.assertEqual(self.api(self.manager).post("/api/products/load-standard/").data["created"], [])
 
     # Ranking można układać wg rozmów i zainteresowanych
     def test_sort_by_calls_and_interested(self):

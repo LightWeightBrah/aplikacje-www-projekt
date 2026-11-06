@@ -19,6 +19,13 @@
 
     <form id="rules-form" novalidate>
         <div id="rules-groups"></div>
+        <section class="card" id="draw-card">
+            <h2>Losowanie nowych firm</h2>
+            <p class="card-desc">Dotyczy całego zespołu: z jakiej kolejności „Następny klient” bierze nowe firmy z bazy i puli. Spółki (sp. z o.o., S.A., sp.j., sp.k.) rozpoznajemy po nazwie. Zapisuje się razem z zasadami powyżej („Zapisz ustawienia”).</p>
+            <label class="check"><input type="radio" name="draw" value="random"> <span><strong>Wszystko losowo</strong><small class="muted">Firmy jednoosobowe i spółki w jednej puli – spółki też są obdzwaniane na bieżąco.</small></span></label>
+            <label class="check"><input type="radio" name="draw" value="last"> <span><strong>Najpierw firmy jednoosobowe, potem spółki</strong><small class="muted">Spółki trafią do agentów dopiero, gdy w bazie skończą się firmy jednoosobowe.</small></span></label>
+        </section>
+        <div class="rules-bar" id="rules-bar">
         <p id="rules-error" class="form-error" hidden></p>
         <div class="actions rules-actions">
             <button type="submit" class="btn btn-primary" id="rules-save" disabled>Zapisz ustawienia</button>
@@ -26,15 +33,8 @@
             <button type="button" class="link-btn" id="rules-reset">Przywróć ustawienia domyślne</button>
             <span class="muted small" id="rules-meta"></span>
         </div>
+        </div>
     </form>
-
-    <section class="card" id="draw-card">
-        <h2>Losowanie nowych firm</h2>
-        <p class="card-desc">Dotyczy całego zespołu: z jakiej kolejności „Następny klient” bierze nowe firmy z bazy i puli. Spółki (sp. z o.o., S.A., sp.j., sp.k.) rozpoznajemy po nazwie.</p>
-        <label class="check"><input type="radio" name="draw" value="random"> <span><strong>Wszystko losowo</strong><small class="muted">Firmy jednoosobowe i spółki w jednej puli – spółki też są obdzwaniane na bieżąco.</small></span></label>
-        <label class="check"><input type="radio" name="draw" value="last"> <span><strong>Najpierw firmy jednoosobowe, potem spółki</strong><small class="muted">Spółki trafią do agentów dopiero, gdy w bazie skończą się firmy jednoosobowe.</small></span></label>
-        <p class="muted small" id="draw-msg" aria-live="polite"></p>
-    </section>
 
     <section class="card" id="offer-card">
         <h2>Oferty dla klientów</h2>
@@ -53,7 +53,7 @@
             <label class="field full">Zakończenie oferty<textarea id="oc-closing" class="select" rows="2"></textarea></label>
             <label class="field">Podpis pod ofertą<input id="oc-signature" class="select" maxlength="120" placeholder="Zespół Ofert T-Mobile"></label>
             <label class="field">Telefon do kontaktu w ofercie (opcjonalnie)<input id="oc-phone" class="select" maxlength="30" inputmode="tel" placeholder="np. 600 123 456"></label>
-            <div class="full actions"><button type="submit" class="btn btn-primary">Zapisz ustawienia ofert</button><span class="muted small" id="oc-msg"></span></div>
+            <div class="full actions rules-actions"><button type="submit" class="btn btn-primary">Zapisz ustawienia ofert</button><span class="muted small" id="oc-msg"></span><span class="muted small meta-right" id="oc-meta"></span></div>
         </form>
     </section>
 
@@ -84,7 +84,7 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=76"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=76"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=76"></script>
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=82"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=82"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=82"></script>
 <script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();</script>{% endblock %}

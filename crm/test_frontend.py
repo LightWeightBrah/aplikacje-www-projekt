@@ -116,6 +116,11 @@ class FrontendPagesTests(CrmTestBase):
     def test_login_has_theme_button(self):
         self.assertContains(self.client.get("/crm/login/"), 'id="theme-btn"')
 
+    # Bez wyboru w menu konta wszyscy dostają ciemny motyw (logowanie i strony CRM)
+    def test_dark_theme_is_default(self):
+        for url in ("/crm/login/", "/crm/"):
+            self.assertContains(self.client.get(url), 'localStorage.getItem("crm_theme")||"dark"')
+
     def test_dashboard_has_user_menu_with_theme_choice(self):
         r = self.client.get("/crm/")
         self.assertContains(r, 'id="user-popover"')

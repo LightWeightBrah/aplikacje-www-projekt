@@ -857,6 +857,8 @@ def agent_stats(users, since, until=None):
             interested=Count("id", filter=Q(outcome=Outcome.INTERESTED)),
             refused=Count("id", filter=Q(outcome=Outcome.REFUSED)),
             sold=Count("id", filter=Q(outcome=Outcome.SOLD)),
+            # jak kafelek „Wysłane oferty”: oferta albo zainteresowany (też dostaje ofertę)
+            offers=Count("id", filter=Q(outcome__in=[Outcome.OFFER, Outcome.INTERESTED])),
             no_answer=Count("id", filter=Q(outcome=Outcome.NO_ANSWER)),
             callbacks=Count("id", filter=Q(outcome=Outcome.CALLBACK)),
             wrong_number=Count("id", filter=Q(outcome=Outcome.WRONG_NUMBER)),
@@ -869,9 +871,10 @@ def agent_stats(users, since, until=None):
         sale_items_in_range(since, until, ids)
         .order_by()
         .values("activity__agent")
-        .annotate(revenue=Sum("total"))
+        .annotate(revenue=Sum("total"), commission=Sum("commission"))
     )
     revenue = {row["activity__agent"]: row["revenue"] for row in revenue_rows}
+    commission = {row["activity__agent"]: row["commission"] for row in revenue_rows}
 
     lead_rows = (
         Lead.objects.filter(owner__in=ids)
@@ -907,6 +910,10 @@ def agent_stats(users, since, until=None):
                 "refused": a.get("refused", 0),
                 "sold": a.get("sold", 0),
                 "revenue": revenue.get(user.pk) or Decimal("0.00"),
+                "commission": commission.get(user.pk) or Decimal("0.00"),
+                "offers": a.get("offers", 0),
+                # średnio ile rozmów potrzeba na jedną sprzedaż (None = jeszcze bez sprzedaży)
+                "calls_per_sale": round(calls / a["sold"], 1) if a.get("sold") else None,
                 "no_answer": a.get("no_answer", 0),
                 "callbacks": a.get("callbacks", 0),
                 "wrong_number": a.get("wrong_number", 0),
@@ -991,6 +998,22 @@ def scheduled_counts(leads):
     }
 
 
+def team_users(since, until):
+    """Osoby w statystykach zespołu: wszyscy agenci i każdy, kto w okresie dzwonił albo ma klientów."""
+    active_ids = set(
+        Activity.objects.filter(created_at__gte=since, created_at__lt=until)
+        .exclude(agent=None)
+        .values_list("agent", flat=True)
+    ) | set(
+        Lead.objects.exclude(owner=None).values_list("owner", flat=True)
+    )
+    return list(
+        get_user_model().objects.filter(Q(groups__name=AGENT) | Q(pk__in=active_ids))
+        .distinct()
+        .order_by("username")
+    )
+
+
 def build_stats(user, days, manager, date_from=None, date_to=None):
     """Statystyki: manager widzi cały zespół, agent tylko siebie.
 
@@ -1007,18 +1030,7 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
 
     if manager:
         leads = Lead.objects.all()
-        active_ids = set(
-            Activity.objects.filter(created_at__gte=since, created_at__lt=until)
-            .exclude(agent=None)
-            .values_list("agent", flat=True)
-        ) | set(
-            Lead.objects.exclude(owner=None).values_list("owner", flat=True)
-        )
-        users = list(
-            User.objects.filter(Q(groups__name=AGENT) | Q(pk__in=active_ids))
-            .distinct()
-            .order_by("username")
-        )
+        users = team_users(since, until)
         pool = Lead.objects.filter(owner__isnull=True, status=Lead.Status.NEW).count()
         agent_ids = None
     else:
@@ -1028,6 +1040,14 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
         agent_ids = [user.pk]
 
     revenue, by_product = sales_summary(since, until, agent_ids)
+    agents = agent_stats(users, since, until)
+    if manager:
+        # minuty rozmów, czas pracy i cel każdej osoby – do tabeli „Wyniki agentów”
+        from .work import team_minutes_report
+
+        per_user = team_minutes_report(users, date_from, date_to)["per_user"]
+        for row in agents:
+            row.update(per_user.get(row["agent"], {}))
     return {
         "days": days,
         "date_from": date_from,
@@ -1040,7 +1060,7 @@ def build_stats(user, days, manager, date_from=None, date_to=None):
         "leads_by_status": lead_funnel(leads),
         "outcomes": outcome_counts(since, until, agent_ids),
         "scheduled": scheduled_counts(leads),
-        "agents": agent_stats(users, since, until),
+        "agents": agents,
         "daily_calls": daily_calls(date_from, date_to, agent_ids),
         # rozbicie na godziny tylko dla okresu jednodniowego (np. "Dziś")
         "hourly_calls": hourly_calls(date_from, agent_ids) if date_from == date_to else [],
@@ -1058,9 +1078,14 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
     """
     since, _ = day_bounds(date_from)
     _, until = day_bounds(date_to)
+    from .models import CallRequest
+    from .roles import MANAGER
+    # agenci zawsze; managerowie też (wielu z nich dzwoni), chyba że manager wyłączył
+    # „pokazuj w rankingu” (karta „Kto może widzieć wyniki innych” na stronie Ranking)
+    hidden = AgentProfile.objects.filter(show_in_ranking=False).values_list("user_id", flat=True)
     users = list(
         get_user_model()
-        .objects.filter(is_active=True, groups__name=AGENT)
+        .objects.filter(Q(groups__name=AGENT) | (Q(groups__name=MANAGER) & ~Q(pk__in=hidden)), is_active=True)
         .distinct()
         .order_by("username")
     )
@@ -1089,7 +1114,7 @@ def leaderboard(date_from, date_to, sort="sold", me_id=None):
             "answered": row["answered"],
             "interested": row["interested"],
             "answer_rate": row["answer_rate"],
-            "minutes": round((seconds.get(user.pk) or 0) / 60, 1),
+            "minutes": round((seconds.get(user.pk) or 0) / 60, 2),
             "commission": commission.get(user.pk) or Decimal("0.00"),
             "is_me": row["agent"] == me_id,
         }

@@ -162,15 +162,28 @@ class AttendanceView(APIView):
 
 
 class WorkMinutesView(APIView):
-    """Minuty rozmów agenta w okresie (`days` albo `date_from` + `date_to`): dzień po dniu i cel dzienny."""
+    """Minuty rozmów agenta w okresie (`days` albo `date_from` + `date_to`): dzień po dniu i cel dzienny.
+
+    `?scope=team` (tylko manager): suma minut, czasu pracy i celu całego zespołu.
+    """
 
     permission_classes = [IsAgentOrManager]
 
-    @extend_schema(parameters=PERIOD_PARAMETERS, responses=OpenApiTypes.OBJECT)
+    @extend_schema(parameters=PERIOD_PARAMETERS + [OpenApiParameter("scope", str, description="team = cały zespół (tylko manager)")], responses=OpenApiTypes.OBJECT)
     def get(self, request):
         date_from, date_to, error = parse_period(request.query_params)
         if error:
             return error
+        if request.query_params.get("scope") == "team":
+            # manager → Wyniki → „Cały zespół”: suma minut i celu wszystkich osób
+            if not is_manager(request.user):
+                return Response({"detail": "Minuty całego zespołu widzi manager."}, status=status.HTTP_403_FORBIDDEN)
+            from .services import day_bounds, team_users
+            from .work import team_minutes_report
+
+            data = team_minutes_report(team_users(day_bounds(date_from)[0], day_bounds(date_to)[1]), date_from, date_to)
+            data.pop("per_user")
+            return Response(data)
         return Response(minutes_report(request.user, date_from, date_to))
 
 
@@ -178,11 +191,16 @@ class WorkMinutesView(APIView):
 
 class OfferConfigSerializer(serializers.ModelSerializer):
     email_enabled = serializers.SerializerMethodField()
+    updated_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = OfferConfig
-        exclude = ("id",)
+        exclude = ("id", "updated_by")
         read_only_fields = ("updated_at",)
+
+    def get_updated_by_name(self, obj) -> str | None:
+        user = obj.updated_by
+        return (user.get_full_name() or user.username) if user else None
 
     def get_email_enabled(self, obj) -> bool:
         from django.conf import settings
@@ -212,7 +230,7 @@ class OfferConfigView(APIView):
             return Response({"detail": "Ustawienia ofert zmienia manager."}, status=status.HTTP_403_FORBIDDEN)
         serializer = OfferConfigSerializer(OfferConfig.get(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        serializer.save(updated_by=request.user)
         return Response(serializer.data)
 
 

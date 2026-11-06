@@ -5,7 +5,8 @@ from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers as drf_serializers
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -108,6 +109,53 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsManagerOrReadOnly]
     filterset_fields = ["is_active"]
     search_fields = ["name"]
+
+    @extend_schema(
+        request=None,
+        responses=inline_serializer("StandardTariffsResult", {
+            "created": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="load-standard")
+    def load_standard(self, request):
+        """Dodaje brakujące taryfy z wzornika ofert (S, M100, M, L, VIP); istniejące zostają bez zmian."""
+        from .tariffs import load_standard_tariffs
+
+        created, _ = load_standard_tariffs()
+        return Response({"created": created})
+
+    @extend_schema(responses={(200, XLSX_CONTENT_TYPE): OpenApiTypes.BINARY})
+    @action(detail=False, methods=["get"], url_path="export", renderer_classes=[XlsxRenderer],
+            permission_classes=[IsManager])
+    def export_file(self, request):
+        """Manager: plik .xlsx ze wszystkimi taryfami (ten sam układ przyjmuje import)."""
+        from .tariffs import tariffs_to_xlsx
+
+        response = Response(tariffs_to_xlsx(Product.objects.all()))
+        response["Content-Disposition"] = 'attachment; filename="taryfy.xlsx"'
+        return response
+
+    @extend_schema(
+        request={"multipart/form-data": inline_serializer("TariffFileUpload", {"file": drf_serializers.FileField()})},
+        responses=inline_serializer("TariffImportResult", {
+            "created": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "updated": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "errors": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="import", parser_classes=[MultiPartParser, FormParser],
+            permission_classes=[IsManager])
+    def import_file(self, request):
+        """Manager: wgrywa taryfy z pliku .xlsx (tej samej nazwy – aktualizuje, nowe – dodaje, nic nie usuwa)."""
+        from .tariffs import TariffFileError, import_tariffs
+
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response({"detail": "Wybierz plik .xlsx z taryfami."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(import_tariffs(uploaded))
+        except TariffFileError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CompanyViewSet(viewsets.ModelViewSet):
@@ -355,6 +403,7 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 "user_id", flat=True
             )
         )
+        hidden = set(AgentProfile.objects.filter(show_in_ranking=False).values_list("user_id", flat=True))
         rows = [
             {
                 "id": u.pk,
@@ -364,6 +413,7 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 "active_leads": u.active_leads,
                 "overdue_leads": u.overdue_leads,
                 "can_view_team_stats": u.pk not in blocked,
+                "show_in_ranking": u.pk not in hidden,
             }
             for u in users.order_by("username")
         ]
@@ -371,24 +421,18 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     @extend_schema(request=AgentAccessSerializer, responses=AgentAccessSerializer)
     def partial_update(self, request, pk=None):
-        """Manager włącza lub wyłącza agentowi podgląd wyników innych agentów."""
+        """Agentowi: włącza / wyłącza podgląd wyników innych. Managerowi: czy jest w rankingu."""
         agent = self.get_object()
-        if is_manager(agent):
-            return Response(
-                {"detail": "Manager zawsze widzi wyniki zespołu."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         serializer = AgentAccessSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        AgentProfile.objects.update_or_create(
-            user=agent,
-            defaults={
-                "can_view_team_stats": serializer.validated_data["can_view_team_stats"]
-            },
-        )
-        return Response(
-            {"can_view_team_stats": serializer.validated_data["can_view_team_stats"]}
-        )
+        field = "show_in_ranking" if is_manager(agent) else "can_view_team_stats"
+        if field not in serializer.validated_data:
+            detail = ("Manager zawsze widzi wyniki zespołu – można tylko ukryć go w rankingu (show_in_ranking)."
+                      if field == "show_in_ranking" else "Agent jest zawsze w rankingu – podaj can_view_team_stats.")
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        value = serializer.validated_data[field]
+        AgentProfile.objects.update_or_create(user=agent, defaults={field: value})
+        return Response({field: value})
 
     @extend_schema(request=AgentAccessSerializer, responses=AgentAccessBulkSerializer)
     @action(detail=False, methods=["post"], url_path="team-access")
@@ -396,6 +440,8 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """Manager włącza lub wyłącza podgląd wyników zespołu wszystkim agentom naraz."""
         serializer = AgentAccessSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if "can_view_team_stats" not in serializer.validated_data:
+            return Response({"detail": "Podaj can_view_team_stats."}, status=status.HTTP_400_BAD_REQUEST)
         value = serializer.validated_data["can_view_team_stats"]
         agents = get_user_model().objects.filter(is_active=True, groups__name=AGENT).distinct()
         with transaction.atomic():

@@ -31,6 +31,8 @@ CRM.initSettings = function initSettings() {
     ] },
   ];
   const FIELDS = GROUPS.flatMap((g) => g.fields);
+  // karta „Losowanie nowych firm” (radio w szablonie) zapisuje się razem z zasadami
+  const KEYS = FIELDS.map((f) => f.key).concat("companies_last");
   const FACTOR = { min: { min: 1, h: 60, d: 1440 }, h: { h: 1, d: 24 }, d: { d: 1 } };   // ile jednostek bazowych ma 1 jednostka z listy
   const UNIT_LABEL = { min: "min", h: "godz.", d: "dni" };
 
@@ -62,6 +64,8 @@ CRM.initSettings = function initSettings() {
   function render() {
     $("rules-groups").innerHTML = GROUPS.map((g) => `<section class="card rules-group"><h2>${esc(g.title)}</h2>
       <p class="muted small">${esc(g.intro)}</p><div class="rules-grid">${g.fields.map(fieldHtml).join("")}</div></section>`).join("");
+    const draw = document.querySelector(`input[name="draw"][value="${saved.companies_last ? "last" : "random"}"]`);
+    if (draw) draw.checked = true;
     readForm(); refresh();
   }
 
@@ -76,6 +80,8 @@ CRM.initSettings = function initSettings() {
       const n = raw === "" ? NaN : Number(raw);
       current[f.key] = f.base === "count" ? n : n * (FACTOR[f.base][unitOf(f)] || 1);
     });
+    const draw = document.querySelector('input[name="draw"]:checked');
+    current.companies_last = draw ? draw.value === "last" : saved.companies_last;
   }
   const dur = (minutes) => {
     if (minutes % 1440 === 0) { const d = minutes / 1440; return d === 1 ? "1 dzień" : `${d} dni`; }
@@ -93,17 +99,19 @@ CRM.initSettings = function initSettings() {
       `Gdy klient nie odbierze w umówionym terminie, ponowna próba jest za <b>${dur(r.callback_retry_minutes)}</b>.`,
       `Gdy <b>${r.unreachable_after_agents}</b> różnych agentów nie dodzwoni się, lead trafia do nieosiągalnych; wraca do obiegu po <b>${dur(r.unreachable_cooldown_days * 1440)}</b>.`,
       `Lead, do którego agent nie zadzwonił w ciągu <b>${hours(r.claim_timeout_hours)}</b> od pobrania, wraca do puli.`,
+      r.companies_last ? `Nowe firmy: <b>najpierw jednoosobowe</b>, spółki dopiero, gdy jednoosobowych zabraknie.` : `Nowe firmy losowane są <b>wszystkie razem</b> (jednoosobowe i spółki).`,
     ];
   }
-  const dirty = () => FIELDS.some((f) => current[f.key] !== saved[f.key]);
+  const dirty = () => KEYS.some((k) => current[k] !== saved[k]);
   function refresh() {
     $("rules-summary").innerHTML = summary(current).map((t) => `<li>${t}</li>`).join("");
     $("rules-save").disabled = !dirty();
     $("rules-undo").disabled = !dirty();
+    $("rules-bar").classList.toggle("dirty", dirty());
   }
   function meta() {
     const when = saved.updated_at ? new Date(saved.updated_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-    $("rules-meta").textContent = saved.updated_by_name ? `Ostatnia zmiana: ${saved.updated_by_name}, ${when}` : "Ustawienia domyślne – jeszcze nie zmieniane.";
+    $("rules-meta").textContent = saved.updated_by_name ? `Ostatnia zmiana zasad: ${saved.updated_by_name}, ${when}` : "Zasady domyślne – jeszcze nie zmieniane.";
   }
   function showErrors(data) {
     let general = "";
@@ -123,7 +131,7 @@ CRM.initSettings = function initSettings() {
     readForm();
     if (!FIELDS.every((f) => Number.isFinite(current[f.key]))) { showErrors({ _: "Uzupełnij wszystkie pola liczbami." }); return; }
     const body = {};
-    FIELDS.forEach((f) => { if (current[f.key] !== saved[f.key]) body[f.key] = current[f.key]; });
+    KEYS.forEach((k) => { if (current[k] !== saved[k]) body[k] = current[k]; });
     const btn = $("rules-save"); btn.disabled = true;
     try {
       const r = await api("/api/settings/", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

@@ -63,8 +63,13 @@
     <p id="access-msg" class="small muted" aria-live="polite"></p>
     <p class="card-desc">Wyłącz podgląd np. nowym agentom, żeby nie porównywali się od razu z doświadczonymi. Wyłączony agent nadal widzi własne wyniki, a inni nadal widzą jego w rankingu.</p>
     <div id="access-list"></div>
+    <div id="managers-block" hidden>
+        <h3 class="access-sub">Managerowie w rankingu</h3>
+        <p class="card-desc">Manager, który sam dzwoni, jest w rankingu jak agent. Wyłącz, jeśli dany manager nie dzwoni – wtedy nie zajmuje miejsca w rankingu.</p>
+        <div id="managers-list"></div>
+    </div>
 </section>
 <dialog class="dialog photo-dialog" id="photo-dialog"><form method="dialog"><div class="photo-big" id="photo-big"></div><strong id="photo-name"></strong><div class="dialog-actions"><button type="submit" class="btn btn-primary">Zamknij</button></div></form></dialog>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=76"></script>
+{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=82"></script>
 <script>CRM.initRanking();</script>{% endblock %}

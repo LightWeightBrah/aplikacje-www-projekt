@@ -8,10 +8,6 @@
         <h1>Panel managera</h1>
         <p class="muted" id="mgr-sub">Wszystkie leady zespołu: filtrowanie, przypisywanie, pula</p>
     </div>
-    <div class="head-actions">
-        <button type="button" class="btn btn-secondary" id="reassign-open">Przepisz leady agenta…</button>
-        <button type="button" class="btn btn-secondary" id="export-btn">Eksport do Excela</button>
-    </div>
 </header>
 <p id="page-error" class="form-error" hidden></p>
 
@@ -27,11 +23,17 @@
     <p class="card-desc">Przyszedł = zalogowanie albo pierwszy ruch w CRM tego dnia. Wyszedł = wylogowanie; godzina ze znakiem „?” to ostatni ruch agenta, który się nie wylogował (np. wyłączył laptopa). Liczą się tylko prawdziwe ruchy (dzwonienie, zapis rozmowy, „Następny klient”) – karta zostawiona otwarta na noc nie nabija czasu. Przerwa = co najmniej 15 min bez ruchu; pokazujemy ją, ale czas pracy jej nie odejmuje. Powinno być 15 min rozmów na każdą godzinę pracy (4 h → 60 min).</p>
 </section>
 
+<div class="tabs-row">
 <div class="tabs" id="tabs" role="tablist">
     <button type="button" role="tab" data-tab="all" aria-selected="true">Wszystkie</button>
     <button type="button" role="tab" data-tab="overdue" aria-selected="false">Zaległe <small id="late-count"></small></button>
     <button type="button" role="tab" data-tab="pool" aria-selected="false">Pula <small id="pool-count"></small></button>
     <button type="button" role="tab" data-tab="unreachable" aria-selected="false">Nieosiągalni <small id="unr-count"></small></button>
+</div>
+<div class="head-actions">
+    <button type="button" class="btn btn-secondary" id="reassign-open">Przepisz leady agenta…</button>
+    <button type="button" class="btn btn-secondary" id="export-btn">Eksport do Excela</button>
+</div>
 </div>
 
 <div class="card info-bar" id="late-bar" hidden>
@@ -109,7 +111,7 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=76"></script>
-<script src="{% static 'crm/js/attendance.js' %}?v=76"></script>
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=82"></script>
+<script src="{% static 'crm/js/attendance.js' %}?v=82"></script>
 <script>CRM.initAttendance();</script>
 <script>CRM.initManager();</script>{% endblock %}

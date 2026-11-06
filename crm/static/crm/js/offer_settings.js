@@ -11,8 +11,13 @@ CRM.initOfferSettings = function initOfferSettings() {
   };
   const num = (v) => String(v).replace(",", ".").trim();
 
+  function showMeta(c) {
+    const when = c.updated_at ? new Date(c.updated_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    $("oc-meta").textContent = c.updated_by_name ? `Ostatnia zmiana ofert: ${c.updated_by_name}, ${when}` : "Ustawienia ofert domyślne – jeszcze nie zmieniane.";
+  }
   async function loadConfig() {
     const c = await req("/api/offer-config/", "GET");
+    showMeta(c);
     $("oc-mode").value = c.mode; $("oc-email").value = c.forward_email; $("oc-name").value = c.forward_name;
     $("oc-term").value = String(c.default_term); $("oc-c36").value = String(c.commission_36).replace(".", ",");
     $("oc-c24").value = String(c.commission_24).replace(".", ","); $("oc-promo").value = c.promo_label;
@@ -24,13 +29,14 @@ CRM.initOfferSettings = function initOfferSettings() {
   $("offer-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      await req("/api/offer-config/", "PATCH", {
+      const saved = await req("/api/offer-config/", "PATCH", {
         mode: $("oc-mode").value, forward_email: $("oc-email").value.trim(), forward_name: $("oc-name").value.trim(),
         default_term: Number($("oc-term").value), commission_36: num($("oc-c36").value), commission_24: num($("oc-c24").value),
         promo_label: $("oc-promo").value.trim(), greeting: $("oc-greeting").value, closing: $("oc-closing").value,
         signature: $("oc-signature").value.trim(), contact_phone: $("oc-phone").value.trim(),
       });
       $("oc-msg").textContent = "Zapisano ✓";
+      showMeta(saved);
     } catch (ex) { $("oc-msg").textContent = ex.message; }
   });
 
@@ -52,16 +58,5 @@ CRM.initOfferSettings = function initOfferSettings() {
     if (tg) { await req(`/api/announcements/${tg.dataset.annToggle}/`, "PATCH", { is_active: tg.dataset.active !== "true" }); loadAnn(); }
     if (del && confirm("Usunąć tę informację?")) { await req(`/api/announcements/${del.dataset.annDel}/`, "DELETE"); loadAnn(); }
   });
-  /* Losowanie nowych firm dla całego zespołu: wszystko losowo albo najpierw firmy jednoosobowe */
-  async function loadDraw() {
-    const r = await req("/api/settings/", "GET");
-    document.querySelector(`input[name="draw"][value="${r.companies_last ? "last" : "random"}"]`).checked = true;
-  }
-  document.querySelectorAll('input[name="draw"]').forEach((i) => i.addEventListener("change", async () => {
-    try {
-      await req("/api/settings/", "PATCH", { companies_last: i.value === "last" });
-      $("draw-msg").textContent = "Zapisano ✓ – działa od następnego losowania.";
-    } catch (ex) { $("draw-msg").textContent = ex.message; }
-  }));
-  loadConfig().catch(() => {}); loadAnn().catch(() => {}); loadDraw().catch(() => {});
+  loadConfig().catch(() => {}); loadAnn().catch(() => {});
 };

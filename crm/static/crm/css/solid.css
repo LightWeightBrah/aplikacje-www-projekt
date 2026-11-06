@@ -236,7 +236,8 @@ body{font-size:15px}
 .w-hours div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px;height:100%}
 .w-hours i{display:block;width:100%;border-radius:3px 3px 0 0;background:color-mix(in srgb,var(--ok) 70%,transparent);min-height:2px}
 .w-hours i.low{background:color-mix(in srgb,var(--warn) 75%,transparent)}.w-hours i.zero{background:var(--track)}
-.w-hours i.now{outline:2px solid var(--brand);outline-offset:1px}
+/* bieżąca godzina: niebieski, pogrubiony numer pod słupkiem (bez ramki – przy pustym słupku wyglądała jak przycisk) */
+.w-hours div.now small{color:#3b82f6;font-weight:800}
 .w-hours small{font-size:.6rem;color:var(--muted)}
 .w-goal-note{font-size:.76rem;color:var(--muted);margin:.4rem 0 0}
 .w-day{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
