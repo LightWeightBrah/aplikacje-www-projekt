@@ -182,9 +182,12 @@
     const pool = `<div class="bp-text bp-pool"><span>Wspólna pula zespołu</span><b>${fmt(b.pool_left)} ${b.pool_left === 1 ? "firma" : few(b.pool_left || 0) ? "firmy" : "firm"}</b></div>`;
     box.innerHTML = own + pool + (!b.left && !b.pool_left ? `<small class="bp-empty">Nowych firm już nie ma – poproś managera o nową bazę.</small>` : "");
   }
+  let summaryOpened = false;
   async function loadSummary() {
     try {
-      const r = await api("/api/work/summary/");
+      // pierwsze wczytanie = agent otworzył „Dzwonienie” (liczy się jako praca); odświeżanie w tle – nie
+      const r = await api("/api/work/summary/" + (summaryOpened ? "" : "?open=1"));
+      summaryOpened = true;
       if (!r.ok) return;
       summary = await r.json();
       renderSegs(); renderNextHint(); renderBase(); renderSide(); renderDialbar();
@@ -217,7 +220,7 @@
           <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${t.minutes_today} min</b> rozmów, powinno być <b>${t.day_goal} min</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
       : `<p class="w-goal-note">Dziś powinno być <b>${t.day_goal} min</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
     const plan = dayPlan.slice().sort((a, b) => new Date(a.next_contact_at) - new Date(b.next_contact_at));
-    side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3>${summary.workday && summary.workday.started_at && !summary.workday.ended_at ? `<button type="button" class="btn-mini" data-work-end title="Zapisuje godzinę wyjścia – manager widzi ją w „Zespół”">Kończę pracę</button>` : ""}</div>
+    side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3></div>
         <div class="w-stats">
           <div class="w-stat"><b>${t.calls}</b><span>telefonów</span></div>
           <div class="w-stat"><b>${t.talks}</b><span>rozmów</span></div>
@@ -237,7 +240,8 @@
     const w = summary && summary.workday;
     if (!w || !w.started_at) return "";
     const m = w.worked_minutes, h = Math.floor(m / 60), r = m % 60;
-    return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min)`;
+    const br = w.break_minutes ? `, w tym przerwy ${w.break_minutes} min` : "";
+    return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min${br})`;
   }
   document.addEventListener("crm:view", renderSide);
 
@@ -777,13 +781,14 @@
     lock(false);
     if (r.error) { fail(r.error); return; }
     const off = r.data.offer;
-    if (off.sent) toast(`Oferta wysłana na ${off.recipient}. Follow-up zapisany.`);
-    else { pendingNext = goNext; showOfferDialog(r.data); }
-    afterSave({ id: r.data.activity, outcome: "offer", rescheduled_to: body.next_contact_at }, goNext && off.sent);
+    const saved = { id: r.data.activity, outcome: "offer", rescheduled_to: body.next_contact_at };
+    if (off.sent) { toast(`Oferta wysłana na ${off.recipient}. Follow-up zapisany.`); afterSave(saved, goNext); return; }
+    // oferta do ręcznej wysyłki: pasek „Cofnij” i następny klient dopiero po zamknięciu okna z mailem
+    pendingAfter = () => afterSave(saved, goNext);
+    showOfferDialog(r.data);
   }
-  /* „Zapisz i dalej” przy ofercie do ręcznej wysyłki: następny klient dopiero po zamknięciu okna */
-  let pendingNext = false;
-  $("offer-dialog").addEventListener("close", () => { if (pendingNext) { pendingNext = false; nextClient(); } });
+  let pendingAfter = null;
+  $("offer-dialog").addEventListener("close", () => { const run = pendingAfter; pendingAfter = null; if (run) run(); });
   /* Oferta bez serwera poczty: agent kopiuje gotowy, sformatowany list (wkleja się w Gmailu / Outlooku
      z pogrubieniami jak we wzorniku) albo pobiera plik oferty i dodaje go jako załącznik. */
   async function offerHtml(id) {
@@ -797,8 +802,12 @@
     $("od-title").textContent = "Oferta zapisana – wyślij ją";
     $("od-text").innerHTML = o.recipient ? `CRM nie ma jeszcze skonfigurowanej poczty, więc wyślij ofertę na <b>${esc(o.recipient)}</b> sam:`
       : "Brak adresu do przekazywania ofert (ustawia go manager). Wyślij ofertę ręcznie:";
-    $("od-steps").innerHTML = `<li>Kliknij <b>„Otwórz w poczcie”</b> – otworzy się mail ${who} z tematem i danymi klienta.</li>
-      <li>Kliknij <b>„Kopiuj ofertę”</b> i wklej ją w treść maila (zostanie formatowanie), albo <b>„Pobierz plik oferty”</b> i dodaj plik jako załącznik.</li>`;
+    // „Otwórz w poczcie” (mailto) przenosi tylko zwykły tekst i nie umie dodać załącznika – to ograniczenie
+    // wszystkich programów pocztowych (Thunderbird, Outlook). Dlatego oferta z formatowaniem kopiuje się sama,
+    // a agent wkleja ją w mailu.
+    $("od-steps").innerHTML = `<li>Kliknij <b>„Otwórz w poczcie”</b> – otworzy się mail ${who} z tematem i danymi klienta, a oferta <b>sama się skopiuje</b>.</li>
+      <li>W mailu kliknij <b>prawym przyciskiem myszy</b> pod danymi klienta i wybierz <b>„Wklej”</b> – oferta wklei się z formatowaniem.</li>
+      <li>Jeśli potrzebny jest załącznik: <b>„Pobierz plik oferty”</b>, a w poczcie przycisk <b>„Załącz”</b> i wybierz plik z folderu Pobrane.</li>`;
     $("od-body").value = `${o.subject}\n\n${o.body}`;
     $("od-letter").innerHTML = '<p class="muted">Wczytuję podgląd…</p>';
     let file = null;
@@ -806,12 +815,31 @@
       .catch(() => { $("od-letter").textContent = o.body; });
     $("od-mail").href = d.mailto; $("od-mail").hidden = !o.recipient;
     const flash = (btn, text, back) => { btn.textContent = text; setTimeout(() => { btn.textContent = back; }, 1800); };
-    $("od-copy").onclick = async () => {
-      const html = $("od-letter").innerHTML, text = $("od-letter").innerText;
+    async function copyLetter() {
+      // Białe tło jako tabela z bgcolor – tak zachowuje je każda poczta, także ciemny Thunderbird
+      // (sam ciemny tekst bez tła byłby tam czarny na czarnym). Nowe oferty mają już tę tabelę z serwera.
+      const inner = $("od-letter").innerHTML;
+      const html = inner.includes("data-offer-card") ? inner
+        : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background:#ffffff;border-collapse:collapse;max-width:760px"><tr><td bgcolor="#ffffff" style="background:#ffffff;color:#25212a;padding:20px 24px">${inner}</td></tr></table>`;
+      const text = $("od-letter").innerText;
       try {
         await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
-        flash($("od-copy"), "Skopiowano ✓ – wklej w mailu", "Kopiuj ofertę (z formatowaniem)");
-      } catch { const ok = await CRM.copyText(text); flash($("od-copy"), ok ? "Skopiowano (bez formatowania)" : "Nie udało się", "Kopiuj ofertę (z formatowaniem)"); }
+        return "html";
+      } catch { return (await CRM.copyText(text)) ? "text" : ""; }
+    }
+    $("od-copy").onclick = async () => {
+      const how = await copyLetter();
+      flash($("od-copy"), how === "html" ? "Skopiowano ✓ – wklej w mailu" : how ? "Skopiowano (bez formatowania)" : "Nie udało się", "Kopiuj ofertę (z formatowaniem)");
+    };
+    $("od-mail").onclick = async (e) => {
+      e.preventDefault();
+      const how = await copyLetter();
+      if (how !== "html") { location.href = d.mailto; return; }   // bez schowka: stary mail z ofertą zwykłym tekstem
+      // krótki mail: dane klienta + miejsce na wklejenie sformatowanej oferty
+      const head = String(o.body).split(/\n-{10,}\n/)[0].replace(/^Proszę o wysłanie oferty do klienta\.\s*/, "").trim();
+      const body = `${head}\n\n(Tu wklej ofertę: prawy przycisk myszy → Wklej)\n`;
+      location.href = `mailto:${encodeURIComponent(o.recipient)}?subject=${encodeURIComponent(o.subject)}&body=${encodeURIComponent(body)}`;
+      flash($("od-mail"), "Oferta skopiowana ✓ – wklej w mailu", "Otwórz w poczcie");
     };
     $("od-file").onclick = async () => {
       try {
@@ -903,14 +931,6 @@
     if (t.closest("#reset-form")) { resetForm(); return; }
     if (t.closest("#edit-data, [data-edit]")) { editData(); return; }
     if (t.closest("[data-referral]")) { openContact(); return; }
-    if (t.closest("[data-work-end]")) {
-      if (!confirm("Zakończyć dzień pracy? Zapiszemy godzinę wyjścia. Gdy wrócisz do dzwonienia, dzień otworzy się znowu.")) return;
-      const r = await jsonReq("/api/work/end/", "POST", {});
-      if (r.error) { toast(r.error, true); return; }
-      toast(`Do zobaczenia! Dziś: ${r.data.minutes} min rozmów z ${r.data.goal} min.`);
-      await loadSummary();
-      return;
-    }
     const reg = t.closest("[data-reg]");
     if (reg) {
       const ok = await CRM.copyText(reg.dataset.reg);

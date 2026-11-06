@@ -71,12 +71,15 @@ class WorkSummaryView(APIView):
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
-        touch_workday(request.user)   # „Dzwonienie” odświeża to co 20 s: tak wiemy, że agent jest w pracy
+        # Ruch agenta to tylko otwarcie „Dzwonienia” (?open=1). Odświeżanie co 20 s w tle się NIE liczy –
+        # inaczej karta zostawiona na noc nabijałaby czas pracy.
+        if request.query_params.get("open"):
+            touch_workday(request.user)
         rows = base_progress(request.user)
         today = day_minutes(request.user, timezone.localdate())
         return Response({
             "workday": {"started_at": today["started_at"], "ended_at": today["ended_at"],
-                        "worked_minutes": today["worked_minutes"]},
+                        "worked_minutes": today["worked_minutes"], "break_minutes": today["break_minutes"]},
             "counts": work_counts(request.user),
             "today": today_stats(request.user),
             "base": {"total": sum(r["total"] for r in rows), "left": sum(r["left"] for r in rows),
@@ -120,17 +123,26 @@ class WorkContactView(APIView):
         return Response({"lead": LeadSerializer(lead, context={"request": request}).data}, status=status.HTTP_201_CREATED)
 
 
-class WorkEndView(APIView):
-    """Agent klika „Kończę pracę”: zapisuje godzinę wyjścia (następny ruch w CRM znów otwiera dzień)."""
+class WorkLoginView(APIView):
+    """Logowanie do CRM = przyjście do pracy (albo powrót po przerwie / po wylogowaniu)."""
 
     permission_classes = [IsAgentOrManager]
 
-    @extend_schema(request=None, responses=OpenApiTypes.OBJECT)
+    @extend_schema(request=None, responses={204: None})
+    def post(self, request):
+        touch_workday(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WorkLogoutView(APIView):
+    """Wylogowanie = wyjście z pracy (godzina wyjścia; kolejny ruch tego dnia znów otwiera dzień)."""
+
+    permission_classes = [IsAgentOrManager]
+
+    @extend_schema(request=None, responses={204: None})
     def post(self, request):
         end_workday(request.user)
-        today = day_minutes(request.user, timezone.localdate())
-        return Response({"started_at": today["started_at"], "ended_at": today["ended_at"],
-                         "worked_minutes": today["worked_minutes"], "minutes": today["minutes"], "goal": today["goal"]})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AttendanceView(APIView):

@@ -28,7 +28,7 @@ body{font-size:15px}
 .mainnav>a:hover,.nav-more-btn:hover{color:var(--ink);background:var(--track)}
 .mainnav>a.active,.nav-more-btn.active{color:var(--brand)}
 .mainnav>a.active::after{content:"";position:absolute;left:.8rem;right:.8rem;bottom:-9px;height:3px;border-radius:3px 3px 0 0;background:var(--brand)}
-.nav-badge{background:var(--late);color:#fff;border-radius:99px;font-size:.7rem;min-width:1.25rem;height:1.25rem;display:inline-grid;place-items:center;padding:0 .35rem}
+.nav-badge{background:#ef4444;color:#fff;border-radius:99px;font-size:.7rem;min-width:1.25rem;height:1.25rem;display:inline-grid;place-items:center;padding:0 .35rem}
 .nav-more{position:relative}
 .nav-more-menu{position:absolute;top:calc(100% + 8px);left:0;min-width:230px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.14);padding:.4rem;z-index:50;display:flex;flex-direction:column}
 .nav-more-menu[hidden]{display:none}
@@ -411,7 +411,13 @@ button.avatar{border:0;padding:0;cursor:zoom-in;font:inherit;font-weight:700}
 .mn-col i.future{opacity:.2}
 .mn-col small{position:absolute;bottom:-20px;font-size:.72rem;color:var(--muted)}
 .mn-col.is-now small{color:var(--brand-text);font-weight:700}
-.mn-val{font-size:.72rem;font-weight:700;margin-bottom:2px}
+.mn-val{position:absolute;left:0;right:0;text-align:center;font-size:.72rem;font-weight:700;white-space:nowrap;pointer-events:none}
+.mn-col i{position:relative;z-index:1}
+.mn-col i.part{background:var(--brand);opacity:.9}
+/* dzień po dniu: obrys = ile powinno być tego dnia, wypełnienie (i) = ile jest */
+.mn-target{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:46px;box-sizing:border-box;
+  border:2px dashed color-mix(in srgb,var(--ok,#16a34a) 70%,transparent);border-bottom:0;border-radius:6px 6px 0 0;
+  background:color-mix(in srgb,var(--ok,#16a34a) 8%,transparent);pointer-events:none}
 .mn-goal{position:absolute;left:0;right:0;border-top:2px dashed #16a34a;pointer-events:none}
 .mn-goal span{position:absolute;right:0;top:-18px;font-size:.72rem;color:#16a34a;font-weight:700}
 .minutes-card .card-desc{margin-top:1.8rem}
@@ -457,6 +463,6 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .att-head h2{margin:0}
 .att-tools{display:flex;gap:.5rem;align-items:center}
 .att-off td{color:var(--muted)}
-.att-live{color:var(--ok,#16a34a);font-weight:700}
+.att-live{color:var(--ok,#16a34a);font-weight:700}.att-break{color:var(--warn);font-weight:700}
 .att-ok{color:var(--ok,#16a34a)}
 .att-low{color:#ef4444}

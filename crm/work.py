@@ -157,26 +157,33 @@ def minutes_by_hour(user, day=None):
 
 # ------------------------------------------------------------------ dzień pracy (przyjście / wyjście)
 
-IDLE_MINUTES = 30   # po tylu minutach bez ruchu w CRM agent nie jest już „w pracy”
+BREAK_MINUTES = 15  # tyle minut bez ruchu w CRM = przerwa (pokazujemy ją, ale jej nie odejmujemy)
+IDLE_MINUTES = 45   # po tylu minutach bez ruchu (i bez wylogowania) czas pracy przestaje rosnąć „do teraz”
 
 
 def touch_workday(user):
-    """Zapisuje, że agent jest w pracy: pierwszy ruch dnia = przyjście, każdy kolejny = ostatnia aktywność.
+    """Zapisuje prawdziwy ruch agenta: pierwszy ruch dnia = przyjście, każdy kolejny = ostatnia aktywność.
 
-    Wywoływane przy wejściu do „Dzwonienia” (i jego odświeżaniu), zapisie rozmowy i telefonie.
-    Ruch po kliknięciu „Kończę pracę” znów otwiera dzień (agent wrócił).
+    Wywoływane przy logowaniu, otwarciu „Dzwonienia”, „Następny klient”, zapisie rozmowy i telefonie.
+    Samo odświeżanie liczników w tle NIE jest ruchem – inaczej laptop zostawiony na noc „pracowałby”.
+    Dłuższa cisza (co najmniej BREAK_MINUTES) zapisuje się jako przerwa. Ruch po wylogowaniu znów otwiera dzień.
     """
     from .models import WorkDay
 
     now = timezone.now()
     day = timezone.localdate()
-    updated = WorkDay.objects.filter(user=user, date=day).update(last_seen=now, ended_at=None)
-    if not updated:
+    wd = WorkDay.objects.filter(user=user, date=day).first()
+    if wd is None:
         WorkDay.objects.get_or_create(user=user, date=day, defaults={"first_seen": now, "last_seen": now})
+        return
+    if now - wd.last_seen >= timedelta(minutes=BREAK_MINUTES):
+        wd.breaks = list(wd.breaks or []) + [[wd.last_seen.isoformat(), now.isoformat()]]
+    wd.last_seen, wd.ended_at = max(now, wd.last_seen), None
+    wd.save(update_fields=["last_seen", "ended_at", "breaks"])
 
 
 def end_workday(user):
-    """Agent klika „Kończę pracę”: zapisujemy godzinę wyjścia (cel minut przestaje rosnąć)."""
+    """Agent się wylogował: zapisujemy godzinę wyjścia (cel minut przestaje rosnąć)."""
     from .models import WorkDay
 
     touch_workday(user)
@@ -184,11 +191,16 @@ def end_workday(user):
     WorkDay.objects.filter(user=user, date=timezone.localdate()).update(ended_at=now, last_seen=now)
 
 
+def _break_minutes(breaks):
+    return sum(int((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() // 60) for a, b in breaks)
+
+
 def work_span(user, day):
     """(początek, koniec, czy zakończył) dnia pracy albo (None, None, False), gdy agent nie pracował.
 
-    Początek: wcześniejsze z „przyjścia” i pierwszego zapisu rozmowy. Koniec: „Kończę pracę”,
-    a bez tego – dziś „teraz”, w poprzednie dni ostatnia aktywność.
+    Początek: wcześniejsze z „przyjścia” i pierwszego zapisu rozmowy. Koniec: wylogowanie,
+    a bez tego (np. wyłączył laptopa) – dziś „teraz”, w poprzednie dni ostatnia aktywność.
+    Każdy dzień kończy się najpóźniej o północy: nic nie przechodzi na następny dzień.
     """
     from .models import WorkDay
 
@@ -206,8 +218,8 @@ def work_span(user, day):
         return began, max([wd.ended_at] + marks), True
     lasts = ([wd.last_seen] if wd else []) + marks
     now = timezone.now()
-    # Dziś i bez „Kończę pracę”: liczymy do teraz, chyba że agent od dłuższej chwili nic nie robi w CRM
-    # (wyszedł bez klikania) – wtedy czas pracy kończy się na ostatniej aktywności.
+    # Dziś i bez wylogowania: liczymy do teraz, chyba że agent od dłuższej chwili nic nie robi w CRM
+    # (wyłączył laptopa) – wtedy czas pracy kończy się na ostatniej aktywności. Gdy wróci, przerwa się doliczy.
     if day == timezone.localdate() and now - max(lasts) <= timedelta(minutes=IDLE_MINUTES):
         return began, now, False
     return began, max(lasts), False
@@ -223,6 +235,15 @@ def day_minutes(user, day):
     minutes = round(sum(h["minutes"] for h in by_hour), 1)
     began, ended, finished = work_span(user, day)
     worked = int((ended - began).total_seconds() // 60) if began else 0
+    from .models import WorkDay
+
+    wd = WorkDay.objects.filter(user=user, date=day).first()
+    breaks = list(wd.breaks or []) if wd else []
+    now = timezone.now()
+    # trwająca przerwa: dziś, bez wylogowania, od co najmniej 15 min nic się nie dzieje
+    on_break_since = None
+    if wd and not finished and day == timezone.localdate() and now - wd.last_seen >= timedelta(minutes=BREAK_MINUTES):
+        on_break_since = wd.last_seen.isoformat()
     return {
         "date": day.isoformat(), "minutes": minutes,
         "worked_minutes": worked, "hours": round(worked / 60, 2),
@@ -230,6 +251,7 @@ def day_minutes(user, day):
         "started_at": began.isoformat() if began else None,
         "ended_at": ended.isoformat() if finished else None,
         "last_seen": ended.isoformat() if began else None,
+        "breaks": breaks, "break_minutes": _break_minutes(breaks), "on_break_since": on_break_since,
         "by_hour": by_hour,
     }
 
@@ -247,9 +269,10 @@ def attendance(day):
         rows.append({
             "id": user.pk, "username": user.username, "full_name": user.get_full_name() or user.username,
             "started_at": d["started_at"], "ended_at": d["ended_at"], "worked_minutes": d["worked_minutes"],
-            "working_now": bool(d["started_at"]) and not d["ended_at"] and day == timezone.localdate()
-            and timezone.now() - datetime.fromisoformat(d["last_seen"]) <= timedelta(minutes=IDLE_MINUTES),
+            "working_now": bool(d["started_at"]) and not d["ended_at"] and not d["on_break_since"]
+            and day == timezone.localdate(),
             "last_seen": d["last_seen"],
+            "breaks": d["breaks"], "break_minutes": d["break_minutes"], "on_break_since": d["on_break_since"],
             "minutes": d["minutes"], "goal": d["goal"],
             "calls": acts.exclude(outcome__in=NON_CALL_OUTCOMES).count(),
         })
@@ -334,7 +357,7 @@ def build_offer(config, lead, agent, product, quantity, term, promo, client_emai
     if config.mode == OfferConfig.Mode.FORWARD:
         company_line = company + (f", NIP {lead.company.nip}" if lead.company and lead.company.nip else "")
         note = (
-            f"Proszę o wysłanie oferty do klienta.\n"
+            # Czarek robi to codziennie – same dane, bez formułek
             f"Adres klienta: {client_email or '(brak – trzeba dopytać)'}\n"
             f"Firma: {company_line}\nTelefon: {lead.phone}\nAgent: {agent_name}\n"
             f"{'-' * 40}\n\n"
@@ -391,9 +414,16 @@ def offer_letter_html(config, product, quantity, term, promo):
     if config.contact_phone:
         parts.append(f"<p {p}><strong>Tel.:</strong> {escape(config.contact_phone)}</p>")
     parts.append(f'<p style="margin:22px 0 0">Z poważaniem,<br>{escape(config.signature or "")}</p>')
+    # Własne białe tło: w ciemnej poczcie (np. czarny Thunderbird, tryb ciemny u klienta) ciemny tekst
+    # bez tła byłby nieczytelny. Tabela z bgcolor to sposób, który zachowuje każda poczta (sam styl
+    # na <div> bywa gubiony). Z tłem oferta wygląda wszędzie tak samo – jak biała kartka.
     return (
-        '<div style="font-family:Arial,Helvetica,sans-serif;color:#25212a;line-height:1.65;font-size:15px;max-width:720px">'
-        + "".join(parts) + "</div>"
+        '<table role="presentation" data-offer-card="1" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff"'
+        ' style="background:#ffffff;border-collapse:collapse;max-width:760px"><tr>'
+        '<td bgcolor="#ffffff" style="background:#ffffff;padding:20px 24px">'
+        '<div style="font-family:Arial,Helvetica,sans-serif;color:#25212a;'
+        'line-height:1.65;font-size:15px;max-width:720px">'
+        + "".join(parts) + "</div></td></tr></table>"
     )
 
 
@@ -417,8 +447,7 @@ def forward_note_html(lead, agent, client_email):
     return (
         '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;border:1px solid #d6dbe6;'
         'border-left:5px solid #2456d6;background:#f3f6fc;border-radius:8px;padding:12px 16px;margin:0 0 22px;max-width:720px">'
-        "<b>Proszę o wysłanie oferty do klienta</b> (gotowa oferta jest niżej i w załączniku).<br>"
-        f"Adres klienta: {email}<br>Firma: {company}{nip}<br>Telefon: {escape(lead.phone)}<br>Agent: {agent_name}</div>"
+        f"<b>Adres klienta:</b> {email}<br>Firma: {company}{nip}<br>Telefon: {escape(lead.phone)}<br>Agent: {agent_name}</div>"
     )
 
 

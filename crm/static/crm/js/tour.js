@@ -1,5 +1,6 @@
-/* Samouczek po całym Solid CRM: krótkie kroki na kolejnych stronach (Dzwonienie → Kalendarz → Wyniki → Ranking).
-   Pokazuje się raz każdemu agentowi; ponownie: „Moje ustawienia” → „Pokaż samouczek jeszcze raz”.
+/* Samouczek po całym Solid CRM: krótkie kroki na kolejnych stronach (Dzwonienie → Kalendarz → Wyniki → Ranking),
+   a managerowi dodatkowo Zespół, Import, Taryfy, Użytkownicy i Ustawienia.
+   Pokazuje się raz każdemu agentowi i managerowi; ponownie: „Moje ustawienia” → „Pokaż samouczek jeszcze raz”.
    Krok w toku pamięta sessionStorage („crm_tour”), więc po przejściu na inną stronę samouczek idzie dalej.
    Strona „Dzwonienie” podpina CRM.tourQueue (przykładowy klient, podgląd wyników), żeby nic się nie zapisało. */
 CRM.initTour = function initTour() {
@@ -20,8 +21,21 @@ CRM.initTour = function initTour() {
     { page: "/crm/plan/", sel: "#plan-list", title: "Kalendarz", text: "Wszystkie umówione kontakty z godziną i sprawą. Klik w wiersz otwiera klienta. „Miesiąc” pokazuje cały miesiąc." },
     { page: "/crm/", sel: "#minutes-card", title: "Wyniki", text: "Twoje minuty rozmów godzina po godzinie albo dzień po dniu (wybierz okres u góry), rozmowy, oferty i prowizja." },
     { page: "/crm/ranking/", sel: "#tabs", title: "Ranking", text: "Najważniejsza jest aktywność: minuty i rozmowy. Obok sprzedaż i prowizja." },
-    { page: "/crm/ranking/", sel: "#user-btn", title: "Moje ustawienia", text: "Motyw jasny / ciemny, telefon (Solid Dialer), skróty klawiszowe, pasek „Cofnij” i ten samouczek." },
   ];
+  /* Manager dostaje ten sam samouczek + swoje strony (zespół, bazy, taryfy, użytkownicy, ustawienia). */
+  const isManager = me.role === "manager";
+  if (isManager) STEPS.push(
+    { page: "/crm/ranking/", sel: "#access-card", title: "Kto widzi ranking", text: "Tylko manager: wyłączasz ranking wybranym agentom albo wszystkim naraz." },
+    { page: "/crm/manager/", sel: "#att-card", title: "Obecność", text: "Kto kiedy przyszedł (zalogował się) i wyszedł (wylogował się), czas pracy, przerwy, telefony i minuty rozmów względem celu. Wybierz dzień u góry." },
+    { page: "/crm/manager/", sel: "#tabs", title: "Wszyscy klienci", text: "Cała baza zespołu: „Zaległe” – przegapione terminy, „Pula” – nikt ich nie ma, „Nieosiągalni” – nie odbierają. Zaznacz klientów i przekaż ich innemu agentowi albo do puli." },
+    { page: "/crm/import/", sel: "#import-form", title: "Import bazy", text: "Wgraj plik z CEIDG / KRS (Excel). CRM pominie duplikaty i naprawi przesunięte wiersze. Bazę możesz od razu dać jednemu agentowi." },
+    { page: "/crm/products/", sel: "#products-table", title: "Taryfy", text: "Taryfy z cenami (z promocją i bez) i opisem do oferty. Z nich liczy się zobowiązanie i prowizja agenta." },
+    { page: "/crm/users/", sel: "#users-table", title: "Użytkownicy", text: "Dodajesz agentów, resetujesz hasła, wyłączasz konto. Klientów odchodzącego agenta przekazujesz innemu – historia jego pracy zostaje." },
+    { page: "/crm/settings/", sel: "#rules-form", title: "Ustawienia zespołu", text: "Ile razy i co ile dzwonić do tych, co nie odbierają, godziny pracy, losowanie firm." },
+    { page: "/crm/settings/", sel: "#offer-card", title: "Oferty", text: "Na jaki adres idą oferty do wysłania (osoba z firmowym mailem T-Mobile), podpis, telefon i mnożniki prowizji (24 / 36 mies.)." },
+    { page: "/crm/settings/", sel: "#ann-card", title: "Solid info", text: "Ogłoszenia dla zespołu (promocje, cel dnia) – agenci widzą je w panelu przy dzwonieniu." },
+  );
+  STEPS.push({ page: STEPS[STEPS.length - 1].page, sel: "#user-btn", title: "Moje ustawienia", text: "Motyw jasny / ciemny, telefon (Solid Dialer), skróty klawiszowe, pasek „Cofnij” i ten samouczek." });
   const store = {
     get: (k, s = sessionStorage) => { try { return s.getItem(k); } catch { return null; } },
     set: (k, v, s = sessionStorage) => { try { s.setItem(k, v); } catch { /* bez pamięci */ } },
@@ -49,18 +63,27 @@ CRM.initTour = function initTour() {
   }
   function paint(step, el) {
     if (!ov) build();
-    el.scrollIntoView({ block: "center", behavior: "instant" });
+    // górne menu jest przyklejone: podświetlenie nie może na nie wchodzić
+    const nav = document.querySelector(".topnav"), inNav = !!(nav && nav.contains(el));
+    const navB = nav && !inNav ? nav.getBoundingClientRect().bottom : 0;   // element w samym menu (np. konto) – bez przycinania
+    const roomH = window.innerHeight - navB - 24;
+    if (inNav) { /* menu jest zawsze widoczne */ }
+    else if (el.offsetHeight > roomH) {
+      // duży element (np. lista w Kalendarzu): pokazujemy jego początek tuż pod menu
+      window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - navB - 16, behavior: "instant" });
+    } else el.scrollIntoView({ block: "center", behavior: "instant" });
     const r0 = el.getBoundingClientRect(), extra = step.also && visible(step.also);
     const r1 = extra ? extra.getBoundingClientRect() : r0;
     const r = { top: Math.min(r0.top, r1.top), left: Math.min(r0.left, r1.left), right: Math.max(r0.right, r1.right), bottom: Math.max(r0.bottom, r1.bottom) };
+    // tylko widoczna część: od dołu menu do dołu okna
+    r.top = Math.max(r.top, navB + 12); r.bottom = Math.min(r.bottom, window.innerHeight - 12);
     const hole = ov.querySelector(".tour-hole"), card = ov.querySelector(".tour-card");
-    const maxH = window.innerHeight - 40;
-    Object.assign(hole.style, { top: r.top - 6 + "px", left: r.left - 6 + "px", width: r.right - r.left + 12 + "px", height: Math.min(r.bottom - r.top, maxH) + 12 + "px" });
+    Object.assign(hole.style, { top: r.top - 6 + "px", left: r.left - 6 + "px", width: r.right - r.left + 12 + "px", height: r.bottom - r.top + 12 + "px" });
     ov.querySelector(".tour-n").textContent = `Samouczek · ${i + 1} z ${STEPS.length}`;
     ov.querySelector("#tour-t").textContent = step.title;
     ov.querySelector(".tour-p").innerHTML = step.text;
     ov.querySelector('[data-t="prev"]').hidden = i === 0;
-    ov.querySelector('[data-t="next"]').textContent = i === STEPS.length - 1 ? "Zaczynam dzwonić" : "Dalej";
+    ov.querySelector('[data-t="next"]').textContent = i === STEPS.length - 1 ? (isManager ? "Gotowe" : "Zaczynam dzwonić") : "Dalej";
     const cw = Math.min(380, window.innerWidth - 24);
     card.style.width = cw + "px";
     const ch = card.offsetHeight || 190;
@@ -108,7 +131,7 @@ CRM.initTour = function initTour() {
       if (n !== null && STEPS[Number(n)] && STEPS[Number(n)].page === path()) { store.del(STEP_KEY); start(Number(n)); return true; }
       return false;
     },
-    shouldAutoStart: () => me.role === "agent" && !store.get(DONE_KEY, localStorage),
+    shouldAutoStart: () => (me.role === "agent" || isManager) && !store.get(DONE_KEY, localStorage),
   };
   /* strony inne niż „Dzwonienie” same kontynuują samouczek; „Dzwonienie” robi to po wczytaniu danych */
   if (path() !== Q) setTimeout(() => CRM.tour.resume(), 400);

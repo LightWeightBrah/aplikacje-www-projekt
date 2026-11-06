@@ -220,14 +220,15 @@ class OfferHtmlTests(OfferTests):
         message = mail.outbox[0]
         html, mime = message.alternatives[0]
         self.assertEqual(mime, "text/html")
-        self.assertIn("Proszę o wysłanie oferty do klienta", html)
+        self.assertIn("Adres klienta:", html)              # ramka z danymi dla osoby wysyłającej
+        self.assertNotIn("Proszę o wysłanie", html)         # bez formułek – same dane
         self.assertIn("Oferta: M", html)
         self.assertIn("za 3 numery: 135,00 zł netto", html)
         self.assertIn(">Roaming UE 23 GB</li>", html)   # punkty taryfy jako lista
         name, content, _ = message.attachments[0]
         self.assertTrue(name.startswith("oferta-") and name.endswith(".html"))
         self.assertIn("600 100 200", content)
-        self.assertNotIn("Proszę o wysłanie", content)   # załącznik = sam list do klienta
+        self.assertNotIn("Adres klienta:", content)      # załącznik = sam list do klienta
 
     def test_agent_downloads_offer_file_other_agent_cannot(self):
         self.send()
@@ -333,52 +334,86 @@ class ContactAndMinutesTests(CrmTestBase):
         self.assertEqual(pool_left, Lead.objects.filter(owner__isnull=True, status="new", batch__isnull=True).count())
 
 
+def _at(hour, minute=0):
+    from datetime import datetime, time
+    return timezone.make_aware(datetime.combine(timezone.localdate(), time(hour, minute)))
+
+
 class WorkDayTests(CrmTestBase):
-    """Przyjście i wyjście agenta: zapisuje je sam CRM, manager widzi obecność."""
+    """Przyjście = zalogowanie, wyjście = wylogowanie; przerwy tylko pokazujemy. Manager widzi obecność."""
 
-    def test_presence_end_of_work_and_attendance_for_manager(self):
-        from datetime import datetime, time
+    def _row(self, user, now):
         from unittest import mock
-
-        from .models import WorkDay
-        nine = timezone.make_aware(datetime.combine(timezone.localdate(), time(9, 0)))
-        with mock.patch("django.utils.timezone.now", return_value=nine):
-            self.api(self.agent1).get("/api/work/summary/")          # wejście do „Dzwonienia” = przyjście
-        later = nine + timedelta(hours=3, minutes=20)
-        with mock.patch("django.utils.timezone.now", return_value=later):
-            r = self.api(self.agent1).post("/api/work/end/")
-            self.assertEqual(r.status_code, 200)
-            self.assertEqual(r.data["worked_minutes"], 200)
-            self.assertEqual(r.data["goal"], 50)                      # 3 h 20 min × 15 min/h
-            self.assertEqual(self.api(self.agent1).get("/api/work/attendance/").status_code, 403)
+        with mock.patch("django.utils.timezone.now", return_value=now):
             rows = self.api(self.manager).get("/api/work/attendance/").data["results"]
-        row = next(x for x in rows if x["username"] == self.agent1.username)
+        return next(x for x in rows if x["username"] == user.username)
+
+    def _post(self, user, path, now):
+        from unittest import mock
+        with mock.patch("django.utils.timezone.now", return_value=now):
+            return self.api(user).post(path)
+
+    def test_login_logout_and_attendance_for_manager(self):
+        from .models import WorkDay
+        self.assertEqual(self._post(self.agent1, "/api/work/login/", _at(9)).status_code, 204)
+        self.assertEqual(self._post(self.agent1, "/api/work/logout/", _at(12, 20)).status_code, 204)
+        self.assertEqual(self.api(self.agent1).get("/api/work/attendance/").status_code, 403)
+        row = self._row(self.agent1, _at(15))
         self.assertFalse(row["working_now"])
         self.assertIsNotNone(row["ended_at"])
-        self.assertEqual(WorkDay.objects.get(user=self.agent1).first_seen, nine)
-        idle = next(x for x in rows if x["username"] == self.agent2.username)
-        self.assertIsNone(idle["started_at"])
+        self.assertEqual(row["worked_minutes"], 200)
+        self.assertEqual(row["goal"], 50)                      # 3 h 20 min × 15 min/h
+        self.assertEqual(WorkDay.objects.get(user=self.agent1).first_seen, _at(9))
+        self.assertIsNone(self._row(self.agent2, _at(15))["started_at"])
 
-    def test_activity_after_end_reopens_the_day(self):
-        from .models import WorkDay
-        self.api(self.agent1).post("/api/work/end/")
-        self.assertIsNotNone(WorkDay.objects.get(user=self.agent1).ended_at)
-        self.api(self.agent1).get("/api/work/summary/")
-        self.assertIsNone(WorkDay.objects.get(user=self.agent1).ended_at)
+    def test_login_after_logout_reopens_the_day_and_shows_break(self):
+        self._post(self.agent1, "/api/work/login/", _at(9))
+        self._post(self.agent1, "/api/work/logout/", _at(9, 10))
+        self._post(self.agent1, "/api/work/login/", _at(9, 50))
+        row = self._row(self.agent1, _at(9, 55))
+        self.assertTrue(row["working_now"])
+        self.assertIsNone(row["ended_at"])
+        self.assertEqual(row["worked_minutes"], 55)             # przerwa NIE jest odejmowana
+        self.assertEqual(row["break_minutes"], 40)
+        self.assertEqual(len(row["breaks"]), 1)
+
+    def test_short_pause_is_not_a_break(self):
+        self._post(self.agent1, "/api/work/login/", _at(9))
+        self._post(self.agent1, "/api/work/next/", _at(9, 10))
+        self.assertEqual(self._row(self.agent1, _at(9, 12))["break_minutes"], 0)
+
+    def test_ongoing_break_is_shown(self):
+        self._post(self.agent1, "/api/work/login/", _at(9))
+        row = self._row(self.agent1, _at(9, 20))
+        self.assertFalse(row["working_now"])
+        from datetime import datetime
+        self.assertEqual(datetime.fromisoformat(row["on_break_since"]), _at(9))
 
 
 class IdleWorkDayTests(CrmTestBase):
-    def test_agent_who_left_without_clicking_stops_counting_after_idle(self):
-        from datetime import datetime, time
+    def test_background_refresh_does_not_count_as_work(self):
+        """Karta „Dzwonienie” zostawiona na noc odświeża liczniki, ale czas pracy nie rośnie."""
         from unittest import mock
-        nine = timezone.make_aware(datetime.combine(timezone.localdate(), time(9, 0)))
-        with mock.patch("django.utils.timezone.now", return_value=nine):
-            self.api(self.agent1).get("/api/work/summary/")
-        with mock.patch("django.utils.timezone.now", return_value=nine + timedelta(hours=2)):
-            self.api(self.agent1).get("/api/work/summary/")
-        with mock.patch("django.utils.timezone.now", return_value=nine + timedelta(hours=6)):
+
+        from .models import WorkDay
+        with mock.patch("django.utils.timezone.now", return_value=_at(9)):
+            self.api(self.agent1).get("/api/work/summary/?open=1")   # otwarcie „Dzwonienia” = przyjście
+        for hour in (12, 18, 23):
+            with mock.patch("django.utils.timezone.now", return_value=_at(hour)):
+                self.api(self.agent1).get("/api/work/summary/")      # odświeżanie w tle
+        self.assertEqual(WorkDay.objects.get(user=self.agent1).last_seen, _at(9))
+
+    def test_agent_who_did_not_log_out_stops_counting_after_idle(self):
+        from unittest import mock
+        with mock.patch("django.utils.timezone.now", return_value=_at(9)):
+            self.api(self.agent1).post("/api/work/login/")
+        with mock.patch("django.utils.timezone.now", return_value=_at(11)):
+            self.api(self.agent1).post("/api/work/next/")
+        with mock.patch("django.utils.timezone.now", return_value=_at(15)):
             rows = self.api(self.manager).get("/api/work/attendance/").data["results"]
         row = next(x for x in rows if x["username"] == self.agent1.username)
         self.assertFalse(row["working_now"])
-        self.assertEqual(row["worked_minutes"], 120)   # liczy się do ostatniej aktywności, nie do teraz
+        self.assertEqual(row["worked_minutes"], 120)   # liczy się do ostatniego ruchu, nie do teraz
         self.assertEqual(row["goal"], 30)
+        self.assertEqual(row["break_minutes"], 120)   # 9:00–11:00 bez żadnego ruchu = przerwa (pokazana, nie odjęta)
+

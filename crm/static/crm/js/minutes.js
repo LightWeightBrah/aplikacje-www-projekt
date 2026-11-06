@@ -24,13 +24,20 @@ CRM.initMinutes = function initMinutes() {
   }
   const kpi = (big, small, ok) => `<div class="mn-kpi${ok === true ? " ok" : ok === false ? " low" : ""}"><b>${big}</b><span>${small}</span></div>`;
 
+  /* Słupki. Dzień po dniu (c.goal): obrys = ile powinno być tego dnia, wypełnienie = ile jest.
+     Napis nad słupkiem: „12 / 40” – zawsze nad wyższym z nich. */
   function bars(cols, max, goalLine) {
-    return (goalLine ? `<div class="mn-goal" style="bottom:${(goalLine / max) * 100}%"><span>cel ${goalLine} min</span></div>` : "") +
-      cols.map((c) => `<div class="mn-col${c.now ? " is-now" : ""}" title="${esc(c.title)}">
-        <span class="mn-val">${c.value ? fmt(c.value) : ""}</span>
-        <i class="${c.cls}" style="height:${Math.max(c.value ? 3 : 1, (c.value / max) * 100)}%"></i>
-        ${c.goal ? `<b class="mn-tick" style="bottom:${(c.goal / max) * 100}%" aria-hidden="true"></b>` : ""}
-        <small>${esc(c.label)}</small></div>`).join("");
+    const pct = (v) => Math.min(100, (v / max) * 100);
+    return (goalLine ? `<div class="mn-goal" style="bottom:${pct(goalLine)}%"><span>cel ${goalLine} min</span></div>` : "") +
+      cols.map((c) => {
+        const top = Math.max(pct(c.value), c.goal ? pct(c.goal) : 0);
+        const label = c.goal ? `${fmt(c.value)} / ${c.goal}` : c.value ? fmt(c.value) : "";
+        return `<div class="mn-col${c.now ? " is-now" : ""}${c.goal ? " has-goal" : ""}" title="${esc(c.title)}">
+        ${c.goal ? `<em class="mn-target" style="height:${pct(c.goal)}%" aria-hidden="true"></em>` : ""}
+        <span class="mn-val" style="bottom:calc(${top}% + 4px)">${label}</span>
+        <i class="${c.cls}" style="height:${c.value ? Math.max(3, pct(c.value)) : c.goal ? 0 : 1}%"></i>
+        <small>${esc(c.label)}</small></div>`;
+      }).join("");
   }
 
   function render(d) {
@@ -59,11 +66,11 @@ CRM.initMinutes = function initMinutes() {
       $("minutes-chart").innerHTML = bars(d.days.map((x) => ({
         value: x.minutes, goal: x.goal, label: d.days.length > 14 ? String(new Date(x.date + "T12:00:00").getDate()) : dayLabel(x.date),
         title: `${dayLabel(x.date)} · ${fmt(x.minutes)} min, powinno być ${x.goal} (praca ${dur(x.worked_minutes)})`,
-        cls: !x.goal ? "zero" : x.minutes >= x.goal ? "ok" : "mid",
-      })), max * 1.1, 0);
+        cls: !x.goal ? "zero" : x.minutes >= x.goal ? "ok" : "part",
+      })), max * 1.15, 0);
     }
     $("minutes-note").innerHTML = d.minutes || d.hours
-      ? `Cel: <b>${g} min rozmów na każdą godzinę pracy</b>. Pracujesz 4 h → powinno być 60 min. Czas pracy liczy się od wejścia do CRM do teraz (albo do „Kończę pracę”). Lepsza godzina nadrabia słabszą. ${single ? "" : "Kreska na słupku = ile powinno być tego dnia."} Liczą się rozmowy z telefonu z aplikacją Solid Dialer.`
+      ? `Cel: <b>${g} min rozmów na każdą godzinę pracy</b>. Pracujesz 4 h → powinno być 60 min. Czas pracy liczy się od zalogowania (albo pierwszego ruchu w CRM) do wylogowania – przerwy go nie zmniejszają. Lepsza godzina nadrabia słabszą. ${single ? "" : "Przerywany obrys = ile powinno być tego dnia, wypełnienie = ile jest (zielone, gdy cel osiągnięty)."} Liczą się rozmowy z telefonu z aplikacją Solid Dialer.`
       : `Minuty policzą się same, gdy połączysz telefon z aplikacją <b>Solid Dialer</b> (menu konta → „Telefon (dialer)”).`;
   }
   async function load() {

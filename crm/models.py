@@ -589,18 +589,21 @@ class Announcement(models.Model):
 
 
 class WorkDay(models.Model):
-    """Dzień pracy agenta: kiedy przyszedł (pierwsze wejście / zapis w CRM) i kiedy wyszedł.
+    """Dzień pracy agenta: kiedy przyszedł i kiedy wyszedł.
 
-    `first_seen` i `last_seen` ustawia CRM sam (wejście do „Dzwonienia”, zapis rozmowy, telefon).
-    `ended_at` – agent kliknął „Kończę pracę”; kolejny ruch w CRM tego dnia znów go „otwiera”.
-    Z tych godzin liczony jest cel minut: 15 min rozmów na każdą godzinę pracy.
+    `first_seen` i `last_seen` ustawia CRM sam przy prawdziwych ruchach agenta (logowanie, otwarcie
+    „Dzwonienia”, „Następny klient”, zapis rozmowy, telefon) – samo odświeżanie strony w tle się nie liczy.
+    `ended_at` – agent się wylogował; kolejny ruch w CRM tego dnia znów go „otwiera”.
+    `breaks` – przerwy (co najmniej 15 min bez ruchu) jako lista par [początek, koniec] w ISO.
+    Przerwy tylko pokazujemy – czas pracy liczy się od przyjścia do wyjścia razem z nimi.
     """
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="work_days")
     date = models.DateField("dzień")
     first_seen = models.DateTimeField("początek pracy")
     last_seen = models.DateTimeField("ostatnia aktywność")
-    ended_at = models.DateTimeField("zakończył pracę", null=True, blank=True)
+    ended_at = models.DateTimeField("wylogował się", null=True, blank=True)
+    breaks = models.JSONField("przerwy", default=list, blank=True)
 
     class Meta:
         verbose_name = "Dzień pracy"

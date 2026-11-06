@@ -24,7 +24,8 @@ urlpatterns = [
     path("work/summary/", work_api.WorkSummaryView.as_view(), name="work-summary"),
     # oferty
     path("work/contact/", work_api.WorkContactView.as_view(), name="work-contact"),
-    path("work/end/", work_api.WorkEndView.as_view(), name="work-end"),
+    path("work/login/", work_api.WorkLoginView.as_view(), name="work-login"),
+    path("work/logout/", work_api.WorkLogoutView.as_view(), name="work-logout"),
     path("work/attendance/", work_api.AttendanceView.as_view(), name="work-attendance"),
     path("work/minutes/", work_api.WorkMinutesView.as_view(), name="work-minutes"),
     path("offers/", work_api.OffersView.as_view(), name="offers"),

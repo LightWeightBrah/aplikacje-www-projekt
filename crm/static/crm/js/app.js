@@ -157,7 +157,11 @@ const CRM = (() => {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggle(false); });
     document.querySelectorAll("[data-theme-choice]").forEach((b) =>
       b.addEventListener("click", () => { setTheme(b.dataset.themeChoice); paint(); }));
-    $("logout-btn").addEventListener("click", logout);
+    $("logout-btn").addEventListener("click", async () => {
+      // wylogowanie = godzina wyjścia z pracy (manager widzi ją w „Zespół” → Obecność)
+      try { await api("/api/work/logout/", { method: "POST" }, false); } catch { /* i tak wylogowujemy */ }
+      logout();
+    });
     paint();
   }
 
@@ -244,6 +248,7 @@ const CRM = (() => {
           throw new Error("To konto nie ma roli Agent ani Manager. Skontaktuj się z administratorem.");
         }
         store.set("crm_user", JSON.stringify(me));
+        try { await api("/api/work/login/", { method: "POST" }); } catch { /* przyjście zapisze też pierwszy ruch */ }
         location.href = me.role === "agent" ? "/crm/queue/" : HOME_URL;   // agent zaczyna od dzwonienia
       } catch (ex) {
         err.textContent = ex.message || "Nie udało się zalogować.";
