@@ -27,7 +27,7 @@ const CRM = (() => {
   };
 
   function logout() {
-    ["crm_access", "crm_refresh", "crm_user"].forEach(store.del);
+    ["crm_access", "crm_refresh", "crm_user", "crm_plan_badge"].forEach(store.del);
     location.href = LOGIN_URL;
   }
 
@@ -43,13 +43,39 @@ const CRM = (() => {
     return true;
   }
 
-  /* Zapytanie do API z tokenem; przy 401 próbuje odświeżyć token raz. */
+  /* Pierwsze wczytanie strony: treść (main) jest ukryta, dopóki nie wrócą wszystkie
+     zapytania wysłane przy otwarciu strony – wtedy pokazuje się od razu cała. */
+  const docEl = document.documentElement;
+  let pending = 0, revealed = !docEl.classList.contains("crm-loading"), settleTimer = null;
+  function reveal() {
+    if (revealed) return;
+    revealed = true;
+    docEl.classList.remove("crm-loading", "crm-loading-slow");
+  }
+  function settle() {
+    if (revealed) return;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { if (pending === 0) reveal(); }, 80);  // dajemy chwilę na zapytania „jedno po drugim”
+  }
+  if (!revealed) {
+    document.addEventListener("DOMContentLoaded", settle);
+    setTimeout(() => { if (!revealed) docEl.classList.add("crm-loading-slow"); }, 500);
+    setTimeout(reveal, 4000);
+  }
+
   async function api(path, options = {}, retry = true) {
+    if (revealed) return apiCall(path, options, retry);
+    pending++;
+    try { return await apiCall(path, options, retry); } finally { pending--; settle(); }
+  }
+
+  /* Zapytanie do API z tokenem; przy 401 próbuje odświeżyć token raz. */
+  async function apiCall(path, options = {}, retry = true) {
     const headers = { ...(options.headers || {}) };
     const access = store.get("crm_access");
     if (access) headers.Authorization = "Bearer " + access;
     const r = await fetch(path, { ...options, headers });
-    if (r.status === 401 && retry && (await refreshToken())) return api(path, options, false);
+    if (r.status === 401 && retry && (await refreshToken())) return apiCall(path, options, false);
     if (r.status === 401) { logout(); throw new Error("Sesja wygasła"); }
     // manager zablokował to urządzenie – wracamy na ekran aktywacji
     if (r.status === 403 && r.headers.get("X-Device-Lock")) { location.href = "/crm/activate/"; throw new Error("Urządzenie bez dostępu"); }
@@ -356,6 +382,7 @@ const CRM = (() => {
   function applyTeamAccess(user) {
     const allowed = user.role === "manager" || user.can_view_team !== false;
     document.querySelectorAll("[data-team-only]").forEach((el) => { el.hidden = !allowed; });
+    if (allowed) delete docEl.dataset.noteam; else docEl.dataset.noteam = "1";
   }
 
   const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");

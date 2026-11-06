@@ -301,6 +301,7 @@ CRM.initReminders = function initReminders() {
   function paintCount(total) {
     const badge = $("plan-badge");
     if (badge) { badge.textContent = total; badge.hidden = !total; }
+    try { localStorage.setItem("crm_plan_badge", String(total || 0)); } catch { /* brak dostępu */ }  // następna strona pokaże licznik od razu (menu nie skacze)
     document.title = total ? `(${total}) ${baseTitle}` : baseTitle;
   }
 

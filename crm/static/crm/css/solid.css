@@ -479,3 +479,11 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .att-live{color:var(--ok,#16a34a);font-weight:700}.att-break{color:var(--warn);font-weight:700}
 .att-ok{color:var(--ok,#16a34a)}
 .att-low{color:#ef4444}
+
+/* Wczytywanie strony: treść pokazuje się dopiero z danymi (bez „doładowywania” na oczach) */
+main.content{transition:opacity .15s ease-out}
+html.crm-loading main.content{opacity:0;transition:none}
+html.crm-loading-slow body::after{content:"Wczytuję…";position:fixed;left:0;right:0;top:40%;text-align:center;color:var(--muted);font-size:.95rem;pointer-events:none}
+html[data-role]:not([data-role="manager"]) .topnav [data-manager-only]{display:none}
+html[data-noteam] .topnav [data-team-only]{display:none}
+@media(prefers-reduced-motion:reduce){main.content{transition:none}}
