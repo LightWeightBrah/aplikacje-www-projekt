@@ -313,12 +313,12 @@ class ContactAndMinutesTests(CrmTestBase):
 
     def _minutes_case(self, now):
         Activity.objects.create(lead=self.make_lead(owner=self.agent1, phone="555500002"), agent=self.agent1, outcome="no_answer")
-        Activity.objects.filter(agent=self.agent1).update(created_at=now - timedelta(hours=2, minutes=10))
+        Activity.objects.filter(agent=self.agent1).update(created_at=now - timedelta(hours=4))
         CallRequest.objects.create(user=self.agent1, phone="555500002", state=CallRequest.State.DONE, answered=True,
                                    duration_seconds=1800, ended_at=now)
         d = self.api(self.agent1).get("/api/work/minutes/?days=1").data
-        self.assertEqual(d["hours"], 3)            # od pierwszego zapisu 2 h 10 min temu → 3 pełne godziny
-        self.assertEqual(d["goal"], 45)
+        self.assertEqual(d["worked_minutes"], 240)   # pracuje od 4 h (pierwszy zapis) do teraz
+        self.assertEqual(d["goal"], 60)              # 4 h × 15 min
         self.assertEqual(d["minutes"], 30.0)
         self.assertEqual(len(d["by_hour"]), 24)
         week = self.api(self.agent1).get("/api/work/minutes/?days=7").data
@@ -331,3 +331,54 @@ class ContactAndMinutesTests(CrmTestBase):
         self.make_lead(phone="555500004", batch=mine)
         pool_left = self.api(self.agent1).get("/api/work/summary/").data["base"]["pool_left"]
         self.assertEqual(pool_left, Lead.objects.filter(owner__isnull=True, status="new", batch__isnull=True).count())
+
+
+class WorkDayTests(CrmTestBase):
+    """Przyjście i wyjście agenta: zapisuje je sam CRM, manager widzi obecność."""
+
+    def test_presence_end_of_work_and_attendance_for_manager(self):
+        from datetime import datetime, time
+        from unittest import mock
+
+        from .models import WorkDay
+        nine = timezone.make_aware(datetime.combine(timezone.localdate(), time(9, 0)))
+        with mock.patch("django.utils.timezone.now", return_value=nine):
+            self.api(self.agent1).get("/api/work/summary/")          # wejście do „Dzwonienia” = przyjście
+        later = nine + timedelta(hours=3, minutes=20)
+        with mock.patch("django.utils.timezone.now", return_value=later):
+            r = self.api(self.agent1).post("/api/work/end/")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.data["worked_minutes"], 200)
+            self.assertEqual(r.data["goal"], 50)                      # 3 h 20 min × 15 min/h
+            self.assertEqual(self.api(self.agent1).get("/api/work/attendance/").status_code, 403)
+            rows = self.api(self.manager).get("/api/work/attendance/").data["results"]
+        row = next(x for x in rows if x["username"] == self.agent1.username)
+        self.assertFalse(row["working_now"])
+        self.assertIsNotNone(row["ended_at"])
+        self.assertEqual(WorkDay.objects.get(user=self.agent1).first_seen, nine)
+        idle = next(x for x in rows if x["username"] == self.agent2.username)
+        self.assertIsNone(idle["started_at"])
+
+    def test_activity_after_end_reopens_the_day(self):
+        from .models import WorkDay
+        self.api(self.agent1).post("/api/work/end/")
+        self.assertIsNotNone(WorkDay.objects.get(user=self.agent1).ended_at)
+        self.api(self.agent1).get("/api/work/summary/")
+        self.assertIsNone(WorkDay.objects.get(user=self.agent1).ended_at)
+
+
+class IdleWorkDayTests(CrmTestBase):
+    def test_agent_who_left_without_clicking_stops_counting_after_idle(self):
+        from datetime import datetime, time
+        from unittest import mock
+        nine = timezone.make_aware(datetime.combine(timezone.localdate(), time(9, 0)))
+        with mock.patch("django.utils.timezone.now", return_value=nine):
+            self.api(self.agent1).get("/api/work/summary/")
+        with mock.patch("django.utils.timezone.now", return_value=nine + timedelta(hours=2)):
+            self.api(self.agent1).get("/api/work/summary/")
+        with mock.patch("django.utils.timezone.now", return_value=nine + timedelta(hours=6)):
+            rows = self.api(self.manager).get("/api/work/attendance/").data["results"]
+        row = next(x for x in rows if x["username"] == self.agent1.username)
+        self.assertFalse(row["working_now"])
+        self.assertEqual(row["worked_minutes"], 120)   # liczy się do ostatniej aktywności, nie do teraz
+        self.assertEqual(row["goal"], 30)

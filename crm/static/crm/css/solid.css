@@ -451,3 +451,12 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .pod{min-width:0}
 .pod-empty{visibility:hidden;border:0}
 @media(max-width:560px){.podium{grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem}.pod{padding:.7rem .4rem}.av-pod{width:52px;height:52px}.pod1 .av-pod{width:64px;height:64px}}
+.w-side-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}.w-side-head h3{margin:0}
+/* obecność agentów (panel managera) */
+.att-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:.6rem}
+.att-head h2{margin:0}
+.att-tools{display:flex;gap:.5rem;align-items:center}
+.att-off td{color:var(--muted)}
+.att-live{color:var(--ok,#16a34a);font-weight:700}
+.att-ok{color:var(--ok,#16a34a)}
+.att-low{color:#ef4444}

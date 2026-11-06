@@ -15,6 +15,18 @@
 </header>
 <p id="page-error" class="form-error" hidden></p>
 
+<section class="card att-card" id="att-card" hidden>
+    <div class="att-head">
+        <div><h2>Obecność i minuty rozmów</h2><p class="muted small" id="att-sum"></p></div>
+        <div class="att-tools"><input type="date" id="att-date" class="select" aria-label="Dzień"><button type="button" class="btn btn-secondary" id="att-today">Dziś</button></div>
+    </div>
+    <div class="table-wrap"><table class="table att-table">
+        <thead><tr><th>Agent</th><th>Przyszedł</th><th>Wyszedł</th><th class="num">Czas pracy</th><th class="num">Telefony</th><th class="num">Minuty / powinno być</th></tr></thead>
+        <tbody id="att-list"></tbody>
+    </table></div>
+    <p class="card-desc">Przyjście = pierwsze wejście agenta do CRM tego dnia (albo pierwszy zapis rozmowy). Wyjście = kliknięcie „Kończę pracę”; godzina ze znakiem „?” to ostatnia aktywność agenta, który nie kliknął (po 30 min bez ruchu w CRM czas pracy przestaje rosnąć). Powinno być 15 min rozmów na każdą godzinę pracy (4 h → 60 min).</p>
+</section>
+
 <div class="tabs" id="tabs" role="tablist">
     <button type="button" role="tab" data-tab="all" aria-selected="true">Wszystkie</button>
     <button type="button" role="tab" data-tab="overdue" aria-selected="false">Zaległe <small id="late-count"></small></button>
@@ -97,5 +109,7 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=65"></script>
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=66"></script>
+<script src="{% static 'crm/js/attendance.js' %}?v=66"></script>
+<script>CRM.initAttendance();</script>
 <script>CRM.initManager();</script>{% endblock %}

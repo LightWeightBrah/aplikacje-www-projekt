@@ -105,3 +105,12 @@ class TeamRulesAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+from .models import WorkDay  # noqa: E402  (dzień pracy: przyjście / wyjście agenta)
+
+
+@admin.register(WorkDay)
+class WorkDayAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "first_seen", "last_seen", "ended_at")
+    list_filter = ("date", "user")

@@ -1,11 +1,13 @@
 """API pracy agenta (Solid CRM): „Następny klient”, liczniki follow-upów, oferty i dialer."""
 
+from datetime import date
+
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -15,7 +17,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from .models import DialerDevice, Lead, Offer, OfferConfig, Product
-from .permissions import IsAgentOrManager
+from .permissions import IsAgentOrManager, IsManager
 from .roles import is_manager, visible_to
 from .serializers import LeadSerializer
 from .views import PERIOD_PARAMETERS, parse_period
@@ -25,7 +27,11 @@ from .work import (
     OfferError,
     ContactExists,
     create_contact,
+    attendance,
     create_offer,
+    day_minutes,
+    end_workday,
+    touch_workday,
     minutes_report,
     shared_pool_left,
     offer_document,
@@ -50,6 +56,7 @@ class NextWorkView(APIView):
 
     @extend_schema(request=None, responses=OpenApiTypes.OBJECT)
     def post(self, request):
+        touch_workday(request.user)
         lead, reason = next_work(request.user)
         if lead is None:
             return Response({"detail": "Na teraz nie ma nic do zrobienia: baza i pula są obdzwonione."},
@@ -64,8 +71,12 @@ class WorkSummaryView(APIView):
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
+        touch_workday(request.user)   # „Dzwonienie” odświeża to co 20 s: tak wiemy, że agent jest w pracy
         rows = base_progress(request.user)
+        today = day_minutes(request.user, timezone.localdate())
         return Response({
+            "workday": {"started_at": today["started_at"], "ended_at": today["ended_at"],
+                        "worked_minutes": today["worked_minutes"]},
             "counts": work_counts(request.user),
             "today": today_stats(request.user),
             "base": {"total": sum(r["total"] for r in rows), "left": sum(r["left"] for r in rows),
@@ -107,6 +118,35 @@ class WorkContactView(APIView):
                 "lead": exists.lead.pk if mine else None,
             }, status=status.HTTP_409_CONFLICT)
         return Response({"lead": LeadSerializer(lead, context={"request": request}).data}, status=status.HTTP_201_CREATED)
+
+
+class WorkEndView(APIView):
+    """Agent klika „Kończę pracę”: zapisuje godzinę wyjścia (następny ruch w CRM znów otwiera dzień)."""
+
+    permission_classes = [IsAgentOrManager]
+
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        end_workday(request.user)
+        today = day_minutes(request.user, timezone.localdate())
+        return Response({"started_at": today["started_at"], "ended_at": today["ended_at"],
+                         "worked_minutes": today["worked_minutes"], "minutes": today["minutes"], "goal": today["goal"]})
+
+
+class AttendanceView(APIView):
+    """Manager: kto kiedy przyszedł i wyszedł, czas pracy, minuty rozmów i cel (15 min na godzinę). ?date=RRRR-MM-DD"""
+
+    permission_classes = [IsManager]
+
+    @extend_schema(parameters=[OpenApiParameter("date", OpenApiTypes.DATE, description="Dzień (domyślnie dziś)")],
+                   responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        raw = request.query_params.get("date")
+        try:
+            day = date.fromisoformat(raw) if raw else timezone.localdate()
+        except ValueError:
+            return Response({"detail": "Podaj datę w formacie RRRR-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"date": day.isoformat(), "goal_minutes_per_hour": 15, "results": attendance(day)})
 
 
 class WorkMinutesView(APIView):
@@ -352,6 +392,7 @@ class DialerCallView(APIView):
         phone = str(request.data.get("phone") or (lead.phone if lead else "")).strip()
         if not phone:
             return Response({"detail": "Brak numeru do wybrania."}, status=status.HTTP_400_BAD_REQUEST)
+        touch_workday(request.user)
         call = request_call(request.user, phone, lead)
         return Response({"id": call.pk, "state": call.state, **dialer_status(request.user)}, status=status.HTTP_201_CREATED)
 

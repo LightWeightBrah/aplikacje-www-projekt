@@ -214,10 +214,10 @@
       ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${t.minutes_this_hour} / ${goal} min</b></div>
           <div class="g-track"><i class="${t.minutes_this_hour >= goal ? "ok" : ""}" style="width:${pctHour}%"></i></div>
           <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div title="${h.hour}:00 – ${h.minutes} min"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}${h.hour === hourNow ? " now" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
-          <p class="w-goal-note">Dziś łącznie <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${t.minutes_today} / ${t.day_goal} min</b> (cel: ${goal} min × godziny pracy od pierwszego telefonu – mocniejsza godzina nadrabia słabszą).</p></div>`
-      : `<p class="w-goal-note">Minuty rozmów policzą się same, gdy połączysz telefon z aplikacją Solid Dialer (cel: ${goal} min na godzinę).</p>`;
+          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${t.minutes_today} min</b> rozmów, powinno być <b>${t.day_goal} min</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
+      : `<p class="w-goal-note">Dziś powinno być <b>${t.day_goal} min</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
     const plan = dayPlan.slice().sort((a, b) => new Date(a.next_contact_at) - new Date(b.next_contact_at));
-    side.innerHTML = `<div class="w-panel"><h3>Dziś</h3>
+    side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3>${summary.workday && summary.workday.started_at && !summary.workday.ended_at ? `<button type="button" class="btn-mini" data-work-end title="Zapisuje godzinę wyjścia – manager widzi ją w „Zespół”">Kończę pracę</button>` : ""}</div>
         <div class="w-stats">
           <div class="w-stat"><b>${t.calls}</b><span>telefonów</span></div>
           <div class="w-stat"><b>${t.talks}</b><span>rozmów</span></div>
@@ -231,6 +231,13 @@
         <p class="w-goal-note"><a href="/crm/calendar/">Cały kalendarz →</a></p></div>
       ${announcements.length ? `<div class="w-panel"><h3>Solid info</h3>${announcements.map((a) =>
         `<div class="w-info-item${a.pinned ? " pinned" : ""}"><strong>${esc(a.title)}</strong>${a.body ? `<p>${esc(a.body)}</p>` : ""}</div>`).join("")}</div>` : ""}`;
+  }
+  /* „ (pracujesz od 9:12, 3 h 20 min)” – z dnia pracy zapisanego przez serwer */
+  function workdayText() {
+    const w = summary && summary.workday;
+    if (!w || !w.started_at) return "";
+    const m = w.worked_minutes, h = Math.floor(m / 60), r = m % 60;
+    return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min)`;
   }
   document.addEventListener("crm:view", renderSide);
 
@@ -896,6 +903,14 @@
     if (t.closest("#reset-form")) { resetForm(); return; }
     if (t.closest("#edit-data, [data-edit]")) { editData(); return; }
     if (t.closest("[data-referral]")) { openContact(); return; }
+    if (t.closest("[data-work-end]")) {
+      if (!confirm("Zakończyć dzień pracy? Zapiszemy godzinę wyjścia. Gdy wrócisz do dzwonienia, dzień otworzy się znowu.")) return;
+      const r = await jsonReq("/api/work/end/", "POST", {});
+      if (r.error) { toast(r.error, true); return; }
+      toast(`Do zobaczenia! Dziś: ${r.data.minutes} min rozmów z ${r.data.goal} min.`);
+      await loadSummary();
+      return;
+    }
     const reg = t.closest("[data-reg]");
     if (reg) {
       const ok = await CRM.copyText(reg.dataset.reg);

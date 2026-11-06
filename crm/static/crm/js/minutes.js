@@ -8,7 +8,10 @@ CRM.initMinutes = function initMinutes() {
   if (!box) return;
   const fmt = (m) => String(Math.round(m * 10) / 10).replace(".", ",");
   const few = (n) => n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20);
-  const hoursWord = (n) => `${n} ${n === 1 ? "godzina" : few(n) ? "godziny" : "godzin"}`;
+  /* czas pracy „3 h 20 min” */
+  const dur = (m) => { m = Math.max(0, Math.round(m)); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} h${r ? ` ${r} min` : ""}` : `${r} min`; };
+  const hhmm = (iso) => new Date(iso).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+  void few;
   const dayLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("pl-PL", { weekday: "short", day: "numeric", month: "numeric" });
 
   function query() {
@@ -39,9 +42,9 @@ CRM.initMinutes = function initMinutes() {
       const hours = d.by_hour.filter((h) => (h.hour >= 8 && h.hour <= 18) || h.minutes > 0);
       const thisHour = (d.by_hour.find((h) => h.hour === now) || { minutes: 0 }).minutes;
       $("minutes-sum").innerHTML =
-        kpi(`${fmt(d.minutes)} / ${d.goal}`, d.hours ? `min dziś · cel na ${hoursWord(d.hours)} pracy` : "min dziś · cel liczy się od pierwszego telefonu", dayOk) +
-        (today ? kpi(`${fmt(thisHour)} / ${g}`, "min w tej godzinie", thisHour >= g ? true : null) : "") +
-        kpi(d.hours ? fmt(d.minutes / d.hours) : "0", "średnio min na godzinę", d.hours ? d.minutes / d.hours >= g : null);
+        kpi(`${fmt(d.minutes)} / ${d.goal}`, "min rozmów / tyle powinno być", dayOk) +
+        kpi(d.worked_minutes ? dur(d.worked_minutes) : "–", d.started_at ? `czas pracy, od ${hhmm(d.started_at)}${d.ended_at ? ` do ${hhmm(d.ended_at)}` : ""}` : "czas pracy (jeszcze nie zaczęty)") +
+        (today ? kpi(`${fmt(thisHour)} / ${g}`, "min w tej godzinie", thisHour >= g ? true : null) : "");
       const max = Math.max(g * 1.6, ...hours.map((h) => h.minutes));
       $("minutes-chart").innerHTML = bars(hours.map((h) => ({
         value: h.minutes, label: `${h.hour}:00`, now: today && h.hour === now, title: `${h.hour}:00–${h.hour + 1}:00 · ${fmt(h.minutes)} min`,
@@ -50,17 +53,17 @@ CRM.initMinutes = function initMinutes() {
     } else {
       const max = Math.max(...d.days.map((x) => Math.max(x.minutes, x.goal)), g);
       $("minutes-sum").innerHTML =
-        kpi(`${fmt(d.minutes)} / ${d.goal}`, `min w okresie · cel na ${hoursWord(d.hours)} pracy`, dayOk) +
-        kpi(d.hours ? fmt(d.minutes / d.hours) : "0", "średnio min na godzinę pracy", d.hours ? d.minutes / d.hours >= g : null) +
+        kpi(`${fmt(d.minutes)} / ${d.goal}`, "min rozmów / tyle powinno być", dayOk) +
+        kpi(d.worked_minutes ? dur(d.worked_minutes) : "–", "czas pracy w okresie") +
         kpi(`${d.days.filter((x) => x.goal && x.minutes >= x.goal).length} / ${d.days.filter((x) => x.goal).length}`, "dni z celem dziennym");
       $("minutes-chart").innerHTML = bars(d.days.map((x) => ({
         value: x.minutes, goal: x.goal, label: d.days.length > 14 ? String(new Date(x.date + "T12:00:00").getDate()) : dayLabel(x.date),
-        title: `${dayLabel(x.date)} · ${fmt(x.minutes)} min z celu ${x.goal} (${hoursWord(x.hours)} pracy)`,
+        title: `${dayLabel(x.date)} · ${fmt(x.minutes)} min, powinno być ${x.goal} (praca ${dur(x.worked_minutes)})`,
         cls: !x.goal ? "zero" : x.minutes >= x.goal ? "ok" : "mid",
       })), max * 1.1, 0);
     }
     $("minutes-note").innerHTML = d.minutes || d.hours
-      ? `Cel: ${g} min rozmów na każdą godzinę pracy (liczoną od pierwszego do ostatniego zapisu w danym dniu). Lepsza godzina nadrabia słabszą – liczy się wynik dnia. ${single ? "" : "Kreska na słupku = cel tego dnia."} Liczą się rozmowy z telefonu połączonego z aplikacją Solid Dialer.`
+      ? `Cel: <b>${g} min rozmów na każdą godzinę pracy</b>. Pracujesz 4 h → powinno być 60 min. Czas pracy liczy się od wejścia do CRM do teraz (albo do „Kończę pracę”). Lepsza godzina nadrabia słabszą. ${single ? "" : "Kreska na słupku = ile powinno być tego dnia."} Liczą się rozmowy z telefonu z aplikacją Solid Dialer.`
       : `Minuty policzą się same, gdy połączysz telefon z aplikacją <b>Solid Dialer</b> (menu konta → „Telefon (dialer)”).`;
   }
   async function load() {

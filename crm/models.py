@@ -586,3 +586,27 @@ class Announcement(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class WorkDay(models.Model):
+    """Dzień pracy agenta: kiedy przyszedł (pierwsze wejście / zapis w CRM) i kiedy wyszedł.
+
+    `first_seen` i `last_seen` ustawia CRM sam (wejście do „Dzwonienia”, zapis rozmowy, telefon).
+    `ended_at` – agent kliknął „Kończę pracę”; kolejny ruch w CRM tego dnia znów go „otwiera”.
+    Z tych godzin liczony jest cel minut: 15 min rozmów na każdą godzinę pracy.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="work_days")
+    date = models.DateField("dzień")
+    first_seen = models.DateTimeField("początek pracy")
+    last_seen = models.DateTimeField("ostatnia aktywność")
+    ended_at = models.DateTimeField("zakończył pracę", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Dzień pracy"
+        verbose_name_plural = "Dni pracy"
+        ordering = ["-date", "user__username"]
+        constraints = [models.UniqueConstraint(fields=["user", "date"], name="unique_work_day")]
+
+    def __str__(self):
+        return f"{self.user} {self.date}"

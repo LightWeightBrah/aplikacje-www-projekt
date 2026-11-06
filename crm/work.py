@@ -9,7 +9,7 @@ najważniejszy kontakt):
 """
 
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import quote
 
@@ -155,27 +155,105 @@ def minutes_by_hour(user, day=None):
     return [{"hour": h, "minutes": round(s / 60, 1)} for h, s in enumerate(seconds)]
 
 
-def day_minutes(user, day):
-    """Minuty rozmów jednego dnia i cel dzienny.
+# ------------------------------------------------------------------ dzień pracy (przyjście / wyjście)
 
-    Godziny pracy liczymy od pierwszego zapisu (rozmowa, notatka, telefon z dialera) do ostatniego,
-    a dziś do teraz – zaokrąglone w górę do pełnych godzin. Cel = 15 min × godziny pracy, więc
-    30 minut w jednej godzinie nadrabia słabszą godzinę obok.
+IDLE_MINUTES = 30   # po tylu minutach bez ruchu w CRM agent nie jest już „w pracy”
+
+
+def touch_workday(user):
+    """Zapisuje, że agent jest w pracy: pierwszy ruch dnia = przyjście, każdy kolejny = ostatnia aktywność.
+
+    Wywoływane przy wejściu do „Dzwonienia” (i jego odświeżaniu), zapisie rozmowy i telefonie.
+    Ruch po kliknięciu „Kończę pracę” znów otwiera dzień (agent wrócił).
     """
+    from .models import WorkDay
+
+    now = timezone.now()
+    day = timezone.localdate()
+    updated = WorkDay.objects.filter(user=user, date=day).update(last_seen=now, ended_at=None)
+    if not updated:
+        WorkDay.objects.get_or_create(user=user, date=day, defaults={"first_seen": now, "last_seen": now})
+
+
+def end_workday(user):
+    """Agent klika „Kończę pracę”: zapisujemy godzinę wyjścia (cel minut przestaje rosnąć)."""
+    from .models import WorkDay
+
+    touch_workday(user)
+    now = timezone.now()
+    WorkDay.objects.filter(user=user, date=timezone.localdate()).update(ended_at=now, last_seen=now)
+
+
+def work_span(user, day):
+    """(początek, koniec, czy zakończył) dnia pracy albo (None, None, False), gdy agent nie pracował.
+
+    Początek: wcześniejsze z „przyjścia” i pierwszego zapisu rozmowy. Koniec: „Kończę pracę”,
+    a bez tego – dziś „teraz”, w poprzednie dni ostatnia aktywność.
+    """
+    from .models import WorkDay
+
     start, end = day_bounds(day)
     marks = list(Activity.objects.filter(agent=user, created_at__gte=start, created_at__lt=end)
                  .values_list("created_at", flat=True))
     marks += list(CallRequest.objects.filter(user=user, created_at__gte=start, created_at__lt=end)
                   .values_list("created_at", flat=True))
+    wd = WorkDay.objects.filter(user=user, date=day).first()
+    firsts = [t for t in ([wd.first_seen] if wd else []) + marks]
+    if not firsts:
+        return None, None, False
+    began = min(firsts)
+    if wd and wd.ended_at:
+        return began, max([wd.ended_at] + marks), True
+    lasts = ([wd.last_seen] if wd else []) + marks
+    now = timezone.now()
+    # Dziś i bez „Kończę pracę”: liczymy do teraz, chyba że agent od dłuższej chwili nic nie robi w CRM
+    # (wyszedł bez klikania) – wtedy czas pracy kończy się na ostatniej aktywności.
+    if day == timezone.localdate() and now - max(lasts) <= timedelta(minutes=IDLE_MINUTES):
+        return began, now, False
+    return began, max(lasts), False
+
+
+def day_minutes(user, day):
+    """Minuty rozmów jednego dnia i ile powinno ich być: 15 min na każdą godzinę pracy.
+
+    Pracuje 4 h → powinien mieć 60 min rozmów (3 h 20 min → 50 min). Liczy się wynik dnia,
+    więc godzina z 30 minutami nadrabia słabszą godzinę obok.
+    """
     by_hour = minutes_by_hour(user, day)
     minutes = round(sum(h["minutes"] for h in by_hour), 1)
-    hours = 0
-    if marks:
-        last = timezone.now() if day == timezone.localdate() else max(marks)
-        span = (last - min(marks)).total_seconds()
-        hours = max(1, -(-int(span) // 3600))   # zaokrąglenie w górę
-    return {"date": day.isoformat(), "minutes": minutes, "hours": hours,
-            "goal": hours * GOAL_MINUTES_PER_HOUR, "by_hour": by_hour}
+    began, ended, finished = work_span(user, day)
+    worked = int((ended - began).total_seconds() // 60) if began else 0
+    return {
+        "date": day.isoformat(), "minutes": minutes,
+        "worked_minutes": worked, "hours": round(worked / 60, 2),
+        "goal": round(worked * GOAL_MINUTES_PER_HOUR / 60),
+        "started_at": began.isoformat() if began else None,
+        "ended_at": ended.isoformat() if finished else None,
+        "last_seen": ended.isoformat() if began else None,
+        "by_hour": by_hour,
+    }
+
+
+def attendance(day):
+    """Obecność agentów w danym dniu (dla managera): przyjście, wyjście, czas pracy, minuty i cel."""
+    from django.contrib.auth import get_user_model
+
+    from .roles import AGENT
+
+    rows = []
+    for user in get_user_model().objects.filter(is_active=True, groups__name=AGENT).order_by("username"):
+        d = day_minutes(user, day)
+        acts = Activity.objects.filter(agent=user, created_at__gte=day_bounds(day)[0], created_at__lt=day_bounds(day)[1])
+        rows.append({
+            "id": user.pk, "username": user.username, "full_name": user.get_full_name() or user.username,
+            "started_at": d["started_at"], "ended_at": d["ended_at"], "worked_minutes": d["worked_minutes"],
+            "working_now": bool(d["started_at"]) and not d["ended_at"] and day == timezone.localdate()
+            and timezone.now() - datetime.fromisoformat(d["last_seen"]) <= timedelta(minutes=IDLE_MINUTES),
+            "last_seen": d["last_seen"],
+            "minutes": d["minutes"], "goal": d["goal"],
+            "calls": acts.exclude(outcome__in=NON_CALL_OUTCOMES).count(),
+        })
+    return rows
 
 
 def minutes_report(user, date_from, date_to):
@@ -187,9 +265,10 @@ def minutes_report(user, date_from, date_to):
         day += timedelta(days=1)
     total = round(sum(d["minutes"] for d in days), 1)
     goal = sum(d["goal"] for d in days)
+    worked = sum(d["worked_minutes"] for d in days)
     return {
         "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
-        "minutes": total, "goal": goal, "hours": sum(d["hours"] for d in days),
+        "minutes": total, "goal": goal, "worked_minutes": worked, "hours": round(worked / 60, 2),
         "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
         "days": [{k: v for k, v in d.items() if k != "by_hour"} for d in days],
         "by_hour": days[0]["by_hour"] if len(days) == 1 else None,

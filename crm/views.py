@@ -443,8 +443,9 @@ class ActivityViewSet(
             skip_reason=data.get("skip_reason", ""),
             introduced=data.get("introduced"),
         )
-        from .work import attach_call_time
+        from .work import attach_call_time, touch_workday
         attach_call_time(serializer.instance)   # czas rozmowy z dialera (jeśli dzwonił przez telefon)
+        touch_workday(self.request.user)
 
     @extend_schema(request=ActivityNoteSerializer, responses=ActivitySerializer)
     def partial_update(self, request, pk=None):
