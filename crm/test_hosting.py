@@ -44,6 +44,26 @@ class LoginDemoHintTests(TestCase):
         self.assertContains(self.client.get("/crm/login/"), "Konta demo")
 
 
+class LoginThrottleTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def tearDown(self):
+        from django.core.cache import cache
+        cache.clear()   # inne testy logują się z tego samego „adresu”
+
+    def test_password_guessing_is_blocked_after_10_tries(self):
+        from rest_framework.throttling import ScopedRateThrottle
+        with mock.patch.dict(ScopedRateThrottle.THROTTLE_RATES, {"login": "10/min"}):
+            self._guess()
+
+    def _guess(self):
+        codes = [self.client.post("/api/token/", {"username": "x", "password": f"zle{i}"}).status_code for i in range(11)]
+        self.assertEqual(codes[:10], [401] * 10)
+        self.assertEqual(codes[10], 429)
+
+
 class DialerApkTests(TestCase):
     def test_missing_apk_says_so(self):
         with override_settings(BASE_DIR=__import__("pathlib").Path("/nie-ma-takiego-folderu")):

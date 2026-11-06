@@ -193,7 +193,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     # parowanie telefonu (6-cyfrowy kod) ma limit prób, żeby kodu nie dało się zgadnąć
-    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min'},
+    # logowanie: najwyżej 10 prób na minutę z jednego adresu (zgadywanie haseł);
+    # w testach wyżej, bo setki testów logują się z tego samego „adresu”
+    'DEFAULT_THROTTLE_RATES': {'dialer_pair': '10/min',
+                               'login': '10000/min' if 'test' in __import__('sys').argv else '10/min'},
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 

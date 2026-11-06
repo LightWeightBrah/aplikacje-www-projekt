@@ -238,6 +238,7 @@ const CRM = (() => {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: $("username").value.trim(), password: $("password").value }),
         });
+        if (r.status === 429) throw new Error("Za dużo prób logowania. Odczekaj minutę i spróbuj ponownie.");
         if (!r.ok) throw new Error("Nieprawidłowy login lub hasło.");
         const tokens = await r.json();
         store.set("crm_access", tokens.access);
