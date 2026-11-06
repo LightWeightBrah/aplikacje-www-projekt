@@ -378,6 +378,12 @@
     if (addr) parts.push(esc(addr));
     return parts.length ? `<div class="w-meta">${parts.join('<span class="sep">·</span>')}</div>` : "";
   }
+  /* „Ostatnia zmiana: Anna Nowak, dziś 14:20” – widać, kto z zespołu dopisał stałe informacje */
+  function clientByHtml(d) {
+    if (!d.client_comment_at || !(d.client_comment || "").trim()) return "";
+    const who = d.client_comment_by === me.id ? "Ty" : esc(d.client_comment_by_name || "ktoś z zespołu");
+    return `Ostatnia zmiana: <b>${who}</b>, ${esc(when(d.client_comment_at))}`;
+  }
   function renderCard() {
     const d = current;
     const tel = d.phone.replace(/[^\d+]/g, "");
@@ -402,6 +408,10 @@
         </div>
         <div class="w-facts" id="facts">${factsHtml(d)}</div>
         ${metaHtml(d)}
+        <div class="w-info" id="client-panel">
+          <div class="w-info-head"><label for="cl-comment">Stałe informacje o kliencie</label><small class="w-info-by" id="cl-by">${clientByHtml(d)}</small><small class="w-status" id="cl-status"></small></div>
+          <textarea id="cl-comment" rows="2" maxlength="2000" placeholder="np. 3 numery w Play, umowa do marca, decyduje właściciel – widzą to wszyscy agenci">${esc(d.client_comment || "")}</textarea>
+        </div>
       </div>
       ${closed ? "" : `<div class="w-panel" id="out-panel">
         <div class="w-out-title"><h2>Jak poszła rozmowa?</h2><small>klawisze 1–8</small></div>
@@ -417,11 +427,6 @@
           <span class="w-save-hint" id="save-hint">Wybierz wynik rozmowy</span>
         </div>
       </div>`}
-      <div class="w-panel" id="client-panel">
-        <div class="w-sec-title"><h2>Stałe informacje o kliencie</h2><small class="w-status" id="cl-status"></small></div>
-        <div class="w-field w-note-box"><label for="cl-comment" class="sr-only">Informacje o kliencie (zostają na stałe)</label>
-          <textarea id="cl-comment" rows="2" maxlength="2000" placeholder="np. 3 numery w Play, umowa do marca, decyduje właściciel">${esc(d.client_comment || "")}</textarea></div>
-      </div>
       <div class="w-panel"><div class="w-sec-title"><h2>Historia kontaktów (${d.activities.length})</h2></div><ul class="w-hist" id="hist">${histHtml(d)}</ul></div>`;
     if (!closed) { paintPhrases(null); $("act-note").addEventListener("keydown", (e) => e.stopPropagation()); $("act-note").addEventListener("input", syncChips); }
     wireClient();
@@ -455,7 +460,13 @@
     };
     CRM.saveLeadPatch = save;
     const ta = $("cl-comment"); let timer = null, last = ta.value;
-    const flush = () => { clearTimeout(timer); if (ta.value.trim() === last.trim()) return; last = ta.value; save({ client_comment: ta.value.trim() }); };
+    const flush = async () => {
+      clearTimeout(timer); if (ta.value.trim() === last.trim()) return; last = ta.value;
+      if (await save({ client_comment: ta.value.trim() })) {
+        Object.assign(d, { client_comment_by: me.id, client_comment_at: new Date().toISOString() });
+        const by = $("cl-by"); if (by) by.innerHTML = clientByHtml(d);
+      }
+    };
     ta.addEventListener("input", () => { clearTimeout(timer); status("Zapisze się za chwilę…"); timer = setTimeout(flush, 900); });
     ta.addEventListener("blur", flush);
     ta.addEventListener("keydown", (e) => e.stopPropagation());

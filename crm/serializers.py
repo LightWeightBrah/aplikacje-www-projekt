@@ -259,6 +259,8 @@ class LeadSerializer(serializers.ModelSerializer):
     last_contact_outcome = serializers.SerializerMethodField()
     last_contact_at = serializers.SerializerMethodField()
     last_contact_agent = serializers.SerializerMethodField()
+    # Kto ostatnio zmienił „Stałe informacje o kliencie” (imię i nazwisko albo login)
+    client_comment_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -273,7 +275,23 @@ class LeadSerializer(serializers.ModelSerializer):
             "created_at",
             "agreed_contact_at",
             "missed_calls",
+            "client_comment_by",
+            "client_comment_at",
         )
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_client_comment_by_name(self, obj):
+        user = obj.client_comment_by
+        return (user.get_full_name() or user.username) if user else None
+
+    def update(self, instance, validated_data):
+        # Zmiana stałych informacji: zapamiętujemy, kto i kiedy (pokazujemy przy polu)
+        new = validated_data.get("client_comment")
+        if new is not None and new.strip() != (instance.client_comment or "").strip():
+            request = self.context.get("request")
+            validated_data["client_comment_by"] = request.user if request and request.user.is_authenticated else None
+            validated_data["client_comment_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_last_contact_outcome(self, obj):

@@ -190,6 +190,33 @@ class LeadDetailsTests(CrmTestBase):
         self.assertEqual(self.lead.phone_alt, "555 040 001")
         self.assertEqual(self.lead.client_comment, "Ma 3 numery w Play, umowa do marca")
 
+    def test_client_info_remembers_who_changed_it(self):
+        response = self.patch({"client_comment": "Decyduje właściciel"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["client_comment_by"], self.agent1.id)
+        self.assertEqual(response.data["client_comment_by_name"], self.agent1.get_full_name() or self.agent1.username)
+        self.assertIsNotNone(response.data["client_comment_at"])
+        # inny agent widzi, kto wpisał informacje
+        Lead.objects.filter(pk=self.lead.pk).update(owner=self.agent2)
+        data = self.api(self.agent2).get(f"/api/leads/{self.lead.id}/").data
+        self.assertEqual(data["client_comment"], "Decyduje właściciel")
+        self.assertEqual(data["client_comment_by"], self.agent1.id)
+
+    def test_other_changes_keep_client_info_author(self):
+        self.patch({"client_comment": "Ma 2 numery"})
+        self.patch({"contact_name": "Pan Marek", "client_comment": "Ma 2 numery"})  # ten sam tekst
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.client_comment_by, self.agent1)
+        stamp = self.lead.client_comment_at
+        self.patch({"operators": "play"})
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.client_comment_at, stamp)
+
+    def test_author_cannot_be_set_by_hand(self):
+        self.patch({"client_comment": "Coś", "client_comment_by": self.agent2.id})
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.client_comment_by, self.agent1)
+
     def test_bad_alt_phone_is_rejected(self):
         self.assertEqual(self.patch({"phone_alt": "123"}).status_code, status.HTTP_400_BAD_REQUEST)
 

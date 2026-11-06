@@ -215,7 +215,7 @@ MANAGER_ONLY_ACTIONS = (
 
 
 class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
-    queryset = Lead.objects.select_related("product", "company", "owner", "batch")
+    queryset = Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by")
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
     filterset_class = LeadFilter
     search_fields = ["contact_name", "phone", "email", "company__name", "company__nip", "company__krs"]
@@ -539,7 +539,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def get_queryset(self):
         if not self.request.user.is_authenticated:  # np. generowanie schematu Swaggera
             return Lead.objects.none()
-        queryset = Lead.objects.select_related("product", "company", "owner", "batch").filter(
+        queryset = Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by").filter(
             owner=self.request.user
         )
         return with_owner_tries(with_transfer_info(queryset))

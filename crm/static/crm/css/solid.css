@@ -487,3 +487,11 @@ html.crm-loading-slow body::after{content:"Wczytuję…";position:fixed;left:0;r
 html[data-role]:not([data-role="manager"]) .topnav [data-manager-only]{display:none}
 html[data-noteam] .topnav [data-team-only]{display:none}
 @media(prefers-reduced-motion:reduce){main.content{transition:none}}
+
+/* Stałe informacje o kliencie – w karcie klienta, nad wynikiem rozmowy; wspólne dla całego zespołu */
+.w-info{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}
+.w-info-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem .8rem;margin-bottom:.4rem}
+.w-info-head label{font-size:.75rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.w-info-by{font-size:.78rem;color:var(--muted)}.w-info-by b{color:var(--ink);font-weight:600}
+.w-info-head .w-status{margin-left:auto}
+.w-info textarea{width:100%;background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;font:inherit;resize:vertical;min-height:2.8rem}

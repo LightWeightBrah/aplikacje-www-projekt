@@ -165,6 +165,16 @@ class Lead(models.Model):
     operators = models.CharField("obecny operator", max_length=60, blank=True)
     # Stałe informacje o kliencie (nie wpis w historii): np. „ma 5 numerów w Play, umowa do marca”
     client_comment = models.TextField("informacje o kliencie", blank=True)
+    # Kto i kiedy ostatnio zmienił te informacje (widać przy polu, np. „Anna, dziś 14:20”)
+    client_comment_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        verbose_name="informacje zmienił",
+    )
+    client_comment_at = models.DateTimeField("informacje zmienione", null=True, blank=True)
     # Czy klient wie, skąd dzwonimy (przedstawiliśmy ofertę T-Mobile), czy tylko umówiliśmy termin
     knows_caller = models.BooleanField("wie, skąd dzwonimy", default=False)
     status = models.CharField(
