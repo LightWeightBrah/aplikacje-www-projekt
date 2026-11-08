@@ -24,6 +24,7 @@ FIELD_LIMITS = {
     "unreachable_cooldown_days": (1, 365, "dni", "LEAD_UNREACHABLE_COOLDOWN_DAYS"),
     "sms_reminder_minutes": (10, 10080, "min", None),   # od 10 minut do 7 dni przed terminem
     "sms_min_gap_minutes": (1, 1440, "min", None),
+    "goal_minutes_per_hour": (1, 60, "min", None),
 }
 SMS_MAX_PER_DAY = 5   # twardy limit na jeden numer w ciągu doby, niezależnie od ustawień
 # Rodzaje SMS-ów z przypomnieniem: pola włącz/treść w TeamRules
@@ -52,6 +53,9 @@ def default_values():
     for kind in SMS_KINDS:
         for name in (f"sms_{kind}_enabled", f"sms_{kind}_text"):
             values[name] = TeamRules._meta.get_field(name).default
+    values["require_skip_reason"] = False
+    values["require_refuse_reason"] = False
+    values["quick_phrases"] = {}   # = listy domyślne z crm/phrases.py
     return values
 
 

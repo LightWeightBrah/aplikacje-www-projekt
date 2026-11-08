@@ -23,7 +23,7 @@ from .permissions import IsManager
 from .roles import AGENT, MANAGER, is_manager
 from .serializers import assignable_users
 from .services import ACTIVE_STATUSES, reassign_agent_leads, release_agent_leads
-from .work import goal_per_hour
+from .work import goal_per_hour, own_goal_per_hour
 
 User = get_user_model()
 
@@ -88,7 +88,9 @@ class UserRowSerializer(serializers.Serializer):
     avatar = serializers.CharField(help_text="Zdjęcie jako data URL albo pusty tekst.")
     avatar = serializers.CharField(help_text="Zdjęcie profilowe jako data URL albo pusty tekst.")
     can_delete = serializers.BooleanField(help_text="Czy konto da się usunąć (brak historii).")
-    goal_minutes_per_hour = serializers.IntegerField(help_text="Cel: minut rozmów na godzinę pracy.")
+    goal_minutes_per_hour = serializers.IntegerField(help_text="Cel: minut rozmów na godzinę pracy (własny albo zespołu).")
+    own_goal_minutes_per_hour = serializers.IntegerField(
+        allow_null=True, help_text="Własny cel tej osoby; null = obowiązuje cel zespołu.")
 
 
 def user_row(user, requester, active_leads=None, avatar=None):
@@ -112,6 +114,7 @@ def user_row(user, requester, active_leads=None, avatar=None):
         "avatar": avatar,
         "can_delete": delete_blocker(user) is None and not user.is_superuser and user.pk != requester.pk,
         "goal_minutes_per_hour": goal_per_hour(user),
+        "own_goal_minutes_per_hour": own_goal_per_hour(user),
     }
 
 
@@ -143,7 +146,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
 class UserUpdateSerializer(serializers.ModelSerializer):
     role = serializers.CharField(required=False, help_text="agent albo manager")
     goal_minutes_per_hour = serializers.IntegerField(
-        required=False, min_value=1, max_value=60, help_text="Cel: minut rozmów na godzinę pracy (1–60)."
+        required=False, allow_null=True, min_value=1, max_value=60,
+        help_text="Własny cel: minut rozmów na godzinę pracy (1–60); null = cel zespołu."
     )
 
     class Meta:
@@ -290,6 +294,7 @@ class UserViewSet(
         serializer.is_valid(raise_exception=True)
         data = dict(serializer.validated_data)
         role = data.pop("role", None)
+        goal_given = "goal_minutes_per_hour" in data
         goal = data.pop("goal_minutes_per_hour", None)
         if role is not None and role != role_of(target):
             if target.pk == request.user.pk:
@@ -314,7 +319,7 @@ class UserViewSet(
                 setattr(target, field, value)
             if data:
                 target.save(update_fields=list(data))
-            if goal is not None:
+            if goal_given:
                 AgentProfile.objects.update_or_create(user=target, defaults={"goal_minutes_per_hour": goal})
             if role is not None and role != role_of(target):
                 new_group, _ = Group.objects.get_or_create(name=MANAGER if role == "manager" else AGENT)

@@ -138,7 +138,19 @@ class SkipLeadTests(CrmTestBase):
         self.lead.refresh_from_db()
         self.assertEqual(self.lead.status, Lead.Status.LOST)
 
-    def test_skip_requires_reason(self):
+    def test_skip_reason_optional_by_default(self):
+        response = self.api(self.agent1).post(
+            "/api/activities/", {"lead": self.lead.id, "outcome": "skipped"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.status, Lead.Status.LOST)
+
+    def test_skip_requires_reason_when_manager_wants(self):
+        from .rules import get_rules
+        rules = get_rules()
+        rules.require_skip_reason = True
+        rules.save()
         response = self.api(self.agent1).post(
             "/api/activities/", {"lead": self.lead.id, "outcome": "skipped"}, format="json"
         )

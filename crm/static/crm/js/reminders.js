@@ -17,9 +17,10 @@ CRM.initReminders = function initReminders() {
   const SEEN_KEY = "crm_rem_seen_" + user.username;
   const BROWSER_KEY = "crm_rem_browser_" + user.username;
   const CFG_KEY = "crm_rem_cfg_" + user.username;
+  const LIVE_KEY = "crm_rem_live_" + user.username;   // kiedy ostatnio jakaś karta CRM była na wierzchu
   // lead = sekundy przed terminem; goal / base / footer = drobne napisy na ekranie „Dzwonienie” (można schować)
-  const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true, undoBar: true, keys: true, goal: true, base: true, footer: true };
-  const VIEW_PREFS = { goal: "pref-goal", base: "pref-base", footer: "pref-footer" };
+  const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true, undoBar: true, autoDial: true, autoDialSec: 4, keys: true, goal: true, base: true, footer: true };
+  const VIEW_PREFS = { goal: "pref-goal", base: "pref-base", footer: "pref-footer", phone: "pref-phone" };
   const baseTitle = document.title;
   const box = $("reminders");
   box.addEventListener("click", (e) => {
@@ -51,6 +52,10 @@ CRM.initReminders = function initReminders() {
   CRM.dayBarEnabled = () => cfg().dayBar !== false;
   /* Pasek „Cofnij” po zapisie wyniku: domyślnie włączony, można go wyłączyć */
   CRM.undoBarEnabled = () => cfg().undoBar !== false;
+  CRM.autoDialEnabled = () => cfg().autoDial !== false;
+  /* Po ilu sekundach od „Zapisz i dalej” telefon sam dzwoni (1–60, domyślnie 4) */
+  const dialSec = (v) => Math.min(60, Math.max(1, Math.round(Number(v)) || 4));
+  CRM.autoDialSeconds = () => dialSec(cfg().autoDialSec);
   /* Czy pokazać drobny dodatek na ekranie „Dzwonienie”: "goal" (cel minut), "base" (ile zostało w bazie), "footer" (liczniki na dole) */
   CRM.showPart = (name) => cfg()[name] !== false;
   /* Skróty klawiszowe (N, Z, 1–8, Enter) – można wyłączyć dla mniej technicznych agentów */
@@ -291,7 +296,9 @@ CRM.initReminders = function initReminders() {
 
   function showFresh(fresh, now) {
     if (!fresh.length) return;
-    beep();
+    // ponowna próba po „Nie odebrał” (status „new”) to automat, a nie termin z klientem: karta bez dźwięku
+    const loud = fresh.filter((l) => l.status !== "new");
+    if (loud.length) beep();
     if (fresh.length > MAX_CARDS) {   // dużo naraz (np. po zalogowaniu): jedna zbiorcza karta
       const late = fresh.filter((l) => dueMs(l) < now && l.status !== "new").length;
       // ile z nich przepisano od innych agentów i od kogo („3 od Jan Kowalski”)
@@ -299,12 +306,13 @@ CRM.initReminders = function initReminders() {
       fresh.filter((l) => l.transferred_from).forEach((l) => { from[l.transferred_from] = (from[l.transferred_from] || 0) + 1; });
       const moved = Object.entries(from).map(([n, c]) => `${c} od ${esc(n)}`).join(", ");
       box.appendChild(summaryCard(fresh.length, late, moved));
-      browserNotify(moved ? "Dostałeś przepisane leady" : "Masz oddzwonienia do zrobienia",
+      if (loud.length) browserNotify(moved ? "Dostałeś przepisane leady" : "Masz oddzwonienia do zrobienia",
         (late ? `Zaległe: ${late}, razem: ${fresh.length}.` : `Do zrobienia: ${fresh.length}.`) + (moved ? ` Przepisane: ${moved.replace(/&[^;]+;/g, "")}.` : ""), "/crm/plan/");
       return;
     }
     fresh.forEach((l) => {
       box.appendChild(leadCard(l, now));
+      if (l.status === "new") return;   // ponowna próba: bez powiadomienia systemowego
       const late = dueMs(l) < now;
       const kind = l.status === "new" ? (late ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie";
       browserNotify(l.transferred_from ? `Przepisany od ${l.transferred_from} · ${kind}` : kind,
@@ -335,6 +343,19 @@ CRM.initReminders = function initReminders() {
       if (!l || el.dataset.iso !== l.next_contact_at) closeCard(el);   // załatwiony albo termin zmieniony
     });
 
+    /* Nowe przypomnienie (karta + dźwięk) pokazuje tylko JEDNA, właściwa karta przeglądarki:
+       - nigdy strona przygotowywana w tle (prerender po najechaniu na menu) – zabierała przypomnienie i mogła
+         zapiszczeć, a karty nikt nie widział,
+       - karta schowana (inna zakładka) tylko wtedy, gdy żadna karta CRM nie jest akurat na wierzchu
+         (wtedy dźwięk + powiadomienie systemowe mają sens, bo agent jest w innym programie). */
+    if (document.prerendering) { box.querySelectorAll(".reminder[data-iso]").forEach((el) => paintCard(el, now)); return; }
+    if (document.visibilityState === "visible") {
+      try { localStorage.setItem(LIVE_KEY, String(now)); } catch { /* brak dostępu */ }
+    } else {
+      let last = 0;
+      try { last = Number(localStorage.getItem(LIVE_KEY)) || 0; } catch { /* brak dostępu */ }
+      if (now - last < 3000) { box.querySelectorAll(".reminder[data-iso]").forEach((el) => paintCard(el, now)); return; }
+    }
     const seen = readSeen();
     const fresh = active.filter((l) => !seen[keyOf(l)]);
     if (fresh.length) {
@@ -388,11 +409,22 @@ CRM.initReminders = function initReminders() {
     $("notif-sound").checked = c.sound;
     $("notif-daybar").checked = c.dayBar !== false;
     $("notif-undo").checked = c.undoBar !== false;
+    if ($("notif-autodial")) {
+      $("notif-autodial").checked = c.autoDial !== false;
+      $("notif-autodial-sec").value = dialSec(c.autoDialSec);
+      paintAutoDial();
+    }
     $("notif-keys").checked = c.keys !== false;
     Object.entries(VIEW_PREFS).forEach(([k, id]) => { if ($(id)) $(id).checked = c[k] !== false; });
     $("notif-min").value = Math.floor(c.lead / 60);
     $("notif-sec").value = c.lead % 60;
     paintBrowserButton();
+  }
+  // pole „Dzwoń po … s” ma sens tylko przy włączonym samym dzwonieniu
+  function paintAutoDial() {
+    const on = $("notif-autodial").checked;
+    $("autodial-delay-field").classList.toggle("off", !on);
+    $("notif-autodial-sec").disabled = !on;
   }
   function readLead() {
     const m = Math.min(120, Math.max(0, parseInt($("notif-min").value, 10) || 0));
@@ -415,6 +447,12 @@ CRM.initReminders = function initReminders() {
       document.dispatchEvent(new CustomEvent("crm:view"));   // kolejka od razu pokazuje / chowa pasek
     });
     $("notif-undo").addEventListener("change", () => saveCfg({ undoBar: $("notif-undo").checked }));
+    if ($("notif-autodial")) {
+      $("notif-autodial").addEventListener("change", () => { saveCfg({ autoDial: $("notif-autodial").checked }); paintAutoDial(); });
+      const sec = $("notif-autodial-sec");
+      sec.addEventListener("input", () => { if (sec.value !== "") saveCfg({ autoDialSec: dialSec(sec.value) }); });
+      sec.addEventListener("change", () => { sec.value = dialSec(sec.value); saveCfg({ autoDialSec: Number(sec.value) }); });
+    }
     Object.entries(VIEW_PREFS).forEach(([k, id]) => {
       if (!$(id)) return;
       $(id).addEventListener("change", () => {
@@ -458,4 +496,5 @@ CRM.initReminders = function initReminders() {
   setInterval(poll, POLL_MS);
   setInterval(evaluate, 1000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+  document.addEventListener("prerenderingchange", () => poll());   // strona z tła właśnie została otwarta
 };

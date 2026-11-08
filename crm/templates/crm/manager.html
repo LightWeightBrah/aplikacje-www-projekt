@@ -20,7 +20,7 @@
         <thead><tr><th>Agent</th><th>Przyszedł</th><th>Wyszedł</th><th class="num">Czas pracy</th><th class="num">Przerwy</th><th class="num">Telefony</th><th class="num">Minuty / powinno być</th></tr></thead>
         <tbody id="att-list"></tbody>
     </table></div>
-    <p class="card-desc">Przyszedł = zalogowanie albo pierwszy ruch w CRM tego dnia. Wyszedł = wylogowanie; godzina ze znakiem „?” to ostatni ruch agenta, który się nie wylogował (np. wyłączył laptopa). Liczą się tylko prawdziwe ruchy (dzwonienie, zapis rozmowy, „Następny klient”) – karta zostawiona otwarta na noc nie nabija czasu. Przerwa = co najmniej 15 min bez ruchu; pokazujemy ją, ale czas pracy jej nie odejmuje. Powinno być tyle minut rozmów na każdą godzinę pracy, ile wynosi cel agenta (domyślnie 15: 4 h → 60 min). Cel zmienisz każdemu w „Zespół → Edytuj”.</p>
+    <p class="card-desc">Przyszedł = pierwsza praca tego dnia (telefon, zapis rozmowy, „Następny klient”); samo zalogowanie się nie liczy – gdy ktoś zalogował się dużo wcześniej, pod godziną widać „zalogowany …”. Wyszedł = ostatnia praca (albo wylogowanie do 15 min po niej); godzina ze znakiem „?” = nie wylogował się. Przerwy = 15–45 min bez pracy: pokazujemy je, ale liczą się do czasu pracy. Od 45 min bez pracy to czas poza pracą: nie liczy się do czasu pracy ani celu, a pod agentem widać bloki, np. „Pracował: 9:00–12:00 · 15:00–18:00”. Powinno być tyle minut rozmów na każdą godzinę pracy, ile wynosi cel agenta (domyślnie 15: 4 h → 60 min). Cel zmienisz każdemu w „Zarządzanie → Użytkownicy → Edytuj”.</p>
 </section>
 
 <div class="tabs-row">
@@ -111,8 +111,8 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=118"></script>
-<script src="{% static 'crm/js/recordings.js' %}?v=118"></script>
-<script src="{% static 'crm/js/attendance.js' %}?v=118"></script>
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=130"></script>
+<script src="{% static 'crm/js/recordings.js' %}?v=130"></script>
+<script src="{% static 'crm/js/attendance.js' %}?v=130"></script>
 <script>CRM.initAttendance();</script>
 <script>CRM.initManager();</script>{% endblock %}

@@ -13,6 +13,7 @@ CRM.initUsers = function initUsers() {
 
   let users = [];
   let iAmSuperuser = false;
+  let teamGoal = 15;   // cel zespołu z Ustawień i ofert (placeholder w „Edytuj”)
   let toastTimer;
   const JSON_HEADERS = { "Content-Type": "application/json" };
   const ROLE = { agent: "Agent", manager: "Manager" };
@@ -62,6 +63,7 @@ CRM.initUsers = function initUsers() {
       return;
     }
     iAmSuperuser = users.some((u) => u.is_me && u.is_superuser);
+    api("/api/settings/").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && d.goal_minutes_per_hour) teamGoal = d.goal_minutes_per_hour; }).catch(() => {});
     render();
   }
 
@@ -193,7 +195,9 @@ CRM.initUsers = function initUsers() {
     $("edit-last").value = u.last_name;
     $("edit-username").value = u.username;
     $("edit-role").value = u.role;
-    $("edit-goal").value = u.goal_minutes_per_hour || 15;
+    // puste pole = cel całego zespołu (Ustawienia i oferty)
+    $("edit-goal").value = u.own_goal_minutes_per_hour || "";
+    $("edit-goal").placeholder = `jak cały zespół: ${teamGoal} min`;
     const lockedRole = u.is_me || u.is_superuser;
     $("edit-role").disabled = lockedRole;
     $("edit-role-hint").textContent = u.is_me ? "Własnej roli nie zmienisz." : u.is_superuser ? "Rola administratora wynika z jego uprawnień."
@@ -253,9 +257,9 @@ CRM.initUsers = function initUsers() {
     if (last !== target.last_name) body.last_name = last;
     if (login !== target.username) body.username = login;
     if (!$("edit-role").disabled && $("edit-role").value !== target.role) body.role = $("edit-role").value;
-    const goal = Number($("edit-goal").value);
-    if (!Number.isInteger(goal) || goal < 1 || goal > 60) { setError("edit-error", "Cel minut na godzinę: liczba od 1 do 60."); return; }
-    if (goal !== (target.goal_minutes_per_hour || 15)) body.goal_minutes_per_hour = goal;
+    const rawGoal = $("edit-goal").value.trim(), goal = rawGoal === "" ? null : Number(rawGoal);
+    if (goal !== null && (!Number.isInteger(goal) || goal < 1 || goal > 60)) { setError("edit-error", "Cel minut na godzinę: liczba od 1 do 60 (albo puste = jak cały zespół)."); return; }
+    if (goal !== (target.own_goal_minutes_per_hour ?? null)) body.goal_minutes_per_hour = goal;
     if (!Object.keys(body).length) { $("edit-dialog").close(); return; }
     if (body.role && body.role !== target.role &&
         !confirm(`Zmienić rolę: ${label(target)} na ${ROLE[body.role]}?`)) return;

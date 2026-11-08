@@ -18,7 +18,8 @@ from rest_framework.renderers import BaseRenderer
 
 from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, Lead, LeadAssignment, SaleItem
 from .roles import AGENT
-from .rules import attempt_times, callback_retry_at, get_rules, suggest_retry
+from .rules import attempt_times, callback_retry_at, fit_work_time, get_rules, suggest_retry
+from .phrases import skip_never
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
 ACTIVE_STATUSES = (
@@ -342,6 +343,26 @@ def add_sale_items(activity, lines):
     return SaleItem.objects.bulk_create(items)
 
 
+PORTING_CALL_HOUR_OFFSET = 1   # telefon w dniu przeniesienia: godzinę po otwarciu (np. 10:00)
+
+
+def contract_callback(lead_id, now=None, rules=None):
+    """(termin, sprawa) telefonu w dniu, od którego klient może przenieść numery – albo None.
+
+    None, gdy końca umowy nie znamy, umowa jest bez terminu albo przenosić można już teraz.
+    """
+    now = now or timezone.now()
+    lead = Lead.objects.only("contract_end", "contract_open_ended").get(pk=lead_id)
+    start = lead.porting_from
+    if start is None or start <= timezone.localdate(now):
+        return None
+    rules = rules or get_rules()
+    local = timezone.make_aware(datetime.combine(start, time(rules.work_start_hour + PORTING_CALL_HOUR_OFFSET)))
+    end = lead.contract_end
+    note = f"Koniec umowy {end.month:02d}.{end.year} – można już przenieść numery"
+    return fit_work_time(rules, local), note
+
+
 def register_activity(
     lead, agent, outcome, note="", next_contact_at=None, next_contact_note=None,
     sale_items=None, skip_reason="", introduced=None,
@@ -431,7 +452,16 @@ def register_activity(
 
         new_status = OUTCOME_TO_STATUS.get(outcome)
         if outcome == Activity.Outcome.SKIPPED:
-            new_status = SKIP_TO_STATUS.get(skip_reason, Lead.Status.LOST)
+            # stare kody (closed, duplicate…) albo powód z list managera: „nie dzwonić więcej” / zamknięty
+            new_status = SKIP_TO_STATUS.get(skip_reason) or (
+                Lead.Status.DO_NOT_CALL if skip_never(rules, skip_reason) else Lead.Status.LOST)
+        # „Odmowa, bo mamy umowę do …”: klient się nie zamyka, tylko wraca w dniu, od którego
+        # wolno przenieść numery (12 miesięcy przed końcem umowy)
+        porting_call = contract_callback(lead.pk, now, rules) if outcome == Activity.Outcome.REFUSED else None
+        if porting_call and "brak kontaktu" not in (note or "").lower():
+            new_status = Lead.Status.CALLBACK
+            next_contact_at, next_contact_note = porting_call
+            changes["agreed_contact_at"] = None
         if new_status:
             changes["status"] = new_status
 

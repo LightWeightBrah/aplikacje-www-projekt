@@ -450,6 +450,8 @@ EXPORT_COLUMNS = (
     ("Miejscowość", 18, lambda l: l.company.city if l.company else ""),
     ("Obecny operator", 16, lambda l: l.operators),
     ("Informacje o kliencie", 30, lambda l: l.client_comment),
+    ("Umowa do", 12, lambda l: "bez terminu" if l.contract_open_ended
+     else (f"{l.contract_end.month:02d}.{l.contract_end.year}" if l.contract_end else "")),
 )
 
 

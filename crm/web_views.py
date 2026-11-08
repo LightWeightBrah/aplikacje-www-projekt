@@ -78,6 +78,11 @@ def dashboard(request):
     return render(request, "crm/dashboard.html")
 
 
+def reports_page(request):
+    """Raporty managera (dane z /api/reports/)."""
+    return render(request, "crm/reports.html")
+
+
 def manager_page(request):
     """Szkielet panelu managera. Dane pobiera JavaScript z API (token JWT)."""
     return render(request, "crm/manager.html")

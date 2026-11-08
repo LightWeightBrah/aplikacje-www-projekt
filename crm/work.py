@@ -43,15 +43,26 @@ from .services import (
 )
 
 DUE_SOON = timedelta(minutes=2)       # termin za chwilę = już do zrobienia
-GOAL_MINUTES_PER_HOUR = 15            # domyślny cel: 15 minut rozmów na godzinę pracy (manager zmienia go agentowi)
+GOAL_MINUTES_PER_HOUR = 15            # cel startowy: 15 minut rozmów na godzinę pracy (manager zmienia go w ustawieniach)
+
+
+def team_goal_per_hour():
+    """Cel całego zespołu (Ustawienia i oferty → „Cel minut rozmów”), domyślnie 15."""
+    from .rules import get_rules
+
+    return get_rules().goal_minutes_per_hour or GOAL_MINUTES_PER_HOUR
+
+
+def own_goal_per_hour(user):
+    """Własny cel tej osoby (Zespół → Edytuj) albo None, gdy obowiązuje cel zespołu."""
+    from .models import AgentProfile
+
+    return AgentProfile.objects.filter(user=user).values_list("goal_minutes_per_hour", flat=True).first()
 
 
 def goal_per_hour(user):
-    """Cel minut rozmów na godzinę pracy tego agenta (Zespół → Edytuj), domyślnie 15."""
-    from .models import AgentProfile
-
-    value = AgentProfile.objects.filter(user=user).values_list("goal_minutes_per_hour", flat=True).first()
-    return value or GOAL_MINUTES_PER_HOUR
+    """Cel minut rozmów na godzinę pracy tej osoby: własny, a bez niego cel zespołu."""
+    return own_goal_per_hour(user) or team_goal_per_hour()
 
 SEGMENTS = {
     "offer": (Lead.Status.OFFER, Lead.Status.INTERESTED),
@@ -166,36 +177,41 @@ def minutes_by_hour(user, day=None):
 
 # ------------------------------------------------------------------ dzień pracy (przyjście / wyjście)
 
-BREAK_MINUTES = 15  # tyle minut bez ruchu w CRM = przerwa (pokazujemy ją, ale jej nie odejmujemy)
-IDLE_MINUTES = 45   # po tylu minutach bez ruchu (i bez wylogowania) czas pracy przestaje rosnąć „do teraz”
+BREAK_MINUTES = 15  # tyle minut bez pracy = przerwa (krótką tylko pokazujemy, nie odejmujemy)
+IDLE_MINUTES = 45   # od tylu minut bez pracy = poza pracą (odejmujemy); też: „do teraz” przestaje rosnąć
 
 
-def touch_workday(user):
-    """Zapisuje prawdziwy ruch agenta: pierwszy ruch dnia = przyjście, każdy kolejny = ostatnia aktywność.
+LOGOUT_GRACE_MINUTES = 15   # wylogowanie najwyżej tyle po ostatniej pracy = koniec pracy (np. dopisał notatki)
 
-    Wywoływane przy logowaniu, otwarciu „Dzwonienia”, „Następny klient”, zapisie rozmowy i telefonie.
-    Samo odświeżanie liczników w tle NIE jest ruchem – inaczej laptop zostawiony na noc „pracowałby”.
-    Dłuższa cisza (co najmniej BREAK_MINUTES) zapisuje się jako przerwa. Ruch po wylogowaniu znów otwiera dzień.
+
+def touch_workday(user, work=False):
+    """Zapisuje ruch agenta w CRM.
+
+    work=False – sama obecność (logowanie, otwarcie „Dzwonienia”): nie zaczyna dnia pracy.
+    work=True – prawdziwa praca („Następny klient”, telefon, zapis rozmowy): pierwsza = początek pracy,
+    każda kolejna = ostatnia praca. Przerwa = co najmniej BREAK_MINUTES między dwiema pracami.
+    Samo odświeżanie liczników w tle nie jest żadnym ruchem. Ruch po wylogowaniu znów otwiera dzień.
     """
     from .models import WorkDay
 
     now = timezone.now()
     day = timezone.localdate()
-    wd = WorkDay.objects.filter(user=user, date=day).first()
-    if wd is None:
-        WorkDay.objects.get_or_create(user=user, date=day, defaults={"first_seen": now, "last_seen": now})
-        return
-    if now - wd.last_seen >= timedelta(minutes=BREAK_MINUTES):
-        wd.breaks = list(wd.breaks or []) + [[wd.last_seen.isoformat(), now.isoformat()]]
+    wd, _ = WorkDay.objects.get_or_create(user=user, date=day, defaults={"first_seen": now, "last_seen": now})
+    fields = ["last_seen", "ended_at"]
     wd.last_seen, wd.ended_at = max(now, wd.last_seen), None
-    wd.save(update_fields=["last_seen", "ended_at", "breaks"])
+    if work:
+        if wd.last_work and now - wd.last_work >= timedelta(minutes=BREAK_MINUTES):
+            wd.breaks = list(wd.breaks or []) + [[wd.last_work.isoformat(), now.isoformat()]]
+        wd.first_work = wd.first_work or now
+        wd.last_work = max(now, wd.last_work or now)
+        fields += ["first_work", "last_work", "breaks"]
+    wd.save(update_fields=fields)
 
 
 def end_workday(user):
     """Agent się wylogował: zapisujemy godzinę wyjścia (cel minut przestaje rosnąć)."""
     from .models import WorkDay
 
-    touch_workday(user)
     now = timezone.now()
     WorkDay.objects.filter(user=user, date=timezone.localdate()).update(ended_at=now, last_seen=now)
 
@@ -207,8 +223,10 @@ def _break_minutes(breaks):
 def work_span(user, day):
     """(początek, koniec, czy zakończył) dnia pracy albo (None, None, False), gdy agent nie pracował.
 
-    Początek: wcześniejsze z „przyjścia” i pierwszego zapisu rozmowy. Koniec: wylogowanie,
-    a bez tego (np. wyłączył laptopa) – dziś „teraz”, w poprzednie dni ostatnia aktywność.
+    Liczy się PRACA, a nie samo zalogowanie: początek = pierwszy „Następny klient”, telefon albo zapis
+    rozmowy; koniec = ostatnia taka chwila. Wylogowanie najwyżej LOGOUT_GRACE_MINUTES po ostatniej pracy
+    przesuwa koniec na wylogowanie (dopisywał notatki), późniejsze się nie liczy (zostawił otwarty CRM).
+    Dziś bez wylogowania: „do teraz”, dopóki ostatnia praca była najwyżej IDLE_MINUTES temu.
     Każdy dzień kończy się najpóźniej o północy: nic nie przechodzi na następny dzień.
     """
     from .models import WorkDay
@@ -219,19 +237,20 @@ def work_span(user, day):
     marks += list(CallRequest.objects.filter(user=user, created_at__gte=start, created_at__lt=end)
                   .values_list("created_at", flat=True))
     wd = WorkDay.objects.filter(user=user, date=day).first()
-    firsts = [t for t in ([wd.first_seen] if wd else []) + marks]
-    if not firsts:
+    if wd:
+        marks += [t for t in (wd.first_work, wd.last_work) if t]
+    if not marks:
         return None, None, False
-    began = min(firsts)
-    if wd and wd.ended_at:
-        return began, max([wd.ended_at] + marks), True
-    lasts = ([wd.last_seen] if wd else []) + marks
+    began, last = min(marks), max(marks)
+    if wd and wd.ended_at and wd.ended_at >= last:
+        quit_at = wd.ended_at if wd.ended_at - last <= timedelta(minutes=LOGOUT_GRACE_MINUTES) else last
+        return began, quit_at, True
     now = timezone.now()
-    # Dziś i bez wylogowania: liczymy do teraz, chyba że agent od dłuższej chwili nic nie robi w CRM
-    # (wyłączył laptopa) – wtedy czas pracy kończy się na ostatniej aktywności. Gdy wróci, przerwa się doliczy.
-    if day == timezone.localdate() and now - max(lasts) <= timedelta(minutes=IDLE_MINUTES):
+    # Dziś i bez wylogowania: liczymy do teraz, chyba że agent od dłuższej chwili nic nie robi
+    # (wyłączył laptopa) – wtedy czas pracy kończy się na ostatniej pracy. Gdy wróci, przerwa się doliczy.
+    if day == timezone.localdate() and now - last <= timedelta(minutes=IDLE_MINUTES):
         return began, now, False
-    return began, max(lasts), False
+    return began, last, False
 
 
 def day_minutes(user, day):
@@ -248,19 +267,44 @@ def day_minutes(user, day):
 
     wd = WorkDay.objects.filter(user=user, date=day).first()
     breaks = list(wd.breaks or []) if wd else []
+    # Krótka przerwa (15–45 min: kawa, toaleta, dłuższa notatka) liczy się do pracy – tylko ją pokazujemy.
+    # Długa (od IDLE_MINUTES, np. 3 h w mieście) to czas POZA pracą: odejmujemy go, więc dzień
+    # 3 h pracy + 3 h wyjścia + 3 h pracy = 6 h pracy i cel za 6 h. Działa tak samo przy kilku wyjściach.
+    long_breaks = sorted(b for b in breaks if _break_minutes([b]) >= IDLE_MINUTES) if began else []
+    away = sum(_break_minutes([b]) for b in long_breaks)
+    worked = max(0, worked - away)
+    # Bloki pracy (rozdzielone wyjściami od 45 min), np. 9:00–12:00, 15:00–18:00, 21:00–teraz.
+    # Koniec None = blok trwa (dziś, bez wylogowania, agent właśnie pracuje).
+    blocks, live = [], False
+    if began:
+        piece = began
+        for a, b in long_breaks:
+            a, b = datetime.fromisoformat(a), datetime.fromisoformat(b)
+            if began <= a and b <= ended:
+                blocks.append([piece.isoformat(), a.isoformat()])
+                piece = b
+        live = not finished and day == timezone.localdate() and ended >= timezone.now() - timedelta(seconds=5)
+        blocks.append([piece.isoformat(), None if live else ended.isoformat()])
     now = timezone.now()
     # trwająca przerwa: dziś, bez wylogowania, od co najmniej 15 min nic się nie dzieje
     on_break_since = None
-    if wd and not finished and day == timezone.localdate() and now - wd.last_seen >= timedelta(minutes=BREAK_MINUTES):
-        on_break_since = wd.last_seen.isoformat()
+    # ostatnia praca: zapisana przy pracy (touch_workday(work=True)); gdy dzień już „stanął” (ponad 45 min ciszy),
+    # to koniec dnia z work_span (obejmuje też rozmowy zapisane bez WorkDay, np. z danych demo)
+    last_work = wd.last_work if wd else None
+    if began and not live:
+        last_work = max(t for t in (last_work, ended) if t)
+    if began and not finished and day == timezone.localdate() and last_work and now - last_work >= timedelta(minutes=BREAK_MINUTES):
+        on_break_since = last_work.isoformat()
     return {
         "date": day.isoformat(), "minutes": minutes,
         "worked_minutes": worked, "hours": round(worked / 60, 2),
         "goal": round(worked * goal_per_hour(user) / 60), "goal_minutes_per_hour": goal_per_hour(user),
         "started_at": began.isoformat() if began else None,
+        "login_at": wd.first_seen.isoformat() if wd else None,   # pierwsze zalogowanie / otwarcie CRM tego dnia
         "ended_at": ended.isoformat() if finished else None,
         "last_seen": ended.isoformat() if began else None,
-        "breaks": breaks, "break_minutes": _break_minutes(breaks), "on_break_since": on_break_since,
+        "breaks": breaks, "break_minutes": _break_minutes(breaks), "away_minutes": away,
+        "blocks": blocks, "on_break_since": on_break_since,
         "by_hour": by_hour,
     }
 
@@ -278,10 +322,11 @@ def attendance(day):
         rows.append({
             "id": user.pk, "username": user.username, "full_name": user.get_full_name() or user.username,
             "started_at": d["started_at"], "ended_at": d["ended_at"], "worked_minutes": d["worked_minutes"],
+            "login_at": d["login_at"],
             "working_now": bool(d["started_at"]) and not d["ended_at"] and not d["on_break_since"]
             and day == timezone.localdate(),
             "last_seen": d["last_seen"],
-            "breaks": d["breaks"], "break_minutes": d["break_minutes"], "on_break_since": d["on_break_since"],
+            "breaks": d["breaks"], "break_minutes": d["break_minutes"], "away_minutes": d["away_minutes"], "blocks": d["blocks"], "on_break_since": d["on_break_since"],
             "minutes": d["minutes"], "goal": d["goal"], "goal_minutes_per_hour": d["goal_minutes_per_hour"],
             "calls": acts.exclude(outcome__in=NON_CALL_OUTCOMES).count(),
         })
@@ -355,7 +400,7 @@ def team_minutes_report(users, date_from, date_to):
         "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
         "minutes": round(sum(r["minutes"] for r in day_rows), 2), "goal": sum(r["goal"] for r in day_rows),
         "worked_minutes": worked, "hours": round(worked / 60, 2),
-        "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
+        "goal_minutes_per_hour": team_goal_per_hour(),
         "started_at": None, "ended_at": None,
         "days": day_rows,
         "by_hour": [{"hour": h, "minutes": round(m, 2)} for h, m in enumerate(by_hour)] if single else None,

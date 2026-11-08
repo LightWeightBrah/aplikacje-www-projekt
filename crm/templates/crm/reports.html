@@ -1,0 +1,62 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Raporty – Solid CRM{% endblock %}
+{% block nav_reports %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <h1>Raporty</h1>
+        <p class="muted" id="rp-sub">Co poprawić, żeby zespół sprzedawał więcej</p>
+    </div>
+    <div class="period">
+        <select id="rp-days" class="select" aria-label="Okres">
+            <option value="7">Ostatnie 7 dni</option>
+            <option value="30" selected>Ostatnie 30 dni</option>
+            <option value="90">Ostatnie 90 dni</option>
+        </select>
+    </div>
+</header>
+<p id="page-error" class="form-error" hidden></p>
+
+<div id="rp-area" hidden>
+    <section class="kpis" id="rp-kpis"></section>
+
+    <section class="card">
+        <h2>Gdzie uciekają klienci <small class="muted" id="rp-period"></small></h2>
+        <p class="card-desc">Każda osoba krok po kroku: ile telefonów odebrano, ile rozmów skończyło się ofertą i ile ofert sprzedażą. Na czerwono krok, w którym osoba wypada wyraźnie słabiej niż zespół, a pod spodem podpowiedź, co z tym zrobić.</p>
+        <div class="table-wrap"><table class="table agents-table rp-funnel" id="rp-funnel"></table></div>
+    </section>
+
+    <section class="grid-2">
+        <div class="card">
+            <h2>Kiedy firmy odbierają</h2>
+            <p class="card-desc">Jaki procent telefonów odebrano o danej godzinie (cały zespół). Zielone = najlepsze godziny: wtedy dzwońcie do nowych firm i do trudnych klientów.</p>
+            <div class="rp-bars" id="rp-hours"></div>
+            <div class="rp-days" id="rp-weekdays"></div>
+        </div>
+        <div class="card">
+            <h2>Dlaczego odmawiają</h2>
+            <p class="card-desc">Powody, które agent zaznacza przy „Odmowie”. Na najczęstszy powód przygotujcie jedną dobrą odpowiedź dla całego zespołu.</p>
+            <div id="rp-refusals"></div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Oferty bez odpowiedzi</h2>
+        <p class="card-desc" id="rp-offers-desc"></p>
+        <div class="table-wrap"><table class="table rp-table" id="rp-offers"></table></div>
+    </section>
+
+    <section class="card">
+        <h2>Koniec umowy – przyszła sprzedaż</h2>
+        <p class="card-desc">Klienci, którzy powiedzieli „mamy umowę do …”. Numer można przenieść najwcześniej 12 miesięcy przed końcem umowy, więc słupek pokazuje, ilu klientów będzie można przenieść w danym miesiącu. CRM sam umawia do nich telefon.</p>
+        <div class="rp-bars rp-months" id="rp-months"></div>
+        <div class="grid-2 rp-lists">
+            <div><h3>Można przenosić już teraz, a nikt się nimi nie zajmuje</h3><div id="rp-ready"></div></div>
+            <div><h3>Najbliżsi do przeniesienia</h3><div id="rp-upcoming"></div></div>
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/reports.js' %}?v=130"></script>
+<script>CRM.initReports();</script>{% endblock %}

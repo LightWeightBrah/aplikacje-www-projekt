@@ -8,6 +8,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .excel import MAX_IMPORT_BYTES
+from .phrases import clean_phrases, effective_phrases
 from .roles import AGENT, MANAGER
 from .models import (
     OPERATOR_CODES, Activity, Company, Lead, LeadAssignment, LeadBatch, Product, SaleItem, TeamRules,
@@ -218,8 +219,12 @@ class ActivitySerializer(serializers.ModelSerializer):
                 "Wynik 'Zainteresowany' wymaga next_contact_at (kiedy ponownie zadzwonić)."
             )
         skipped = attrs["outcome"] == Activity.Outcome.SKIPPED
-        if skipped and not attrs.get("skip_reason"):
+        # powód pominięcia / odmowy jest opcjonalny, chyba że manager ustawił inaczej („Ustawienia i oferty”)
+        if skipped and not attrs.get("skip_reason") and get_rules().require_skip_reason:
             raise serializers.ValidationError("Wybierz, dlaczego pomijasz tego leada.")
+        if (attrs["outcome"] == Activity.Outcome.REFUSED and not (attrs.get("note") or "").strip()
+                and get_rules().require_refuse_reason):
+            raise serializers.ValidationError("Wybierz albo wpisz, dlaczego klient odmówił.")
         if attrs.get("skip_reason") and not skipped:
             raise serializers.ValidationError("Powód pominięcia (skip_reason) podaje się tylko przy wyniku 'skipped'.")
         lines = attrs.get("sale_lines") or []
@@ -282,6 +287,8 @@ class LeadSerializer(serializers.ModelSerializer):
     last_contact_agent = serializers.SerializerMethodField()
     # Kto ostatnio zmienił „Stałe informacje o kliencie” (imię i nazwisko albo login)
     client_comment_by_name = serializers.SerializerMethodField()
+    # Od kiedy wolno przenieść numery (12 miesięcy przed końcem umowy); null = nie wiadomo / bez terminu
+    porting_from = serializers.DateField(read_only=True, allow_null=True)
 
     class Meta:
         model = Lead
@@ -305,7 +312,16 @@ class LeadSerializer(serializers.ModelSerializer):
         user = obj.client_comment_by
         return (user.get_full_name() or user.username) if user else None
 
+    def validate_contract_end(self, value):
+        # zapisujemy sam miesiąc: 1. dzień = „umowa do końca tego miesiąca”
+        return value.replace(day=1) if value else None
+
     def update(self, instance, validated_data):
+        # Koniec umowy: data i „bez terminu” wykluczają się nawzajem
+        if validated_data.get("contract_end"):
+            validated_data["contract_open_ended"] = False
+        elif validated_data.get("contract_open_ended"):
+            validated_data["contract_end"] = None
         # Zmiana stałych informacji: zapamiętujemy, kto i kiedy (pokazujemy przy polu)
         new = validated_data.get("client_comment")
         if new is not None and new.strip() != (instance.client_comment or "").strip():
@@ -682,6 +698,7 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             "claim_timeout_hours",
             "unreachable_cooldown_days",
             "companies_last",
+            "goal_minutes_per_hour",
             "sms_reminder_minutes",
             "sms_min_gap_minutes",
             "sms_offer_enabled",
@@ -690,10 +707,24 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             "sms_talked_text",
             "sms_stranger_enabled",
             "sms_stranger_text",
+            "require_skip_reason",
+            "require_refuse_reason",
+            "quick_phrases",
             "updated_at",
             "updated_by_name",
         )
         read_only_fields = ("updated_at", "updated_by_name")
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["quick_phrases"] = effective_phrases(instance)   # agent zawsze dostaje pełne listy (z domyślnymi)
+        return data
+
+    def validate_quick_phrases(self, value):
+        clean, error = clean_phrases(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return {**(self.instance.quick_phrases if self.instance and isinstance(self.instance.quick_phrases, dict) else {}), **clean}
 
     def validate(self, attrs):
         for name, value in attrs.items():

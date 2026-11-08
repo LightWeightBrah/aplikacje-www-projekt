@@ -27,7 +27,11 @@
                 <label class="field">Nazwa bazy (opcjonalnie)
                     <input id="batch-name" class="select" maxlength="150" placeholder="domyślnie: nazwa pliku i data">
                 </label>
-                <label class="field">Produkt dla wszystkich leadów (opcjonalnie)
+                {% comment %}
+                Produkt dla całej bazy (np. „leasing”) – na razie schowany: bazy są pod przeniesienie numerów,
+                a produkt wybiera się dopiero w ofercie / sprzedaży. API dalej przyjmuje pole „product”.
+                {% endcomment %}
+                <label class="field" style="display:none">Produkt dla wszystkich leadów (opcjonalnie)
                     <select id="product" class="select"><option value="">Bez produktu</option></select>
                 </label>
             </div>
@@ -71,5 +75,5 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/import.js' %}?v=118"></script>
+{% block scripts %}<script src="{% static 'crm/js/import.js' %}?v=130"></script>
 <script>CRM.initImport();</script>{% endblock %}

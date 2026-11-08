@@ -356,8 +356,12 @@ def _at(hour, minute=0):
     return timezone.make_aware(datetime.combine(timezone.localdate(), time(hour, minute)))
 
 
+from datetime import datetime, timedelta  # noqa: E402
+
+
 class WorkDayTests(CrmTestBase):
-    """Przyjście = zalogowanie, wyjście = wylogowanie; przerwy tylko pokazujemy. Manager widzi obecność."""
+    """Czas pracy = od pierwszej do ostatniej PRACY („Następny klient”, telefon, zapis rozmowy).
+    Samo zalogowanie nie zaczyna pracy; wylogowanie tuż po pracy ją kończy. Przerwy tylko pokazujemy."""
 
     def _row(self, user, now):
         from unittest import mock
@@ -370,37 +374,80 @@ class WorkDayTests(CrmTestBase):
         with mock.patch("django.utils.timezone.now", return_value=now):
             return self.api(user).post(path)
 
-    def test_login_logout_and_attendance_for_manager(self):
+    def _work(self, user, frm, to):
+        """Praca co 10 minut od `frm` do `to` (włącznie), jak agent klikający „Następny klient”."""
+        t = frm
+        while t <= to:
+            self._post(user, "/api/work/next/", t)
+            t += timedelta(minutes=10)
+
+    def test_work_starts_at_first_real_work_not_at_login(self):
         from .models import WorkDay
-        self.assertEqual(self._post(self.agent1, "/api/work/login/", _at(9)).status_code, 204)
+        self.assertEqual(self._post(self.agent1, "/api/work/login/", _at(8)).status_code, 204)
+        self._work(self.agent1, _at(9), _at(12, 10))           # pierwszy „Następny klient” = początek pracy
         self.assertEqual(self._post(self.agent1, "/api/work/logout/", _at(12, 20)).status_code, 204)
         self.assertEqual(self.api(self.agent1).get("/api/work/attendance/").status_code, 403)
         row = self._row(self.agent1, _at(15))
         self.assertFalse(row["working_now"])
         self.assertIsNotNone(row["ended_at"])
-        self.assertEqual(row["worked_minutes"], 200)
+        self.assertEqual(row["worked_minutes"], 200)           # 9:00–12:20 (wylogował się 10 min po pracy)
         self.assertEqual(row["goal"], 50)                      # 3 h 20 min × 15 min/h
-        self.assertEqual(WorkDay.objects.get(user=self.agent1).first_seen, _at(9))
+        self.assertEqual(datetime.fromisoformat(row["login_at"]), _at(8))  # manager widzi też, kiedy się zalogował
+        self.assertEqual(WorkDay.objects.get(user=self.agent1).first_seen, _at(8))
         self.assertIsNone(self._row(self.agent2, _at(15))["started_at"])
 
-    def test_login_after_logout_reopens_the_day_and_shows_break(self):
+    def test_login_alone_is_not_work(self):
         self._post(self.agent1, "/api/work/login/", _at(9))
+        row = self._row(self.agent1, _at(11))
+        self.assertIsNone(row["started_at"])
+        self.assertEqual(row["worked_minutes"], 0)
+
+    def test_late_logout_does_not_add_time(self):
+        self._work(self.agent1, _at(9), _at(11))
+        self._post(self.agent1, "/api/work/logout/", _at(14))   # zostawił otwarty CRM, wylogował się później
+        row = self._row(self.agent1, _at(15))
+        self.assertEqual(row["worked_minutes"], 120)
+        self.assertEqual(datetime.fromisoformat(row["ended_at"]), _at(11))
+
+    def test_work_after_logout_reopens_the_day_and_shows_break(self):
+        self._post(self.agent1, "/api/work/next/", _at(9))
         self._post(self.agent1, "/api/work/logout/", _at(9, 10))
-        self._post(self.agent1, "/api/work/login/", _at(9, 50))
-        row = self._row(self.agent1, _at(9, 55))
+        self._post(self.agent1, "/api/work/login/", _at(9, 25))
+        self._post(self.agent1, "/api/work/next/", _at(9, 30))
+        row = self._row(self.agent1, _at(9, 35))
         self.assertTrue(row["working_now"])
         self.assertIsNone(row["ended_at"])
-        self.assertEqual(row["worked_minutes"], 55)             # przerwa NIE jest odejmowana
-        self.assertEqual(row["break_minutes"], 40)
+        self.assertEqual(row["worked_minutes"], 35)             # krótka przerwa NIE jest odejmowana
+        self.assertEqual(row["break_minutes"], 30)              # 9:00–9:30 bez pracy
+        self.assertEqual(row["away_minutes"], 0)
         self.assertEqual(len(row["breaks"]), 1)
 
+    def test_long_absences_are_not_work_time(self):
+        """3 h pracy, 3 h w mieście, 3 h pracy, 1 h przerwy, 1 h pracy = 7 h pracy (cel za 7 h)."""
+        self._work(self.agent1, _at(9), _at(12))
+        self._work(self.agent1, _at(15), _at(18))
+        self._work(self.agent1, _at(19), _at(20))
+        self._post(self.agent1, "/api/work/logout/", _at(20, 5))
+        row = self._row(self.agent1, _at(21))
+        self.assertEqual(row["away_minutes"], 240)              # 12:00–15:00 i 18:00–19:00
+        self.assertEqual(row["worked_minutes"], 425)            # 9:00–20:05 bez 4 h poza pracą
+        self.assertEqual(row["goal"], round(425 * 15 / 60))
+        blocks = [[datetime.fromisoformat(a), b and datetime.fromisoformat(b)] for a, b in row["blocks"]]
+        self.assertEqual(blocks, [[_at(9), _at(12)], [_at(15), _at(18)], [_at(19), _at(20, 5)]])
+
+    def test_ongoing_block_has_no_end(self):
+        self._work(self.agent1, _at(9), _at(10))
+        row = self._row(self.agent1, _at(10, 5))
+        self.assertEqual(len(row["blocks"]), 1)
+        self.assertIsNone(row["blocks"][0][1])                  # pracuje teraz
+
     def test_short_pause_is_not_a_break(self):
-        self._post(self.agent1, "/api/work/login/", _at(9))
+        self._post(self.agent1, "/api/work/next/", _at(9))
         self._post(self.agent1, "/api/work/next/", _at(9, 10))
         self.assertEqual(self._row(self.agent1, _at(9, 12))["break_minutes"], 0)
 
     def test_ongoing_break_is_shown(self):
-        self._post(self.agent1, "/api/work/login/", _at(9))
+        self._post(self.agent1, "/api/work/next/", _at(9))
         row = self._row(self.agent1, _at(9, 20))
         self.assertFalse(row["working_now"])
         from datetime import datetime
@@ -423,16 +470,17 @@ class IdleWorkDayTests(CrmTestBase):
     def test_agent_who_did_not_log_out_stops_counting_after_idle(self):
         from unittest import mock
         with mock.patch("django.utils.timezone.now", return_value=_at(9)):
-            self.api(self.agent1).post("/api/work/login/")
-        with mock.patch("django.utils.timezone.now", return_value=_at(11)):
             self.api(self.agent1).post("/api/work/next/")
+        for minute in (20, 40):
+            with mock.patch("django.utils.timezone.now", return_value=_at(9, minute)):
+                self.api(self.agent1).post("/api/work/next/")
         with mock.patch("django.utils.timezone.now", return_value=_at(15)):
             rows = self.api(self.manager).get("/api/work/attendance/").data["results"]
         row = next(x for x in rows if x["username"] == self.agent1.username)
         self.assertFalse(row["working_now"])
-        self.assertEqual(row["worked_minutes"], 120)   # liczy się do ostatniego ruchu, nie do teraz
-        self.assertEqual(row["goal"], 30)
-        self.assertEqual(row["break_minutes"], 120)   # 9:00–11:00 bez żadnego ruchu = przerwa (pokazana, nie odjęta)
+        self.assertEqual(row["worked_minutes"], 40)   # liczy się do ostatniej pracy (9:40), nie do teraz
+        self.assertEqual(row["goal"], 10)
+        self.assertEqual(row["break_minutes"], 40)   # dwie przerwy po 20 min (pokazane, nie odjęte)
 
 
 

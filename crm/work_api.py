@@ -24,7 +24,7 @@ from .views import PERIOD_PARAMETERS, parse_period
 from .services import base_progress, with_owner_tries, with_transfer_info
 from .sms import finish_sms, next_sms
 from .work import (
-    GOAL_MINUTES_PER_HOUR,
+    team_goal_per_hour,
     PAIRING_MINUTES,
     OfferError,
     ContactExists,
@@ -69,7 +69,7 @@ def next_work_payload(request):
 
     Używa go „Następny klient” i zapis wyniku z ?next=1 („Zapisz i dalej” – jedno zapytanie zamiast dwóch).
     """
-    touch_workday(request.user)
+    touch_workday(request.user, work=True)   # „Następny klient” = praca
     lead, reason = next_work(request.user)
     if lead is None:
         return {"detail": "Na teraz nie ma nic do zrobienia: baza i pula są obdzwonione."}
@@ -96,7 +96,8 @@ class WorkSummaryView(APIView):
         today = day_minutes(request.user, timezone.localdate())
         return Response({
             "workday": {"started_at": today["started_at"], "ended_at": today["ended_at"],
-                        "worked_minutes": today["worked_minutes"], "break_minutes": today["break_minutes"]},
+                        "worked_minutes": today["worked_minutes"], "break_minutes": today["break_minutes"],
+                        "away_minutes": today["away_minutes"]},
             "counts": work_counts(request.user),
             "today": today_stats(request.user),
             "base": {"total": sum(r["total"] for r in rows), "left": sum(r["left"] for r in rows),
@@ -175,7 +176,7 @@ class AttendanceView(APIView):
             day = date.fromisoformat(raw) if raw else timezone.localdate()
         except ValueError:
             return Response({"detail": "Podaj datę w formacie RRRR-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"date": day.isoformat(), "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR, "results": attendance(day)})
+        return Response({"date": day.isoformat(), "goal_minutes_per_hour": team_goal_per_hour(), "results": attendance(day)})
 
 
 class WorkMinutesView(APIView):
@@ -499,7 +500,7 @@ class DialerCallView(APIView):
         phone = str(request.data.get("phone") or (lead.phone if lead else "")).strip()
         if not phone:
             return Response({"detail": "Brak numeru do wybrania."}, status=status.HTTP_400_BAD_REQUEST)
-        touch_workday(request.user)
+        touch_workday(request.user, work=True)   # telefon = praca
         call = request_call(request.user, phone, lead)
         return Response({"id": call.pk, "state": call.state, **dialer_status(request.user)}, status=status.HTTP_201_CREATED)
 

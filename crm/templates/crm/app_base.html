@@ -12,8 +12,8 @@
     <script>try{var z=parseFloat(localStorage.getItem("crm_text_size"));if(z>=0.8&&z<=1.5&&z!==1)document.documentElement.style.setProperty("--ts",z)}catch(e){}</script>
     {# zanim cokolwiek się narysuje: rola (menu bez mignięcia) i ukrycie treści do czasu wczytania danych (app.js zdejmuje klasę; awaryjnie po 4 s) #}
     <script>(function(d){d.classList.add("crm-loading");setTimeout(function(){d.classList.remove("crm-loading","crm-loading-slow")},4000);try{var u=JSON.parse(localStorage.getItem("crm_user")||"null");if(u){d.dataset.role=u.role;if(u.role!=="manager"&&u.can_view_team===false)d.dataset.noteam="1"}}catch(e){}})(document.documentElement)</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=118">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=118">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=130">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=130">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -25,6 +25,7 @@
         <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Wyniki</a>
         <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
         <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Zespół</a>
+        <a href="{% url 'crm:reports' %}" data-manager-only class="{% block nav_reports %}{% endblock %}">Raporty</a>
         <div class="nav-more" data-manager-only>
             <button type="button" class="nav-more-btn" id="nav-more-btn" aria-haspopup="true" aria-expanded="false">Zarządzanie <span aria-hidden="true">▾</span></button>
             <div class="nav-more-menu" id="nav-more-menu" hidden>
@@ -129,6 +130,12 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
 <dialog id="notif-dialog" class="dialog">
     <form id="notif-form" method="dialog" novalidate>
         <h2>Moje ustawienia</h2>
+        <label class="check"><input type="checkbox" id="notif-autodial"> <span><strong>Sam dzwoń do następnego klienta</strong><small class="muted">Po „Zapisz i dalej” telefon sam wybierze numer kolejnego klienta. Możesz wtedy kliknąć „Wstrzymaj”. Działa tylko z połączonym telefonem (Solid Dialer).</small></span></label>
+        <div class="field sub-field" id="autodial-delay-field">Dzwoń po
+            <div class="lead-row">
+                <input type="number" id="notif-autodial-sec" class="select" min="1" max="60" step="1" inputmode="numeric" aria-label="Sekundy"> <span>s od zapisania wyniku</span>
+            </div>
+        </div>
         <label class="check"><input type="checkbox" id="notif-enabled"> <span><strong>Przypomnienia na ekranie</strong><small class="muted">Karta w rogu ekranu, gdy zbliża się termin kontaktu albo już minął.</small></span></label>
         <div class="field">Powiadom mnie przed terminem
             <div class="lead-row">
@@ -144,14 +151,7 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
             <button type="button" class="btn-mini notif-test" id="notif-test" hidden>Wyślij powiadomienie testowe</button>
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
-        <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Panel „Dziś” przy dzwonieniu</strong><small class="muted">Liczby dnia, minuty rozmów i informacje zespołu po prawej stronie.</small></span></label>
-        <fieldset class="view-prefs">
-            <legend>Co widać na ekranie „Dzwonienie”</legend>
-            <small class="muted">Drobne dodatki – wyłącz to, co Cię rozprasza. Liczy się dalej wszystko tak samo, chowa się tylko napis.</small>
-            <label class="check"><input type="checkbox" id="pref-goal"> <span><strong>Cel minut w panelu „Dziś”</strong><small class="muted">Prawa kolumna: zdanie „Dziś powinno być … min rozmów (pracujesz od …)”, pasek „Ta godzina” i słupki godzin.</small></span></label>
-            <label class="check"><input type="checkbox" id="pref-base"> <span><strong>Ile zostało w bazie</strong><small class="muted">Lewa kolumna, pod kafelkami: „Twoja baza – zostało 80 z 80” i „Wspólna pula zespołu”.</small></span></label>
-            <label class="check"><input type="checkbox" id="pref-footer"> <span><strong>Liczniki na dolnym pasku</strong><small class="muted">Dół ekranu, przy „Zadzwoń na numer”: „Dziś: 10 tel. · 0 min rozmów · ta godzina 0 min / 15 min”.</small></span></label>
-        </fieldset>
+        <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
         <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe</strong><small class="muted">Jeden klawisz zamiast klikania. Wyłącz, jeśli przypadkiem w coś wciskasz.</small></span></label>
         <details class="keys-help">
             <summary>Jakie są skróty?</summary>
@@ -165,7 +165,17 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
             </dl>
             <small class="muted">Skróty nie działają, gdy piszesz w polu tekstowym.</small>
         </details>
-        <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
+        <details class="view-prefs">
+            <summary><strong>Wygląd ekranu „Dzwonienie”</strong><small class="muted">Co widać na ekranie: panel „Dziś”, cel minut, liczniki, stan telefonu. Kliknij, żeby zmienić.</small></summary>
+            <div class="view-prefs-body">
+                <small class="muted">Wyłącz to, co Cię rozprasza. Liczy się dalej wszystko tak samo, chowa się tylko napis.</small>
+                <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Panel „Dziś” przy dzwonieniu</strong><small class="muted">Liczby dnia, minuty rozmów i informacje zespołu po prawej stronie.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-goal"> <span><strong>Cel minut w panelu „Dziś”</strong><small class="muted">Prawa kolumna: zdanie „Dziś powinno być … min rozmów (pracujesz od …)”, pasek „Ta godzina” i słupki godzin.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-base"> <span><strong>Ile zostało w bazie</strong><small class="muted">Lewa kolumna, pod kafelkami: „Twoja baza – zostało 80 z 80” i „Wspólna pula zespołu”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-footer"> <span><strong>Liczniki na dolnym pasku</strong><small class="muted">Dół ekranu, przy „Zadzwoń na numer”: „Dziś: 10 tel. · 0 min rozmów · ta godzina 0 min / 15 min”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-phone"> <span><strong>Stan telefonu na dolnym pasku</strong><small class="muted">Kropka i napis w lewym dolnym rogu („Telefon połączony”, „Bez telefonu…”). Gdy telefon właśnie dzwoni, napis i tak się pokaże.</small></span></label>
+            </div>
+        </details>
         <div class="field">Samouczek<button type="button" class="btn btn-secondary" id="tour-again">Pokaż samouczek jeszcze raz</button><small class="muted">Krótkie oprowadzenie po ekranie „Dzwonienie”.</small></div>
         <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Kalendarz” zostaje, żeby żaden termin Ci nie umknął.</p>
         <div class="dialog-actions"><button type="submit" class="btn btn-primary" id="notif-close">Gotowe</button></div>
@@ -207,11 +217,11 @@ po chwili trzymania kursora („moderate”). Przygotowana strona tylko CZYTA da
    {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
   "eagerness": "moderate"}]}
 </script>
-<script src="{% static 'crm/js/app.js' %}?v=118"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=118"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=118"></script>
-<script src="{% static 'crm/js/search.js' %}?v=118"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=118"></script>
+<script src="{% static 'crm/js/app.js' %}?v=130"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=130"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=130"></script>
+<script src="{% static 'crm/js/search.js' %}?v=130"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=130"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();</script>
 {% block scripts %}{% endblock %}
 </body>

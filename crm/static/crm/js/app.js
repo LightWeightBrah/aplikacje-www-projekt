@@ -555,7 +555,7 @@ const CRM = (() => {
   function agentCells(a) {
     const minutes = a.minutes || 0, goal = a.goal || 0;
     return [
-      `<span class="${goal ? (minutes >= goal ? "ok-num" : "low-num") : ""}">${talk(minutes)}</span> / ${goal} min`,
+      `<span class="${goal ? (minutes >= goal ? "ok-num" : "low-num") : ""}">${talk(minutes)}</span> / ${talk(goal)}`,
       a.worked_minutes ? durHM(a.worked_minutes) : "–",
       a.calls, pct(a.answer_rate), a.no_answer, a.callbacks, a.interested, a.offers, a.sold,
       a.calls_per_sale != null ? fmt1(a.calls_per_sale) : "–",

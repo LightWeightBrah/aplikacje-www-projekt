@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import device_api, recordings_api, rules_api, users_api, views, work_api
+from . import device_api, recordings_api, reports_api, rules_api, users_api, views, work_api
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -21,6 +21,7 @@ urlpatterns = [
     path("settings/test-sms/", rules_api.TestSmsView.as_view(), name="test-sms"),
     path("settings/test-sms/<int:pk>/", rules_api.TestSmsStateView.as_view(), name="test-sms-state"),
     path("leaderboard/", views.LeaderboardView.as_view(), name="leaderboard"),
+    path("reports/", reports_api.ReportsView.as_view(), name="reports"),
     # praca agenta: „Następny klient”, liczniki follow-upów i liczby dnia
     path("work/next/", work_api.NextWorkView.as_view(), name="work-next"),
     path("work/summary/", work_api.WorkSummaryView.as_view(), name="work-summary"),

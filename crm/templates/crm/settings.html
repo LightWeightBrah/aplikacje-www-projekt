@@ -53,6 +53,14 @@
                 <p class="small" id="sms-test-msg" aria-live="polite"></p>
             </div>
         </section>
+        <section class="card" id="phrases-card">
+            <h2>Wynik rozmowy: powody i gotowe przyciski</h2>
+            <p class="card-desc">Przyciski, które agent klika przy wyniku rozmowy – kliknięty tekst dopisuje się do komentarza. Dopisuj częste powody i zdania, gdy już wiecie, co klienci mówią najczęściej. Jeden przycisk = jedna linia. Zapisuje się razem z zasadami powyżej.</p>
+            <label class="check"><input type="checkbox" id="req-skip"> <span><strong>Wymagaj powodu przy „Pomiń firmę”</strong><small class="muted">Wyłączone: agent może pominąć firmę bez wybierania powodu (powód jest opcjonalny).</small></span></label>
+            <label class="check"><input type="checkbox" id="req-refuse"> <span><strong>Wymagaj powodu przy „Odmowa”</strong><small class="muted">Włączone: agent musi kliknąć powód albo wpisać komentarz, zanim zapisze odmowę. Powody widać potem w Raportach („Dlaczego odmawiają”).</small></span></label>
+            <div class="phrase-lists" id="phrase-lists"></div>
+            <small class="form-error" id="e-quick_phrases" hidden></small>
+        </section>
         <div class="rules-bar" id="rules-bar">
         <p id="rules-error" class="form-error" hidden></p>
         <div class="actions rules-actions">
@@ -142,8 +150,8 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=118"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=118"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=118"></script>
-<script src="{% static 'crm/js/recordings.js' %}?v=118"></script>
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=130"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=130"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=130"></script>
+<script src="{% static 'crm/js/recordings.js' %}?v=130"></script>
 <script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();CRM.initRecordings();</script>{% endblock %}

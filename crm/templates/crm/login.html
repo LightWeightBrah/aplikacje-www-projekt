@@ -6,8 +6,8 @@
     <title>Logowanie – Solid CRM</title>
     <meta name="color-scheme" content="light dark">
     <script>try{var t=localStorage.getItem("crm_theme")||"dark";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="dark"}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=118">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=118">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=130">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=130">
 </head>
 <body class="auth-page">
     <button class="btn-ghost theme-btn floating" id="theme-btn" title="Zmień motyw (jasny / ciemny)" aria-label="Zmień motyw"></button>
@@ -23,7 +23,7 @@
         </form>
         {% if show_demo %}<p class="muted small">Konta demo: agent1, agent2, manager1 (hasło: demo12345)</p>{% endif %}
     </main>
-    <script src="{% static 'crm/js/app.js' %}?v=118"></script>
+    <script src="{% static 'crm/js/app.js' %}?v=130"></script>
     <script>CRM.initLogin();</script>
 </body>
 </html>

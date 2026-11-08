@@ -164,6 +164,20 @@ class LeadBatch(models.Model):
         return self.name
 
 
+PORTING_MONTHS_BEFORE_END = 12   # numer przenosimy najwcześniej 12 miesięcy przed końcem umowy
+
+
+def porting_from(contract_end):
+    """Umowa do końca miesiąca `contract_end` → 1. dzień miesiąca, od którego można przenosić numery.
+
+    Umowa do marca 2027 (do 31.03.2027) → od 1.04.2026 zostaje mniej niż 12 miesięcy.
+    """
+    if not contract_end:
+        return None
+    month = contract_end.year * 12 + contract_end.month - 1 - PORTING_MONTHS_BEFORE_END + 1
+    return contract_end.replace(year=month // 12, month=month % 12 + 1, day=1)
+
+
 class Lead(models.Model):
     class Status(models.TextChoices):
         NEW = "new", "Nowy"
@@ -211,6 +225,10 @@ class Lead(models.Model):
     email = models.EmailField(blank=True)
     # Obecna sieć klienta (kody z OPERATORS, po przecinku, np. „play,orange”)
     operators = models.CharField("obecny operator", max_length=60, blank=True)
+    # Do kiedy klient ma umowę u obecnego operatora: zawsze 1. dzień miesiąca = „do końca tego miesiąca”
+    # (klienci pamiętają miesiąc, nie dzień). Numer można przenieść najwcześniej 12 miesięcy przed końcem.
+    contract_end = models.DateField("umowa u obecnego operatora do", null=True, blank=True)
+    contract_open_ended = models.BooleanField("umowa bez terminu", default=False)
     # Stałe informacje o kliencie (nie wpis w historii): np. „ma 5 numerów w Play, umowa do marca”
     client_comment = models.TextField("informacje o kliencie", blank=True)
     # Kto i kiedy ostatnio zmienił te informacje (widać przy polu, np. „Anna, dziś 14:20”)
@@ -264,6 +282,13 @@ class Lead(models.Model):
             return self.company.name
         return self.contact_name or self.phone
 
+    @property
+    def porting_from(self):
+        """Pierwszy dzień, od którego wolno przenieść numery: 12 miesięcy przed końcem umowy (None = nie wiadomo)."""
+        if self.contract_open_ended:
+            return None
+        return porting_from(self.contract_end)
+
     def clean(self):
         # Zasada: lead do oddzwonienia musi mieć termin (sprawa jest opcjonalna)
         if self.status == self.Status.CALLBACK and not self.next_contact_at:
@@ -303,9 +328,9 @@ class Activity(models.Model):
         related_name="activities",
     )
     outcome = models.CharField(max_length=20, choices=Outcome.choices)
-    skip_reason = models.CharField(
-        "powód pominięcia", max_length=20, choices=SkipReason.choices, blank=True
-    )
+    # Powód pominięcia: tekst przycisku z listy managera (crm/phrases.py → skip_never / skip_lost);
+    # starsze wpisy mają kody z SkipReason (closed, has_tmobile, …)
+    skip_reason = models.CharField("powód pominięcia", max_length=60, blank=True)
     note = models.TextField(blank=True)
     # Ile sekund trwała rozmowa (wypełnia aplikacja dialera z rejestru połączeń telefonu; puste = nie wiadomo).
     # Z tego liczymy minuty rozmów na godzinę (cel managera: min. 15 min na godzinę pracy).
@@ -440,11 +465,14 @@ class AgentProfile(models.Model):
         default=False,
         help_text="Włączane po założeniu konta lub resecie hasła przez managera; zdejmowane po zmianie hasła przez użytkownika.",
     )
+    # Puste = cel całego zespołu (Ustawienia i oferty → „Cel minut rozmów”)
     goal_minutes_per_hour = models.PositiveSmallIntegerField(
         "minut rozmów na godzinę pracy (cel)",
-        default=15,
+        null=True,
+        blank=True,
+        default=None,
         validators=[MinValueValidator(1), MaxValueValidator(60)],
-        help_text="Ile minut rozmów powinno być na każdą godzinę pracy (ustawia manager, domyślnie 15).",
+        help_text="Własny cel tej osoby; puste = cel zespołu ustawiony przez managera (domyślnie 15).",
     )
     avatar = models.TextField(
         "zdjęcie profilowe",
@@ -519,6 +547,8 @@ class TeamRules(models.Model):
     )
     # Losowanie nowych firm: False = wszystko losowo, True = najpierw firmy jednoosobowe, potem spółki
     companies_last = models.BooleanField("spółki na końcu przy losowaniu", default=False)
+    # Cel całego zespołu: tyle minut rozmów na każdą godzinę pracy (agent może mieć własny w Zespół → Edytuj)
+    goal_minutes_per_hour = models.PositiveSmallIntegerField("cel: minut rozmów na godzinę pracy", default=15)
     # SMS z przypomnieniem przed umówionym telefonem: wysyła go aplikacja dialera z telefonu agenta
     # (z jego karty SIM, jak zwykły SMS – bez bramki i dopłat), tylko gdy telefon jest włączony
     sms_reminder_minutes = models.PositiveIntegerField("ile minut przed terminem wysłać SMS", default=60)
@@ -531,6 +561,12 @@ class TeamRules(models.Model):
     # domyślnie wyłączony: klient nie wie jeszcze, kto i w jakiej sprawie dzwoni
     sms_stranger_enabled = models.BooleanField("SMS, gdy umówiony jest tylko termin", default=False)
     sms_stranger_text = models.TextField("treść SMS-a, gdy umówiony jest tylko termin", default=DEFAULT_SMS_STRANGER_TEXT)
+    # Wynik rozmowy: czy agent MUSI podać powód (domyślnie nie – powód jest opcjonalny)
+    require_skip_reason = models.BooleanField("wymagaj powodu przy „Pomiń firmę”", default=False)
+    require_refuse_reason = models.BooleanField("wymagaj powodu przy „Odmowa”", default=False)
+    # Gotowe przyciski przy wynikach (wzory komentarzy, powody odmowy): {wynik: [teksty]};
+    # brak klucza = lista domyślna z crm/phrases.py
+    quick_phrases = models.JSONField("gotowe przyciski przy wynikach rozmowy", default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -806,12 +842,13 @@ class Announcement(models.Model):
 
 
 class WorkDay(models.Model):
-    """Dzień pracy agenta: kiedy przyszedł i kiedy wyszedł.
+    """Dzień pracy agenta: kiedy zaczął i skończył pracę.
 
-    `first_seen` i `last_seen` ustawia CRM sam przy prawdziwych ruchach agenta (logowanie, otwarcie
-    „Dzwonienia”, „Następny klient”, zapis rozmowy, telefon) – samo odświeżanie strony w tle się nie liczy.
+    `first_seen` / `last_seen` – obecność w CRM (logowanie, otwarcie „Dzwonienia”, każdy ruch);
+    samo odświeżanie strony w tle się nie liczy. `first_work` / `last_work` – prawdziwa praca
+    („Następny klient”, telefon, zapis rozmowy): od nich liczy się czas pracy (crm.work.work_span).
     `ended_at` – agent się wylogował; kolejny ruch w CRM tego dnia znów go „otwiera”.
-    `breaks` – przerwy (co najmniej 15 min bez ruchu) jako lista par [początek, koniec] w ISO.
+    `breaks` – przerwy (co najmniej 15 min bez pracy) jako lista par [początek, koniec] w ISO.
     Przerwy tylko pokazujemy – czas pracy liczy się od przyjścia do wyjścia razem z nimi.
     """
 
@@ -820,6 +857,10 @@ class WorkDay(models.Model):
     first_seen = models.DateTimeField("początek pracy")
     last_seen = models.DateTimeField("ostatnia aktywność")
     ended_at = models.DateTimeField("wylogował się", null=True, blank=True)
+    # Prawdziwa praca: „Następny klient”, telefon, zapis rozmowy (samo zalogowanie czy otwarcie strony to nie praca).
+    # Od pierwszej do ostatniej takiej chwili liczy się czas pracy.
+    first_work = models.DateTimeField("pierwsza praca", null=True, blank=True)
+    last_work = models.DateTimeField("ostatnia praca", null=True, blank=True)
     breaks = models.JSONField("przerwy", default=list, blank=True)
 
     class Meta:

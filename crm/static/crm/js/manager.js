@@ -396,5 +396,10 @@ CRM.initManager = function initManager() {
   $("reassign-form").addEventListener("submit", submitReassign);
   $("export-btn").addEventListener("click", exportXlsx);
 
-  loadDictionaries().then(() => { load(); loadCounts(); loadTotal(); }).catch((ex) => showError(ex.message));
+  loadDictionaries().then(() => {
+    load(); loadCounts(); loadTotal();
+    // link z „Raportów”: /crm/manager/?lead=ID od razu otwiera szczegóły klienta
+    const linked = Number(new URLSearchParams(location.search).get("lead"));
+    if (linked) openLead(linked);
+  }).catch((ex) => showError(ex.message));
 };

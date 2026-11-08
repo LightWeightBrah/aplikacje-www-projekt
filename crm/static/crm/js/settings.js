@@ -11,11 +11,14 @@ CRM.initSettings = function initSettings() {
 
   /* base: jednostka, w której API trzyma wartość (min / h / d / count); units: jednostki do wyboru w formularzu */
   const GROUPS = [
+    { title: "Cel minut rozmów", intro: "Ile minut rozmów powinien mieć agent na każdą godzinę pracy. Widać to w „Dzwonieniu”, „Wynikach” i „Obecności”.", fields: [
+      { key: "goal_minutes_per_hour", label: "Cel dla całego zespołu", base: "count", suffix: "min na godzinę pracy", hint: "Np. 20 = przy 4 h pracy powinno być 1 h 20 min rozmów. Komuś można ustawić inny cel: Zarządzanie → Użytkownicy → „Edytuj” przy tej osobie." },
+    ] },
     { title: "Ile prób ma agent", intro: "Ile razy agent może nie dodzwonić się do nowego leada, zanim lead wróci do wspólnej puli.", fields: [
       { key: "max_attempts_per_agent", label: "Limit prób jednego agenta", base: "count", suffix: "prób", hint: "Po tylu nieodebranych telefonach lead wraca do puli i trafia do innego agenta." },
       { key: "unreachable_after_agents", label: "Kiedy lead jest nieosiągalny", base: "count", suffix: "agentów", hint: "Gdy tylu różnych agentów nie dodzwoni się do leada, trafia on do nieosiągalnych i przestaje krążyć." },
     ] },
-    { title: "Ponowna próba po nieodebraniu", intro: "System sam proponuje agentowi termin kolejnej próby (agent może go zmienić jednym kliknięciem).", fields: [
+    { title: "Nowa firma nie odebrała", intro: "Dotyczy firm, z którymi nikt jeszcze nie rozmawiał (pierwsze telefony z bazy). Gdy nikt nie odbierze, system sam ustawia kolejną próbę za tyle, ile wpiszesz niżej. Agent może wybrać inny termin.", fields: [
       { key: "retry_after_first_minutes", label: "Po 1. nieodebranym telefonie", base: "min", units: ["min", "h", "d"], hint: "Ludzie często oddzwaniają lub odbierają przy kolejnej próbie tego samego dnia." },
       { key: "retry_after_second_minutes", label: "Po 2. nieodebranym telefonie", base: "min", units: ["min", "h", "d"], hint: "Najlepiej inny dzień niż poprzednia próba." },
       { key: "retry_after_next_minutes", label: "Po kolejnych nieodebranych", base: "min", units: ["min", "h", "d"], hint: "Dotyczy 3. i dalszych prób (jeśli limit prób jest wyższy niż 3)." },
@@ -25,8 +28,8 @@ CRM.initSettings = function initSettings() {
       { key: "work_end_hour", label: "Dzień pracy kończy się o", base: "count", suffix: ":00", hint: "Termin wypadający po tej godzinie przesuwa się na następny dzień pracy." },
       { key: "work_days", label: "Dni pracy", type: "days", hint: "Np. w piątek po pracy system zaproponuje poniedziałek, a przy pracujących sobotach – sobotę." },
     ] },
-    { title: "Umówione oddzwonienia", intro: "Dotyczy leadów, którym obiecano kontakt (oddzwonić, zainteresowany).", fields: [
-      { key: "callback_retry_steps", label: "Gdy klient nie odebrał w umówionym terminie, kolejne próby", type: "steps", hint: "Po ostatniej próbie z listy kolejne są co tyle samo. Agent zawsze może sam wybrać inny termin." },
+    { title: "Klient nie odebrał w umówionym terminie", intro: "Dotyczy klientów, z którymi agent już rozmawiał i umówił telefon (oddzwonić, zainteresowany, po wysłanej ofercie), a klient o tej godzinie nie odebrał. Taki klient zostaje u agenta.", fields: [
+      { key: "callback_retry_steps", label: "Kolejne próby po nieodebranym umówionym telefonie", type: "steps", hint: "Po ostatniej próbie z listy kolejne są co tyle samo. Agent zawsze może sam wybrać inny termin." },
     ] },
     { title: "Zwroty do puli", intro: "Co dzieje się z leadami, którymi nikt się nie zajmuje.", fields: [
       { key: "claim_timeout_hours", label: "Nietknięty lead wraca do puli po", base: "h", units: ["h", "d"], hint: "Dotyczy leadów pobranych przez agenta, do których nie zadzwonił ani razu (uruchamia to komenda release_stale_leads)." },
@@ -41,7 +44,21 @@ CRM.initSettings = function initSettings() {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   // karta „Losowanie nowych firm” (radio w szablonie) zapisuje się razem z zasadami
   const KEYS = FIELDS.map((f) => f.key).concat("companies_last", "sms_reminder_minutes", "sms_min_gap_minutes",
-    ...["offer", "talked", "stranger"].flatMap((k) => [`sms_${k}_enabled`, `sms_${k}_text`]));
+    ...["offer", "talked", "stranger"].flatMap((k) => [`sms_${k}_enabled`, `sms_${k}_text`]),
+    "require_skip_reason", "require_refuse_reason", "quick_phrases");
+  /* Gotowe przyciski przy wynikach rozmowy (crm/phrases.py): jeden przycisk = jedna linia */
+  const PHRASE_LISTS = [
+    ["refused", "Odmowa – powody („Dlaczego odmówił?”)"],
+    ["no_answer", "Nie odebrał"], ["callback", "Oddzwonić"], ["interested", "Zainteresowany"],
+    ["offer", "Wyślij ofertę"], ["sold", "Sprzedane"], ["wrong_number", "Zły numer"],
+    ["skip_never", "Pomiń firmę – nie dzwonić więcej (np. firma nie istnieje)"],
+    ["skip_lost", "Pomiń firmę – zamknij jak po odmowie (np. ma już T-Mobile)"],
+  ];
+  const phraseLines = (text) => {
+    const seen = new Set();
+    return String(text || "").split("\n").map((l) => l.replace(/\s+/g, " ").trim())
+      .filter((l) => l && !seen.has(l.toLowerCase()) && seen.add(l.toLowerCase()));
+  };
   const FACTOR = { min: { min: 1, h: 60, d: 1440 }, h: { h: 1, d: 24 }, d: { d: 1 } };   // ile jednostek bazowych ma 1 jednostka z listy
   const UNIT_LABEL = { min: "min", h: "godz.", d: "dni" };
 
@@ -108,6 +125,11 @@ CRM.initSettings = function initSettings() {
     $("sms-gap").value = saved.sms_min_gap_minutes;
     $("sms-kinds").innerHTML = SMS_KINDS.map(smsKindHtml).join("");
     $("sms-test-kind").innerHTML = SMS_KINDS.map((k) => `<option value="${k.key}">${esc(k.title)}</option>`).join("");
+    $("req-skip").checked = !!saved.require_skip_reason;
+    $("req-refuse").checked = !!saved.require_refuse_reason;
+    const q = saved.quick_phrases || {};
+    $("phrase-lists").innerHTML = PHRASE_LISTS.map(([k, label]) => `<div class="field phrase-list"><label for="ph-${k}">${esc(label)}</label>
+      <textarea id="ph-${k}" class="select" rows="${Math.max(3, Math.min(8, (q[k] || []).length + 1))}" data-phrases="${k}">${esc((q[k] || []).join("\n"))}</textarea></div>`).join("");
     readForm(); refresh();
   }
 
@@ -215,6 +237,12 @@ CRM.initSettings = function initSettings() {
       current[`sms_${k.key}_enabled`] = $(`sms-${k.key}-on`).checked;
       current[`sms_${k.key}_text`] = $(`sms-${k.key}-text`).value.trim();
     });
+    current.require_skip_reason = $("req-skip").checked;
+    current.require_refuse_reason = $("req-refuse").checked;
+    // ta sama kolejność kluczy co z serwera (inaczej porównanie „czy zmieniono” zawsze widzi zmianę)
+    const q = {};
+    Object.keys(saved.quick_phrases || {}).forEach((k) => { const t = $("ph-" + k); q[k] = t ? phraseLines(t.value) : saved.quick_phrases[k]; });
+    current.quick_phrases = q;
     smsPreview();
   }
   const dur = (minutes) => {
@@ -247,14 +275,16 @@ CRM.initSettings = function initSettings() {
   function summary(r) {
     if (!allOk(r)) return ["Uzupełnij wszystkie pola liczbami."];
     return [
+      `Cel: <b>${r.goal_minutes_per_hour} min rozmów na każdą godzinę pracy</b> (przy 8 h pracy: ${CRM.talk(r.goal_minutes_per_hour * 8)}), chyba że ktoś ma własny cel.`,
       `Agent ma <b>${r.max_attempts_per_agent}</b> ${tries(r.max_attempts_per_agent)} dodzwonienia do nowego leada. Po ${r.max_attempts_per_agent}. nieodebranym telefonie lead wraca do puli.`,
-      `Po 1. nieodebraniu system proponuje ponowną próbę za <b>${dur(r.retry_after_first_minutes)}</b>, po 2. za <b>${dur(r.retry_after_second_minutes)}</b>, po kolejnych za <b>${dur(r.retry_after_next_minutes)}</b> (zawsze w dni pracy: <b>${daysText(r.work_days)}</b>, ${r.work_start_hour}:00–${r.work_end_hour}:00).`,
+      `Nowa firma nie odebrała: po 1. razie system proponuje ponowną próbę za <b>${dur(r.retry_after_first_minutes)}</b>, po 2. za <b>${dur(r.retry_after_second_minutes)}</b>, po kolejnych za <b>${dur(r.retry_after_next_minutes)}</b> (zawsze w dni pracy: <b>${daysText(r.work_days)}</b>, ${r.work_start_hour}:00–${r.work_end_hour}:00).`,
       `Kolejne próby wypadają o <b>różnych porach dnia</b>: najpierw rano, w środku dnia i po południu, a potem system wybiera godziny jak najdalsze od tych, o których już dzwoniono.`,
-      `Gdy klient nie odbierze w umówionym terminie, system ponawia próbę ${stepsText(r.callback_retry_steps)}`.replace(/([^.])$/, "$1."),
+      `Klient, z którym jest umówiony telefon, nie odebrał: system ponawia próbę ${stepsText(r.callback_retry_steps)}`.replace(/([^.])$/, "$1."),
       `Gdy <b>${r.unreachable_after_agents}</b> różnych agentów nie dodzwoni się, lead trafia do nieosiągalnych; wraca do obiegu po <b>${dur(r.unreachable_cooldown_days * 1440)}</b>.`,
       `Lead, do którego agent nie zadzwonił w ciągu <b>${hours(r.claim_timeout_hours)}</b> od pobrania, wraca do puli.`,
       r.companies_last ? `Nowe firmy: <b>najpierw jednoosobowe</b>, spółki dopiero, gdy jednoosobowych zabraknie.` : `Nowe firmy losowane są <b>wszystkie razem</b> (jednoosobowe i spółki).`,
       smsSummary(r),
+      `Powód przy „Pomiń firmę”: <b>${r.require_skip_reason ? "wymagany" : "opcjonalny"}</b>, przy „Odmowa”: <b>${r.require_refuse_reason ? "wymagany" : "opcjonalny"}</b>.`,
     ];
   }
   const dirty = () => KEYS.some((k) => !same(current[k], saved[k]));
@@ -308,7 +338,7 @@ CRM.initSettings = function initSettings() {
     } catch { showErrors({ _: "Brak połączenia z serwerem. Spróbuj ponownie." }); refresh(); }
   });
   $("rules-reset").addEventListener("click", async () => {
-    if (!confirm("Przywrócić ustawienia domyślne (5 prób, ponowna próba po 2 godz. / 1 dniu / 2 dniach, praca pon–pt 9–17, po nieodebranym terminie: 15 min, 1 h, 2 h, 1 dzień)?")) return;
+    if (!confirm("Przywrócić ustawienia domyślne (cel 15 min rozmów na godzinę, 5 prób, ponowna próba po 2 godz. / 1 dniu / 2 dniach, praca pon–pt 9–17, po nieodebranym terminie: 15 min, 1 h, 2 h, 1 dzień)?")) return;
     try {
       const r = await api("/api/settings/reset/", { method: "POST" });
       if (!r.ok) { showErrors({ _: "Nie udało się przywrócić ustawień." }); return; }

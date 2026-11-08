@@ -34,11 +34,15 @@
   const OUT_LABEL = { ...Object.fromEntries(OUTCOMES.map((o) => [o.key, o.label])), offer: "Wysłana oferta", note: "Notatka", skipped: "Pominięty" };
   const OUT_COLOR = { ...Object.fromEntries(OUTCOMES.map((o) => [o.key, o.color])), note: "#94a3b8" };
   const SKIP_LABEL = Object.fromEntries(CRM.SKIP_REASONS);
-  const REFUSE_CHIPS = ["Ma umowę w innej sieci", "Za drogo", "Nie jest zainteresowany", "Nie decyduje o tym", "Prosi o brak kontaktu"];
+  /* Powody odmowy i wzory komentarzy: listy ustawia manager („Ustawienia i oferty”), tu tylko zapas na start */
+  let REFUSE_CHIPS = ["Ma umowę w innej sieci", "Za drogo", "Nie jest zainteresowany", "Nie decyduje o tym", "Prosi o brak kontaktu"];
+  // „Pomiń firmę”: najpierw powody „nie dzwonić więcej”, potem „zamknięty” (listy też ustawia manager)
+  let SKIP_CHIPS = ["Firma nie istnieje / zawieszona", "Brak numeru / numer stacjonarny", "Duplikat", "Już jest w T-Mobile", "Inny powód"];
+  let reqSkip = false, reqRefuse = false;   // czy powód pominięcia / odmowy jest wymagany (domyślnie nie)
   /* Wyniki, po których była rozmowa: tylko przy nich pytamy o sieć klienta */
   const TALKED = ["callback", "interested", "offer", "sold", "refused"];
   /* Wzory komentarzy pasujące do wybranego wyniku (klik dopisuje do komentarza) */
-  const PHRASES = {
+  let PHRASES = {
     no_answer: ["Poczta głosowa", "Zajęte", "Odrzucił połączenie", "Sygnał, nikt nie odbiera"],
     callback: ["Zajęty, prosił później", "Decyduje szef / wspólnik", "Sekretariat – połączyć z decydującym", "W trasie, oddzwonić", "Na urlopie"],
     interested: ["Poda e-mail później", "Musi porozmawiać ze wspólnikiem", "Sprawdzi obecną umowę", "Umowa kończy się za kilka miesięcy", "Chce ofertę na więcej numerów"],
@@ -218,8 +222,8 @@
       ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${CRM.talk(t.minutes_this_hour)} / ${goal} min</b></div>
           <div class="g-track"><i class="${t.minutes_this_hour >= goal ? "ok" : ""}" style="width:${pctHour}%"></i></div>
           <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div class="${h.hour === hourNow ? "now" : ""}" title="${h.hour}:00 – ${CRM.talk(h.minutes)}${h.hour === hourNow ? " (teraz)" : ""}"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
-          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${CRM.talk(t.minutes_today)}</b> rozmów, powinno być <b>${t.day_goal} min</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
-      : `<p class="w-goal-note">Dziś powinno być <b>${t.day_goal} min</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
+          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${CRM.talk(t.minutes_today)}</b> rozmów, powinno być <b>${CRM.talk(t.day_goal)}</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
+      : `<p class="w-goal-note">Dziś powinno być <b>${CRM.talk(t.day_goal)}</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
     const plan = dayPlan.slice().sort((a, b) => new Date(a.next_contact_at) - new Date(b.next_contact_at));
     side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3></div>
         <div class="w-stats">
@@ -241,7 +245,9 @@
     const w = summary && summary.workday;
     if (!w || !w.started_at) return "";
     const m = w.worked_minutes, h = Math.floor(m / 60), r = m % 60;
-    const br = w.break_minutes ? `, w tym przerwy ${w.break_minutes} min` : "";
+    // długie wyjścia (od 45 min) nie liczą się do pracy – krótkie przerwy tak
+    const short = (w.break_minutes || 0) - (w.away_minutes || 0);
+    const br = (short > 0 ? `, w tym przerwy ${CRM.talk(short)}` : "") + (w.away_minutes ? `; poza pracą ${CRM.talk(w.away_minutes)} – nie liczy się` : "");
     return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min${br})`;
   }
   document.addEventListener("crm:view", () => { renderSide(); renderBase(); renderDialbar(); });
@@ -259,6 +265,10 @@
     if (call && call.state === "pending") state = `Czekam na telefon: ${call.phone}`;
     if (call && call.state === "dialing") state = `Dzwonię: ${call.phone}`;
     $("db-state").textContent = state;
+    // „Moje ustawienia”: kropkę i napis o stanie telefonu można schować (połączony, bez telefonu, nie odpowiada);
+    // „Dzwonię…” / „Czekam na telefon” zostają, a przycisk „Połącz telefon” jest zawsze
+    const quiet = !(call && (call.state === "dialing" || call.state === "pending")) && !showPart("phone");
+    $("db-state").hidden = quiet; $("db-dot").hidden = quiet;
     $("db-setup").hidden = dialer.online;
     $("db-setup").textContent = dialer.paired ? "Telefon" : "Połącz telefon";
     const dialing = call && (call.state === "dialing" || call.state === "pending");
@@ -290,7 +300,39 @@
     }, 2000);
   }
   const setCallState = (html) => { const el = $("call-state"); if (el) el.innerHTML = html; };
+  /* Samo dzwonienie po „Zapisz i dalej”: odliczanie nad numerem (ile sekund – „Moje ustawienia”, domyślnie 4),
+     „Wstrzymaj” albo Esc przerywa. Tylko z telefonem połączonym z CRM (bez niego „tel:” otwierałby okno systemu bez pytania). */
+  const autoDialSeconds = () => (CRM.autoDialSeconds ? CRM.autoDialSeconds() : 4);
+  let autoDial = null;
+  function stopAutoDial(text) {
+    if (!autoDial) return;
+    clearInterval(autoDial.timer); autoDial = null;
+    const box = document.querySelector(".w-autodial"); if (box) box.remove();
+    if (text) setCallState(text);
+  }
+  function armAutoDial() {
+    stopAutoDial();
+    if (!current || !dialer.online || tourDemo || !(CRM.autoDialEnabled && CRM.autoDialEnabled())) return;
+    if (dialer.call && ["pending", "dialing"].includes(dialer.call.state)) return;
+    const lead = current.id, wrap = document.querySelector(".w-call");
+    if (!wrap) return;
+    const total = autoDialSeconds();
+    let left = total;
+    const box = document.createElement("div");
+    box.className = "w-autodial"; box.setAttribute("role", "status");
+    box.innerHTML = `<span>Dzwonię za <b data-left>${left}</b> s…</span><button type="button" class="btn btn-secondary" data-autodial-stop>Wstrzymaj <kbd class="w-kbd">Esc</kbd></button><i style="animation-duration:${total}s"></i>`;
+    wrap.after(box);
+    box.querySelector("[data-autodial-stop]").addEventListener("click", () => stopAutoDial("Wstrzymane. Zadzwoń, kiedy będziesz gotowy."));
+    autoDial = { lead, timer: setInterval(() => {
+      if (!current || current.id !== lead || form) { stopAutoDial(); return; }
+      left -= 1;
+      const el = box.querySelector("[data-left]"); if (el) el.textContent = String(Math.max(left, 0));
+      if (left <= 0) { stopAutoDial(); callNow(); }
+    }, 1000) };
+  }
+  CRM.stopAutoDial = stopAutoDial;
   async function callNow() {
+    stopAutoDial();
     if (!current) return;
     if (tourDemo) { setCallState("W samouczku nie dzwonimy naprawdę. Normalnie telefon sam wybierze numer."); return; }
     if (dialer.online) {
@@ -409,6 +451,7 @@
     if (isCompanyEntity(d.company_name)) badges.push(`<span class="w-badge spolka" title="Spółka: zwykle trzeba trafić do osoby decyzyjnej (zarząd, właściciel)">Spółka</span>`);
     if (d.knows_caller) badges.push(`<span class="w-badge" style="--c:var(--ok)">Wie, skąd dzwonimy</span>`);
     if (d.operators) badges.push(`<span class="w-badge">Sieć: ${esc(d.operators.split(",").map((c) => (CRM.OPERATORS.find((o) => o[0] === c) || [c, c])[1]).join(", "))}</span>`);
+    const ct = contractBadge(d); if (ct) badges.push(ct);
     if (d.transferred_from) badges.push(`<span class="w-badge moved">↪ Przepisany od ${esc(d.transferred_from)}</span>`);
     if (d.missed_calls > 0) badges.push(`<span class="w-badge" style="--c:var(--late)">Nie odebrał w terminie ×${d.missed_calls}</span>`);
     const closed = CLOSED.includes(d.status);
@@ -457,7 +500,7 @@
       let extra = "";
       if (a.offer) extra += `<div class="h-extra">Oferta <b>${esc(a.offer.product_name)} × ${a.offer.quantity}</b>, ${a.offer.term_months} mies., ${money(a.offer.monthly_total)}/mies.${a.offer.recipient ? ` → ${esc(a.offer.recipient)}` : ""}${a.offer.sent ? " (wysłana)" : ""}</div>`;
       if (a.sale_items && a.sale_items.length) extra += `<div class="h-extra">${a.sale_items.map((i) => `${esc(i.product_name)} × ${i.quantity}${i.term_months ? `, ${i.term_months} mies.` : ""}: <b>${money(i.total)}</b>${Number(i.commission) ? ` (prowizja ${money(i.commission)})` : ""}`).join("<br>")}</div>`;
-      if (a.outcome === "skipped") extra += `<div class="h-extra">Powód: ${esc(SKIP_LABEL[a.skip_reason] || "inny")}</div>`;
+      if (a.outcome === "skipped") extra += `<div class="h-extra">Powód: ${esc(SKIP_LABEL[a.skip_reason] || a.skip_reason || "bez powodu")}</div>`;
       if (a.rescheduled_to) extra += `<div class="h-extra">Następny kontakt: <b>${esc(when(a.rescheduled_to))}</b></div>`;
       if (a.call_seconds) extra += `<div class="h-extra">Rozmowa: ${Math.floor(a.call_seconds / 60)} min ${a.call_seconds % 60} s</div>`;
       return `<li style="--c:${OUT_COLOR[a.outcome] || "#64748b"}"><div class="h-when"><b>${hhmm(a.created_at)}</b>${esc(dayShort(a.created_at))}</div>
@@ -524,6 +567,75 @@
       if (!ok) { current.operators = prev; toast("Nie udało się zapisać sieci.", true); }
     }));
   }
+  /* ---------- koniec umowy u obecnego operatora: miesiąc i rok (zapis od razu) ----------
+     Numer można przenieść najwcześniej 12 miesięcy przed końcem umowy (models.porting_from).
+     Przy „Odmowie” z późniejszą datą serwer sam umawia telefon na ten dzień (services.contract_callback). */
+  const MONTHS = ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzień"];
+  const MONTHS_GEN = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia", "września", "października", "listopada", "grudnia"];
+  function portingFrom(iso) {
+    if (!iso) return null;
+    const [y, m] = iso.split("-").map(Number), idx = y * 12 + (m - 1) - 11;
+    return new Date(Math.floor(idx / 12), idx % 12, 1);
+  }
+  const monthYear = (iso) => { const [y, m] = iso.split("-"); return `${m}.${y}`; };
+  function contractBadge(d) {
+    if (d.contract_open_ended) return `<span class="w-badge" style="--c:var(--ok)">Umowa bez terminu – można przenosić</span>`;
+    if (!d.contract_end) return "";
+    const from = portingFrom(d.contract_end), now = from <= new Date();
+    return `<span class="w-badge"${now ? ' style="--c:var(--ok)"' : ""}>Umowa do ${esc(monthYear(d.contract_end))}${now ? " – można przenosić" : ` · przenosić od ${String(from.getMonth() + 1).padStart(2, "0")}.${from.getFullYear()}`}</span>`;
+  }
+  function contractInfo(d) {
+    const sel = { m: $("ct-month") ? $("ct-month").value : "", y: $("ct-year") ? $("ct-year").value : "" };
+    if (d.contract_open_ended) return "Umowa bez terminu: numery można przenieść od razu.";
+    if (!d.contract_end) return sel.m && !sel.y ? "Wybierz jeszcze rok." : sel.y && !sel.m ? "Wybierz jeszcze miesiąc." : "Klient mówi „mamy umowę”? Zapytaj: „A do kiedy?”. CRM sam przypomni, kiedy będzie można przenieść numery.";
+    const from = portingFrom(d.contract_end);
+    if (from <= new Date()) return "Do końca umowy zostało mniej niż 12 miesięcy: <b>numery można przenieść już teraz</b>.";
+    const date = `${from.getDate()} ${MONTHS_GEN[from.getMonth()]} ${from.getFullYear()}`;
+    return form && form.outcome === "refused"
+      ? `Po zapisie klient <b>się nie zamknie</b>: CRM sam umówi telefon na <b>${date}</b> (od wtedy można przenieść numery).`
+      : `Numery można przenieść od <b>${date}</b>. Przy wyniku „Odmowa” CRM sam umówi wtedy telefon.`;
+  }
+  function contractHtml(d) {
+    const [cy, cm] = d.contract_end ? d.contract_end.split("-").map(Number) : [0, 0];
+    const year = new Date().getFullYear(), years = [];
+    for (let y = year; y <= year + 4; y++) years.push(y);
+    if (cy && !years.includes(cy)) years.unshift(cy);
+    return `<div class="w-field w-contract"><span>Do kiedy klient ma umowę? <small class="muted">(zapisuje się od razu)</small></span>
+      <div class="w-ct-row">
+        <select id="ct-month" class="select" aria-label="Miesiąc końca umowy"><option value="">miesiąc…</option>${MONTHS.map((n, i) => `<option value="${i + 1}"${cm === i + 1 ? " selected" : ""}>${n}</option>`).join("")}</select>
+        <select id="ct-year" class="select" aria-label="Rok końca umowy"><option value="">rok…</option>${years.map((y) => `<option value="${y}"${cy === y ? " selected" : ""}>${y}</option>`).join("")}</select>
+        <button type="button" class="w-chip" id="ct-open" aria-pressed="${!!d.contract_open_ended}">Bez terminu</button>
+        <button type="button" class="w-link" id="ct-clear"${d.contract_end || d.contract_open_ended ? "" : " hidden"}>wyczyść</button>
+      </div>
+      <p class="w-info" id="ct-info">${contractInfo(d)}</p></div>`;
+  }
+  let contractSaving = null;   // zapis daty trwa: „Zapisz” poczeka, żeby serwer znał już koniec umowy
+  function wireContract() {
+    const m = $("ct-month"), y = $("ct-year"); if (!m) return;
+    const paint = () => {
+      $("ct-info").innerHTML = contractInfo(current);
+      $("ct-open").setAttribute("aria-pressed", String(!!current.contract_open_ended));
+      $("ct-clear").hidden = !(current.contract_end || current.contract_open_ended);
+    };
+    const store = async (body) => {
+      const prev = { contract_end: current.contract_end, contract_open_ended: current.contract_open_ended };
+      contractSaving = CRM.saveLeadPatch ? CRM.saveLeadPatch(body) : Promise.resolve(false);
+      const ok = await contractSaving; contractSaving = null;
+      if (!ok) { Object.assign(current, prev); toast("Nie udało się zapisać końca umowy.", true); }
+      paint();
+    };
+    const onPick = () => {
+      if (!m.value || !y.value) { paint(); return; }
+      store({ contract_end: `${y.value}-${String(m.value).padStart(2, "0")}-01`, contract_open_ended: false });
+    };
+    [m, y].forEach((el) => { el.addEventListener("change", onPick); el.addEventListener("keydown", (e) => e.stopPropagation()); });
+    $("ct-open").addEventListener("click", () => {
+      const on = !current.contract_open_ended;
+      if (on) { m.value = ""; y.value = ""; }
+      store({ contract_open_ended: on, contract_end: null });
+    });
+    $("ct-clear").addEventListener("click", () => { m.value = ""; y.value = ""; store({ contract_open_ended: false, contract_end: null }); });
+  }
   function paintPhrases(o) {
     const box = $("phrases"); if (!box) return;
     const list = (o && PHRASES[o]) || [];
@@ -571,9 +683,11 @@
     no_answer: [["Za 2 h", () => new Date(Date.now() + 7200e3)], [wdLabel(9, "rano"), () => nextWorkday(9)], [wdLabel(15, "po 15"), () => nextWorkday(15, 30)]],
   };
   function whenField(kind, label, value, required) {
-    return `<div class="w-row"><label class="w-field grow">${label}${required ? "" : " (opcjonalnie)"}
-        <input id="f-when" autocomplete="off" placeholder="np. jutro 10:30 · pt 9 · za 2h" value="${esc(value ? fmtInput(value) : "")}"></label>
-        <label class="w-field">lub z kalendarza<input type="datetime-local" id="f-native"></label></div>
+    // jedno pole: wpisany termin + przycisk kalendarza doklejony z prawej (otwiera zwykły wybór daty)
+    return `<div class="w-row"><div class="w-field w-when"><label for="f-when">${label}${required ? "" : " (opcjonalnie)"}</label>
+        <div class="w-when-box"><input id="f-when" autocomplete="off" placeholder="np. jutro 10:30 · pt 9 · za 2h" value="${esc(value ? fmtInput(value) : "")}">
+        <span class="w-cal"><button type="button" class="w-cal-btn" id="f-cal" title="Wybierz z kalendarza"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="13.5" rx="2"/><path d="M2.5 8.5h15M6.5 2v4M13.5 2v4"/></svg>Kalendarz</button>
+        <input type="datetime-local" id="f-native" tabindex="-1" aria-hidden="true"></span></div></div></div>
       <div class="w-chips">${PRESETS[kind].map(([l], i) => `<button type="button" class="w-chip" data-preset="${kind}:${i}">${typeof l === "function" ? l() : l}</button>`).join("")}</div>
       <div class="w-when-preview" id="f-preview"></div>`;
   }
@@ -993,22 +1107,22 @@
       return `<div class="w-step"><h3>Co klient kupił?</h3>${planPicker()}<p class="w-info">Klient zostanie zamknięty jako <b>sprzedany</b>. Prowizja doliczy się do Twoich wyników.</p>
         <p class="w-info">Zapytaj o polecenie: „Kogo Pan zna, kto jeszcze mógłby skorzystać?” → <button type="button" class="w-link" data-referral>+ dodaj polecony kontakt</button></p></div>`;
     }
-    if (o === "refused") return `<div class="w-step"><h3>Dlaczego odmówił? (dopisze się do komentarza)</h3><div class="w-chips">${REFUSE_CHIPS.map((c) => `<button type="button" class="w-chip" data-refuse="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>`;
+    if (o === "refused") return `<div class="w-step"><h3>Dlaczego odmówił?${reqRefuse ? "" : " (opcjonalnie)"} <small class="muted">dopisze się do komentarza</small></h3><div class="w-chips">${REFUSE_CHIPS.map((c) => `<button type="button" class="w-chip" data-refuse="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>`;
     if (o === "wrong_number") return `<div class="w-step"><h3>Zły numer</h3>
       <p class="w-info">Bez nowego numeru klient zostanie zamknięty (<b>nie dzwonić</b>).</p>
       <label class="w-field grow">Dostałeś inny numer do tej firmy? (np. żona podała numer męża, sekretariat – numer szefa)<input id="f-newphone" maxlength="30" inputmode="tel" placeholder="np. 600 100 200"></label>
       <p class="w-info" id="f-newphone-info">Jeśli wpiszesz nowy numer, klient <b>zostaje u Ciebie</b>: nowy numer staje się głównym, stary zapisze się jako dodatkowy, a w historii zostanie notatka.</p></div>`;
-    if (o === "skipped") return `<div class="w-step"><h3>Dlaczego pomijasz tę firmę?</h3><div class="w-chips" role="radiogroup">${CRM.SKIP_REASONS.map(([c, l]) => `<button type="button" class="w-chip" role="radio" aria-checked="false" data-skip="${c}">${esc(l)}</button>`).join("")}</div><p class="w-info">Pominięcie nie liczy się jako telefon ani próba.</p></div>`;
+    if (o === "skipped") return `<div class="w-step"><h3>Dlaczego pomijasz tę firmę?${reqSkip ? "" : " (opcjonalnie)"}</h3><div class="w-chips" role="radiogroup">${SKIP_CHIPS.map((l) => `<button type="button" class="w-chip" role="radio" aria-checked="false" data-skip="${esc(l)}">${esc(l)}</button>`).join("")}</div><p class="w-info">Pominięcie nie liczy się jako telefon ani próba.</p></div>`;
     return "";
   }
-  const SAVE_HINT = { no_answer: "Enter zapisuje i bierze następnego", callback: "Wpisz termin, Enter zapisuje", interested: "Sprawdź termin, Enter zapisuje", offer: "Wybierz taryfę i termin follow-upu", sold: "Wybierz taryfę i liczbę numerów", refused: "Enter zapisuje i bierze następnego", wrong_number: "Enter zapisuje i bierze następnego", skipped: "Wybierz powód pominięcia" };
+  const SAVE_HINT = { no_answer: "Enter zapisuje i bierze następnego", callback: "Wpisz termin, Enter zapisuje", interested: "Sprawdź termin, Enter zapisuje", offer: "Wybierz taryfę i termin follow-upu", sold: "Wybierz taryfę i liczbę numerów", refused: "Enter zapisuje i bierze następnego", wrong_number: "Enter zapisuje i bierze następnego", skipped: "Enter zapisuje i bierze następnego" };
   function pick(o) {
     if (!current || CLOSED.includes(current.status) || !$("out-panel")) return;
     if (form && form.outcome === o) { resetForm(); return; }
     const basket = ["offer", "sold"].includes(o) && plans.length ? defaultBasket() : null;
     form = { outcome: o, basket, plan: basket ? basket[0] : null, skip: "" };
     document.querySelectorAll("[data-out]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.out === o)));
-    $("step").innerHTML = stepHtml(o) + (TALKED.includes(o) ? `<div class="w-step w-step-net">${networkHtml(current)}</div>` : "");
+    $("step").innerHTML = stepHtml(o) + (TALKED.includes(o) ? `<div class="w-step w-step-net">${networkHtml(current)}${contractHtml(current)}</div>` : "");
     paintPhrases(o);
     $("act-error").hidden = true;
     $("save-next").disabled = $("save-only").disabled = false;
@@ -1043,6 +1157,11 @@
       const nat = $("f-native");
       nat.min = fmtNative(new Date());
       nat.addEventListener("change", () => { if (nat.value) { inp.value = fmtInput(new Date(nat.value)); paintWhen(); } });
+      $("f-cal").addEventListener("click", () => {
+        const d = parseWhen(inp.value.trim());
+        if (d && d > new Date()) nat.value = fmtNative(d);   // kalendarz otwiera się na już wpisanym terminie
+        try { nat.showPicker(); } catch { nat.focus(); nat.click(); }
+      });
       paintWhen();
     }
     document.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
@@ -1054,6 +1173,7 @@
     }));
     if (form.plan) wirePlan();
     wireNetwork();
+    wireContract();
     const pv = $("f-show-preview");
     if (pv) pv.addEventListener("click", () => { const box = $("f-mail-preview"); box.hidden = !box.hidden; box.textContent = offerPreviewText(); });
     document.querySelectorAll("[data-refuse]").forEach((b) => b.addEventListener("click", () => toggleNote(b.dataset.refuse)));
@@ -1085,6 +1205,7 @@
       return submit({ lead: current.id, outcome: "note", note }, false);
     }
     if (!form) { fail("Wybierz wynik rozmowy (klawisze 1–8)."); return; }
+    if (contractSaving) await contractSaving;
     const o = form.outcome, lead = current.id;
     if (o === "offer") {
       if (!form.plan || !basketLines().length) { fail("Wybierz taryfę."); return; }
@@ -1114,7 +1235,8 @@
         body.sale_lines = basketLines();   // zestaw: numery + światłowód + TV w jednej sprzedaży
       }
     }
-    if (o === "skipped") { if (!form.skip) { fail("Wybierz powód pominięcia."); return; } body.skip_reason = form.skip; }
+    if (o === "skipped") { if (!form.skip && reqSkip) { fail("Wybierz powód pominięcia."); return; } if (form.skip) body.skip_reason = form.skip; }
+    if (o === "refused" && reqRefuse && !note) { fail("Wybierz albo wpisz, dlaczego klient odmówił."); return; }
     if (o === "wrong_number" && $("f-newphone").value.trim()) {
       const fresh = $("f-newphone").value.trim(), old = current.phone;
       lock(true);
@@ -1244,7 +1366,7 @@
     showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(OUT_LABEL[saved.outcome] || "")} · ${esc(name)}${again}`);
     if (CRM.refreshReminders) CRM.refreshReminders();
     // „Zapisz i dalej”: od razu następny klient, a listy po lewej i panel „Dziś” odświeżają się w tle
-    if (goNext) { await nextClient(true, saved && saved.next); refreshAll(); return; }
+    if (goNext) { await nextClient(true, saved && saved.next); refreshAll(); armAutoDial(); return; }
     await refreshAll();
     if (leadId) openLead(leadId);
   }
@@ -1323,6 +1445,7 @@
   document.addEventListener("crm:view", paintKeys);
   paintKeys();
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && autoDial) { stopAutoDial("Wstrzymane. Zadzwoń, kiedy będziesz gotowy."); return; }
     if (e.ctrlKey || e.metaKey || e.altKey || CRM.tourActive || !keysOn()) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (document.querySelector("dialog[open]")) return;
@@ -1444,7 +1567,11 @@
     // wszystko naraz (nie w dwóch turach po kolei) – ekran otwiera się szybciej
     const lists = Promise.all([loadLeads(), loadSummary(), loadDialer(), loadSideData(), loadHistory()]);
     const [pr, cf, rl] = await Promise.all([api("/api/products/?is_active=true&page_size=500").catch(() => null), api("/api/offer-config/").catch(() => null), api("/api/settings/").catch(() => null)]);
-    try { if (rl && rl.ok) { const d = await rl.json(); if (d.work_days) workDays = new Set([...d.work_days].map(Number)); } } catch { /* pon–pt */ }
+    try { if (rl && rl.ok) { const d = await rl.json(); if (d.work_days) workDays = new Set([...d.work_days].map(Number));
+      reqSkip = !!d.require_skip_reason; reqRefuse = !!d.require_refuse_reason;
+      if (d.quick_phrases) { const q = d.quick_phrases; PHRASES = { ...PHRASES, ...q, refused: [], skipped: [] }; if (Array.isArray(q.refused)) REFUSE_CHIPS = q.refused;
+        if (Array.isArray(q.skip_never) && Array.isArray(q.skip_lost)) SKIP_CHIPS = [...q.skip_never, ...q.skip_lost]; }
+      if (form) paintPhrases(form.outcome); } } catch { /* pon–pt */ }
     try { if (pr && pr.ok) { const d = await pr.json(); plans = (d.results || d).filter((p) => p.is_active); } } catch { /* bez taryf */ }
     try { if (cf && cf.ok) config = { ...config, ...(await cf.json()) }; } catch { /* domyślne ustawienia */ }
     await lists;

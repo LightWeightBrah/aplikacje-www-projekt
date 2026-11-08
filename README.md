@@ -24,13 +24,15 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 - Agent nie wybiera klientów sam. Klika **„Następny klient”** i system podaje najważniejszy kontakt w tej kolejności: 1) follow-upy po ofercie i zainteresowani, 2) umówione oddzwonienia, 3) ponowne próby u tych, którzy nie odebrali, 4) nowe firmy losowane z jego bazy, a potem z puli. Przypisanie jest atomowe, więc dwóch agentów nie dostanie tego samego klienta.
 - Po rozmowie agent wybiera wynik: nie odebrał, oddzwonić, zainteresowany, **wyślij ofertę**, **sprzedane**, odmowa, zły numer albo „pomiń firmę”. System sam ustawia następny krok: termin, ponowną próbę o innej porze dnia, follow-up oferty.
 - **Oferta**: agent wybiera taryfę, liczbę numerów, okres umowy (24 lub 36 miesięcy) i promocję (taryfa może mieć kilka promocji do wyboru). Można złożyć **zestaw kilku usług** (komórka + światłowód + TV). CRM na żywo liczy zobowiązanie miesięczne i prowizję, a gotową ofertę wysyła mailem albo kopiuje do poczty.
+- **Koniec umowy u obecnego operatora**: agent zapisuje miesiąc i rok, do kiedy klient ma umowę (albo „bez terminu”). Numer można przenieść najwcześniej 12 miesięcy przed końcem umowy, więc przy „Odmowie, bo mamy umowę” klient się nie zamyka: CRM sam umawia telefon na pierwszy dzień, od którego wolno przenieść numery.
 - **Wiedza pod ręką**: okno „Produkty i kanały TV” odpowiada w trakcie rozmowy, co zawiera taryfa i w którym pakiecie TV jest dany kanał (z ceną).
 - **Przypomnienie SMS**: telefon agenta sam wysyła klientowi SMS przed umówioną rozmową (z karty SIM agenta, bez bramki SMS).
 - **Nagrywanie rozmów** (opcjonalne, domyślnie wyłączone): nagrania trafiają na Dysk Google firmy i są kasowane po ustawionej liczbie dni; odsłuchuje je manager.
 - **Prowizja** = zobowiązanie miesięczne × mnożnik (domyślnie × 6 przy 24 miesiącach, × 9 przy 36). Mnożniki ustawia manager.
-- **Minuty rozmów** liczy aplikacja Solid Dialer z rejestru połączeń telefonu. Cel: domyślnie **15 minut rozmów na każdą godzinę pracy**, manager może go zmienić każdemu agentowi osobno. Ranking jest po minutach.
+- **Minuty rozmów** liczy aplikacja Solid Dialer z rejestru połączeń telefonu. Cel: domyślnie **15 minut rozmów na każdą godzinę pracy**. Manager zmienia go całemu zespołowi w ustawieniach albo jednej osobie (Zarządzanie → Użytkownicy → „Edytuj”). Czas powyżej godziny pokazujemy jako „9 h 35 min”. Ranking jest po minutach.
 - **Dzień pracy**: zalogowanie = przyjście, wylogowanie = wyjście. Przerwy (co najmniej 15 minut bez ruchu) są tylko pokazywane, nie odejmuje się ich. Odświeżanie strony w tle nie liczy się jako praca.
 - Zasada nadrzędna: **klient nigdy nie zostaje bez następnego kroku**. Po wyczerpaniu prób klient wraca do puli, a po kilku agentach bez skutku trafia do „nieosiągalnych”.
+- **Raporty dla managera**: gdzie każdy agent gubi klientów (dodzwonienia, rozmowa → oferta, oferta → sprzedaż) z podpowiedzią, co poprawić; o której firmy najczęściej odbierają; powody odmów; oferty, które czekają bez odpowiedzi; ilu klientów będzie można przenieść w kolejnych miesiącach, gdy skończą im się umowy.
 - Agent widzi swoich klientów i swoje wyniki. Manager widzi całą pracę zespołu (także agenta, który już odszedł), zarządza kontami, taryfami, zasadami i urządzeniami.
 
 ## Modele
@@ -215,6 +217,7 @@ Praca agenta:
 | `GET /api/announcements/` | „Solid info” dla zespołu (POST, PATCH, DELETE tylko manager) |
 | `GET /api/stats/` | statystyki: rozmowy, dodzwonienia, oferty, sprzedane, prowizja, minuty, wyniki agentów; okres `?days=` albo `?date_from=&date_to=`; manager: zespół (`?scope=me` = tylko jego praca), agent: tylko siebie |
 | `GET /api/leaderboard/` | ranking w okresie (minuty, rozmowy, zainteresowani, sprzedane, prowizja); bez danych klientów; agent z wyłączonym podglądem dostaje **403** |
+| `GET /api/reports/` | tylko manager: raporty za `?days=` (domyślnie 30) – lejek osób z podpowiedzią, godziny odbierania, powody odmów, oferty bez odpowiedzi, końce umów |
 | `GET /api/settings/`, `GET /api/offer-config/` | zasady pracy i ustawienia ofert (czyta każdy zalogowany) |
 | `GET /api/me/`, `POST /api/me/password/`, `POST/DELETE /api/me/avatar/` | dane zalogowanego, zmiana hasła, zdjęcie profilowe |
 | `POST /api/batches/import/` | import bazy z `.xlsx` (pole `file`, opcjonalnie `name`, `product`, `assigned_to`); odpowiedź to raport |
@@ -310,13 +313,15 @@ Agenci nie muszą znać żadnych kombinacji klawiszy. Pojedyncze klawisze (`N` n
 
 Po lewej: „Następny klient”, „+ Nowy kontakt”, „Zadzwoń na numer”, „Produkty i kanały TV”, grupy klientów (oferty, oddzwonienia, nie odebrali, nowi), ile zostało w bazie i lista „Moi klienci / Historia dziś”. Na środku karta klienta: najpierw **nazwa firmy**, potem numer z przyciskiem „Zadzwoń”, osoba, e-mail, a NIP i adres małym drukiem. Pole **„Stałe informacje o kliencie”** widzi cały zespół, z dopiskiem, kto i kiedy je zmienił. Po prawej panel „Dziś” (telefony, rozmowy, oferty, sprzedane, prowizja, minuty w tej godzinie wobec celu), terminy na dziś i „Solid info”.
 
-Wynik rozmowy wybiera się kafelkiem albo klawiszem `1`–`8`. Zapis można cofnąć przyciskiem „Cofnij” przez 10 sekund. Po „Zapisz i dalej” od razu otwiera się następny klient, zawsze od góry karty.
+Wynik rozmowy wybiera się kafelkiem albo klawiszem `1`–`8`. Zapis można cofnąć przyciskiem „Cofnij” przez 10 sekund. Po „Zapisz i dalej” od razu otwiera się następny klient, zawsze od góry karty. Przy połączonym telefonie CRM **sam dzwoni do następnego klienta po 4 sekundach**: nad numerem jest odliczanie i przycisk „Wstrzymaj” (albo Esc). Można to wyłączyć w „Moich ustawieniach”.
 
 Na górze karty jest pasek z powodem telefonu (np. „Follow-up po wysłanej ofercie”, z tym, co i kiedy wysłano), a przy leadzie przepisanym od innego agenta dopisek „↪ Przepisany od …”.
 
 **Wyślij ofertę** (4): grupy Komórkowe / Światłowód / Telewizja, taryfa, liczba numerów, okres, promocja („Bez promocji” albo jedna z promocji taryfy), przy światłowodzie „Blok / Dom”. „+ Dodaj kolejną usługę” składa zestaw z sumą. Zobowiązanie i prowizja liczą się na żywo. Oferta idzie mailem na adres ustawiony przez managera. Bez serwera poczty przycisk „Otwórz w poczcie” kopiuje gotową ofertę z formatowaniem.
 
 ![Oferta dla klienta](docs/queue_oferta.png)
+
+Przy wynikach po rozmowie (oddzwonić, zainteresowany, oferta, sprzedane, odmowa) agent zaznacza sieć klienta i **do kiedy klient ma umowę** (miesiąc i rok albo „bez terminu”). Karta klienta pokazuje wtedy plakietkę, np. „Umowa do 06.2028 · przenosić od 07.2027”. Przy „Odmowie” z późniejszą datą klient wraca jako oddzwonienie w dniu, od którego można przenieść numery.
 
 **Sprzedane** (5) zapisuje umowę: taryfę, liczbę numerów i okres, z prowizją.
 
@@ -354,11 +359,27 @@ Ranking jest domyślnie po minutach rozmów. Manager włącza i wyłącza agento
 
 ### Zespół (manager)
 
-Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wobec celu; „Edytuj” zmienia agentowi cel minut na godzinę) i wszyscy klienci zespołu: zakładki „Wszystkie / Zaległe / Pula / Nieosiągalni”, wyszukiwanie, filtry, masowe przypisywanie, „Przepisz leady agenta…” i eksport do Excela z bieżącymi filtrami. Kliknięcie wiersza otwiera szczegóły z historią rozmów i opiekunów (a przy włączonym nagrywaniu także nagrania rozmów do odsłuchania).
+Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wobec celu; cel minut zmienia się w Ustawieniach i ofertach albo jednej osobie w Zarządzanie → Użytkownicy → „Edytuj”) i wszyscy klienci zespołu: zakładki „Wszystkie / Zaległe / Pula / Nieosiągalni”, wyszukiwanie, filtry, masowe przypisywanie, „Przepisz leady agenta…” i eksport do Excela z bieżącymi filtrami. Kliknięcie wiersza otwiera szczegóły z historią rozmów i opiekunów (a przy włączonym nagrywaniu także nagrania rozmów do odsłuchania).
 
 ![Zespół](docs/manager.png)
 
 ![Szczegóły klienta](docs/manager_szczegoly.png)
+
+### Raporty (manager)
+
+Strona „co poprawić, żeby zespół sprzedawał więcej” za ostatnie 7, 30 albo 90 dni. Na górze cztery liczby: ile telefonów trzeba na jedną sprzedaż, ile ofert czeka bez odpowiedzi (i na jaką kwotę miesięcznie), ilu klientów można przenieść już teraz, choć nikt do nich nie dzwoni, i najlepsze godziny do dzwonienia.
+
+**Gdzie uciekają klienci**: każda osoba krok po kroku (telefony → dodzwonienia → rozmowa kończy się ofertą → oferta kończy się sprzedażą). Krok, w którym ktoś wypada wyraźnie słabiej niż zespół (poniżej 80% średniej, od 20 telefonów), jest na czerwono, a pod spodem jest podpowiedź, co z tym zrobić.
+
+![Raporty](docs/raporty.png)
+
+**Kiedy firmy odbierają** (procent odebranych telefonów w każdej godzinie i w każdy dzień tygodnia; godziny z małą liczbą telefonów są wyblakłe), **Dlaczego odmawiają** (powody zaznaczane przy „Odmowie”) i **Oferty bez odpowiedzi** (wysłane co najmniej 2 dni temu, bez sprzedaży i odmowy; zaległy follow-up na czerwono; kliknięcie firmy otwiera jej szczegóły w „Zespół”).
+
+![Godziny, odmowy i oferty bez odpowiedzi](docs/raporty_godziny.png)
+
+**Koniec umowy – przyszła sprzedaż**: ilu klientów będzie można przenieść w każdym z kolejnych 12 miesięcy, lista klientów, których można przenieść już teraz, choć nikt się nimi nie zajmuje, i najbliżsi do przeniesienia.
+
+![Koniec umowy](docs/raporty_umowy.png)
 
 ### Zarządzanie (manager)
 
@@ -374,7 +395,7 @@ Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wob
 
 ![Użytkownicy](docs/users.png)
 
-**Ustawienia i oferty**: na górze „Tak działa teraz” w zwykłych zdaniach, potem limity prób, ponowne próby, dni i godziny pracy, umówione oddzwonienia, zwroty do puli i losowanie firm. Zasady zapisuje jeden przycisk w przyklejonym pasku, z informacją, kto i kiedy ostatnio je zmienił.
+**Ustawienia i oferty**: na górze „Tak działa teraz” w zwykłych zdaniach, potem cel minut rozmów dla całego zespołu, limity prób, ponowne próby, dni i godziny pracy, umówione oddzwonienia, zwroty do puli i losowanie firm. Zasady zapisuje jeden przycisk w przyklejonym pasku, z informacją, kto i kiedy ostatnio je zmienił.
 
 ![Ustawienia zespołu](docs/settings.png)
 
