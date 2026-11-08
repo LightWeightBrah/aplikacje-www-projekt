@@ -30,10 +30,13 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 - **Nagrywanie rozmów** (opcjonalne, domyślnie wyłączone): nagrania trafiają na Dysk Google firmy i są kasowane po ustawionej liczbie dni; odsłuchuje je manager.
 - **Prowizja** = zobowiązanie miesięczne × mnożnik (domyślnie × 6 przy 24 miesiącach, × 9 przy 36). Mnożniki ustawia manager.
 - **Minuty rozmów** liczy aplikacja Solid Dialer z rejestru połączeń telefonu. Cel: domyślnie **15 minut rozmów na każdą godzinę pracy**. Manager zmienia go całemu zespołowi w ustawieniach albo jednej osobie (Zarządzanie → Użytkownicy → „Edytuj”). Czas powyżej godziny pokazujemy jako „9 h 35 min”. Ranking jest po minutach.
-- **Dzień pracy**: zalogowanie = przyjście, wylogowanie = wyjście. Przerwy (co najmniej 15 minut bez ruchu) są tylko pokazywane, nie odejmuje się ich. Odświeżanie strony w tle nie liczy się jako praca.
+- **Dzień pracy**: liczy się od pierwszej prawdziwej pracy („Następny klient”, telefon, zapis rozmowy) do ostatniej. Samo zalogowanie to jeszcze nie praca (manager widzi tylko „zalogowany o …”). Przerwy 15–45 minut są pokazywane, a od 45 minut to czas poza pracą: odejmuje się go od czasu pracy i od celu minut. W „Zespół → Obecność” widać bloki pracy, np. „9:00–12:00 · 15:00–18:00”.
+- **Ponowne próby w dobrej porze**: gdy firma nie odebrała, kolejna próba wypada innego dnia o godzinie, o której firmy najczęściej odbierają (z historii telefonów zespołu).
 - Zasada nadrzędna: **klient nigdy nie zostaje bez następnego kroku**. Po wyczerpaniu prób klient wraca do puli, a po kilku agentach bez skutku trafia do „nieosiągalnych”.
 - **Raporty dla managera**: gdzie każdy agent gubi klientów (dodzwonienia, rozmowa → oferta, oferta → sprzedaż) z podpowiedzią, co poprawić; o której firmy najczęściej odbierają; powody odmów; oferty, które czekają bez odpowiedzi; ilu klientów będzie można przenieść w kolejnych miesiącach, gdy skończą im się umowy.
+- **Wszystko po agencie**: manager wybiera osobę i widzi całą jej pracę (dni, czas pracy, minuty, telefony, oferty, sprzedaż, każdą rozmowę) i klientów, których trzeba przejąć, także po jej odejściu. Całość pobiera do Excela.
 - Agent widzi swoich klientów i swoje wyniki. Manager widzi całą pracę zespołu (także agenta, który już odszedł), zarządza kontami, taryfami, zasadami i urządzeniami.
+- Krótka ściąga dla agenta i managera: [`docs/SCIAGA.md`](docs/SCIAGA.md).
 
 ## Modele
 
@@ -218,6 +221,9 @@ Praca agenta:
 | `GET /api/stats/` | statystyki: rozmowy, dodzwonienia, oferty, sprzedane, prowizja, minuty, wyniki agentów; okres `?days=` albo `?date_from=&date_to=`; manager: zespół (`?scope=me` = tylko jego praca), agent: tylko siebie |
 | `GET /api/leaderboard/` | ranking w okresie (minuty, rozmowy, zainteresowani, sprzedane, prowizja); bez danych klientów; agent z wyłączonym podglądem dostaje **403** |
 | `GET /api/reports/` | tylko manager: raporty za `?days=` (domyślnie 30) – lejek osób z podpowiedzią, godziny odbierania, powody odmów, oferty bez odpowiedzi, końce umów |
+| `GET /api/reports/agent/` | tylko manager: „Wszystko po agencie” – praca jednej osoby dzień po dniu, rozmowy i klienci do przejęcia (`?user=ID`; `&file=xlsx` = plik Excela) |
+| `GET /api/batches/overview/` | tylko manager: wgrane bazy (dla kogo, ile firm, ile jeszcze bez telefonu) |
+| `DELETE /api/batches/{id}/` | tylko manager: „Usuń tę bazę” – usuwa firmy, do których nikt nie dzwonił; firmy z historią zostają |
 | `GET /api/settings/`, `GET /api/offer-config/` | zasady pracy i ustawienia ofert (czyta każdy zalogowany) |
 | `GET /api/me/`, `POST /api/me/password/`, `POST/DELETE /api/me/avatar/` | dane zalogowanego, zmiana hasła, zdjęcie profilowe |
 | `POST /api/batches/import/` | import bazy z `.xlsx` (pole `file`, opcjonalnie `name`, `product`, `assigned_to`); odpowiedź to raport |
@@ -313,7 +319,7 @@ Agenci nie muszą znać żadnych kombinacji klawiszy. Pojedyncze klawisze (`N` n
 
 Po lewej: „Następny klient”, „+ Nowy kontakt”, „Zadzwoń na numer”, „Produkty i kanały TV”, grupy klientów (oferty, oddzwonienia, nie odebrali, nowi), ile zostało w bazie i lista „Moi klienci / Historia dziś”. Na środku karta klienta: najpierw **nazwa firmy**, potem numer z przyciskiem „Zadzwoń”, osoba, e-mail, a NIP i adres małym drukiem. Pole **„Stałe informacje o kliencie”** widzi cały zespół, z dopiskiem, kto i kiedy je zmienił. Po prawej panel „Dziś” (telefony, rozmowy, oferty, sprzedane, prowizja, minuty w tej godzinie wobec celu), terminy na dziś i „Solid info”.
 
-Wynik rozmowy wybiera się kafelkiem albo klawiszem `1`–`8`. Zapis można cofnąć przyciskiem „Cofnij” przez 10 sekund. Po „Zapisz i dalej” od razu otwiera się następny klient, zawsze od góry karty. Przy połączonym telefonie CRM **sam dzwoni do następnego klienta po 4 sekundach**: nad numerem jest odliczanie i przycisk „Wstrzymaj” (albo Esc). Można to wyłączyć w „Moich ustawieniach”.
+Wynik rozmowy wybiera się kafelkiem albo klawiszem `1`–`8`. Zapis można cofnąć przyciskiem „Cofnij” przez 10 sekund. Po „Zapisz i dalej” od razu otwiera się następny klient, zawsze od góry karty. Przy połączonym telefonie CRM **sam dzwoni do następnego klienta po 4 sekundach**: nad numerem jest odliczanie i przycisk „Wstrzymaj” (albo Esc). Można to wyłączyć w „Moich ustawieniach”. Gdy klient po ofercie prosi o oddzwonienie, wysłana oferta zostaje widoczna na karcie, w przypomnieniu i na liście (zielona plakietka), więc agent od razu wie, o czym była mowa.
 
 Na górze karty jest pasek z powodem telefonu (np. „Follow-up po wysłanej ofercie”, z tym, co i kiedy wysłano), a przy leadzie przepisanym od innego agenta dopisek „↪ Przepisany od …”.
 
@@ -381,11 +387,19 @@ Strona „co poprawić, żeby zespół sprzedawał więcej” za ostatnie 7, 30 
 
 ![Koniec umowy](docs/raporty_umowy.png)
 
+**Wszystko po agencie**: wybór osoby, sześć liczb na górze (dni pracy, minuty rozmów wobec celu, telefony, oferty i sprzedaż, prowizja, klienci do przejęcia), niżej tabela dzień po dniu, każda rozmowa i lista klientów, których ta osoba prowadzi teraz. „Pobierz do Excela” zapisuje to samo w pliku.
+
+![Wszystko po agencie](docs/raporty_agent.png)
+
 ### Zarządzanie (manager)
 
 **Import / eksport baz** z wyborem „Dla kogo jest ta baza”:
 
 ![Import i eksport](docs/import.png)
+
+Niżej **Wgrane bazy**: dla kogo jest baza, ile ma firm i do ilu jeszcze nikt nie dzwonił. „Usuń tę bazę” (z potwierdzeniem: trzeba wpisać USUŃ) kasuje tylko firmy bez żadnej rozmowy. Firmy z rozmowami, ofertami albo sprzedażą zostają w CRM z całą historią.
+
+![Wgrane bazy](docs/import_bazy.png)
 
 **Taryfy i produkty**: ceny bez i z promocją, inne promocje do wyboru, dopłata za kolejny numer i „Informacje dla agenta”. „Pobierz plik taryf” i „Wgraj plik taryf…” przenoszą cennik przez Excela (ta sama nazwa = nowe ceny, nowa nazwa = nowa taryfa). „Dodaj brakujące z wzornika” uzupełnia cennik, „Wyczyść wszystkie” zaczyna od zera. Sprzedawany produkt się wyłącza, a „Usuń” jest dla produktu dodanego przez pomyłkę.
 
@@ -438,7 +452,7 @@ Lista leadów w szablonie Django (`/crm/leads/`, strona z Labu 3, ma tylko jasny
 python manage.py test
 ```
 
-**544 testy** `APITestCase` w szesnastu plikach w `crm/`:
+**581 testów** `APITestCase` w dwudziestu plikach w `crm/`:
 
 | Plik | Co sprawdza |
 |---|---|
@@ -458,6 +472,10 @@ python manage.py test
 | `test_edit.py` | poprawianie komentarza i sprawy, układ ekranu Dzwonienie |
 | `test_devices.py` | aktywacja i blokada urządzeń |
 | `test_hosting.py` | tryb serwera (`start_firm`, brak kont demo, limit logowania, pobieranie dialera) |
+| `test_reports.py` | raporty: lejek osób, godziny odbierania, powody odmów, oferty bez odpowiedzi, końce umów |
+| `test_agent_report.py` | „Wszystko po agencie” (także Excel) i „Usuń tę bazę” |
+| `test_contract.py` | koniec umowy u obecnego operatora i samo oddzwonienie w dniu, od którego wolno przenieść numer |
+| `test_phrases.py` | powody i gotowe przyciski ustawiane przez managera, powody „Pomiń firmę” |
 
 ## Struktura projektu
 

@@ -14,7 +14,10 @@
 ## Żaden klient się nie gubi
 
 - Każdy klient ma zawsze następny krok, a follow-upy ofert same wracają na górę kolejki.
-- Kalendarz pokazuje nazwy firm, a przed umówioną rozmową telefon sam wysyła klientowi SMS z przypomnieniem.
+- **SMS przed umówionym telefonem**: telefon agenta sam przypomina klientowi o rozmowie, więc więcej osób odbiera follow-up po ofercie.
+- **Przypomnienie o follow-upie** wyskakuje agentowi na czas, z dźwiękiem, i od razu otwiera klienta z ofertą.
+- **„Mam umowę w innej sieci” to nie koniec**: CRM sam umawia telefon na dzień, od którego wolno przenieść numery.
+- Kalendarz pokazuje nazwy firm, nie same numery.
 
 ![Kalendarz](calendar.png)
 
