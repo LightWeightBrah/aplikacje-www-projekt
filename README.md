@@ -8,9 +8,13 @@ Projekt zaliczeniowy z przedmiotu **Aplikacje WWW** (UWM Olsztyn, 2026), rozwija
 - **Excel:** openpyxl (import i eksport `.xlsx`)
 - **Baza danych:** SQLite
 - **Frontend:** szablony Django, własny CSS i zwykły JavaScript (bez Node.js), motyw ciemny (domyślny), jasny albo auto
-- **Telefon:** aplikacja na Androida **Solid Dialer** (`dialer-android/`, Java): „Zadzwoń” w CRM wybiera numer na telefonie agenta i odsyła czas rozmowy
+- **Telefon:** aplikacja na Androida **Solid Dialer** (`dialer-android/`, Java): „Zadzwoń” w CRM wybiera numer na telefonie agenta, odsyła czas rozmowy, wysyła SMS-y z przypomnieniem i (opcjonalnie) nagrywa rozmowy
 
 ![Ekran Dzwonienie](docs/queue.png)
+
+> **Dlaczego warto go wdrożyć?** Jedna strona dla właściciela firmy: [`docs/DLACZEGO_WARTO.md`](docs/DLACZEGO_WARTO.md).
+
+**Licencja:** © 2026 Julian Łabanowski, wszelkie prawa zastrzeżone. Użycie tylko za pisemną zgodą autora ([`LICENSE`](LICENSE)).
 
 ## Opis biznesowy
 
@@ -19,9 +23,12 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 - Manager wgrywa bazę firm z Excela (paczka `LeadBatch`). Bazę można dać jednemu agentowi („jego Excel”) albo do **wspólnej puli**.
 - Agent nie wybiera klientów sam. Klika **„Następny klient”** i system podaje najważniejszy kontakt w tej kolejności: 1) follow-upy po ofercie i zainteresowani, 2) umówione oddzwonienia, 3) ponowne próby u tych, którzy nie odebrali, 4) nowe firmy losowane z jego bazy, a potem z puli. Przypisanie jest atomowe, więc dwóch agentów nie dostanie tego samego klienta.
 - Po rozmowie agent wybiera wynik: nie odebrał, oddzwonić, zainteresowany, **wyślij ofertę**, **sprzedane**, odmowa, zły numer albo „pomiń firmę”. System sam ustawia następny krok: termin, ponowną próbę o innej porze dnia, follow-up oferty.
-- **Oferta**: agent wybiera taryfę, liczbę numerów, okres umowy (24 lub 36 miesięcy) i promocję. CRM na żywo liczy zobowiązanie miesięczne i prowizję, a gotową ofertę wysyła mailem albo kopiuje do poczty.
+- **Oferta**: agent wybiera taryfę, liczbę numerów, okres umowy (24 lub 36 miesięcy) i promocję (taryfa może mieć kilka promocji do wyboru). Można złożyć **zestaw kilku usług** (komórka + światłowód + TV). CRM na żywo liczy zobowiązanie miesięczne i prowizję, a gotową ofertę wysyła mailem albo kopiuje do poczty.
+- **Wiedza pod ręką**: okno „Produkty i kanały TV” odpowiada w trakcie rozmowy, co zawiera taryfa i w którym pakiecie TV jest dany kanał (z ceną).
+- **Przypomnienie SMS**: telefon agenta sam wysyła klientowi SMS przed umówioną rozmową (z karty SIM agenta, bez bramki SMS).
+- **Nagrywanie rozmów** (opcjonalne, domyślnie wyłączone): nagrania trafiają na Dysk Google firmy i są kasowane po ustawionej liczbie dni; odsłuchuje je manager.
 - **Prowizja** = zobowiązanie miesięczne × mnożnik (domyślnie × 6 przy 24 miesiącach, × 9 przy 36). Mnożniki ustawia manager.
-- **Minuty rozmów** liczy aplikacja Solid Dialer z rejestru połączeń telefonu. Cel: **15 minut rozmów na każdą godzinę pracy**. Ranking jest po minutach.
+- **Minuty rozmów** liczy aplikacja Solid Dialer z rejestru połączeń telefonu. Cel: domyślnie **15 minut rozmów na każdą godzinę pracy**, manager może go zmienić każdemu agentowi osobno. Ranking jest po minutach.
 - **Dzień pracy**: zalogowanie = przyjście, wylogowanie = wyjście. Przerwy (co najmniej 15 minut bez ruchu) są tylko pokazywane, nie odejmuje się ich. Odświeżanie strony w tle nie liczy się jako praca.
 - Zasada nadrzędna: **klient nigdy nie zostaje bez następnego kroku**. Po wyczerpaniu prób klient wraca do puli, a po kilku agentach bez skutku trafia do „nieosiągalnych”.
 - Agent widzi swoich klientów i swoje wyniki. Manager widzi całą pracę zespołu (także agenta, który już odszedł), zarządza kontami, taryfami, zasadami i urządzeniami.
@@ -30,7 +37,7 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 
 | Model | Rola |
 |---|---|
-| `Product` | taryfa lub produkt: cena bez i z promocją, dopłata za każdy kolejny numer |
+| `Product` | taryfa lub produkt: cena bez i z promocją (także kilka promocji do wyboru), dopłata za każdy kolejny numer, informacje dla agenta |
 | `Company` | firma klienta: nazwa, NIP, KRS, REGON, adres |
 | `LeadBatch` | baza (paczka) leadów, np. import z Excela; może należeć do jednego agenta |
 | `Lead` | klient do obdzwonienia: opiekun (`owner`, brak = pula), status, próby, termin kolejnego kontaktu, stałe informacje o kliencie (kto i kiedy je zmienił) |
@@ -38,9 +45,10 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 | `SaleItem` | pozycja sprzedaży: taryfa, liczba numerów, okres, cena i prowizja z chwili sprzedaży |
 | `Offer`, `OfferConfig` | wysłane oferty i ustawienia ofert (adres, podpis, mnożniki prowizji, nazwa promocji) |
 | `LeadAssignment` | historia przypisań klienta między agentami |
-| `AgentProfile` | ustawienia konta: podgląd rankingu, ukrycie managera w rankingu, wymuszona zmiana hasła, zdjęcie |
+| `AgentProfile` | ustawienia konta: podgląd rankingu, ukrycie managera w rankingu, cel minut na godzinę, wymuszona zmiana hasła, zdjęcie |
 | `TeamRules` | zasady pracy zespołu (limity prób, kroki ponownych prób, dni i godziny pracy, losowanie firm) |
 | `DialerDevice`, `DialerPairing`, `CallRequest` | sparowane telefony, kody parowania i połączenia z dialera (czy odebrał, ile trwało) |
+| `SmsReminder` | SMS-y z przypomnieniem o umówionej rozmowie (wysyła je telefon agenta) |
 | `RecordingConfig`, `CallRecording` | opcjonalne nagrywanie rozmów: ustawienia i połączony Dysk Google; nagrania (plik leży na Dysku Google) |
 | `WorkDay` | obecność: przyjście, ostatni ruch, wyjście, przerwy |
 | `Announcement` | „Solid info”: informacje managera dla zespołu (promocje, argumenty, cele) |
@@ -198,6 +206,7 @@ Praca agenta:
 | `GET /api/leads/lookup/?q=` | szybkie wyszukiwanie po telefonie (różne zapisy), NIP, KRS, nazwisku, firmie, e-mailu |
 | `GET /api/my-leads/`, `due/`, `schedule/`, `summary/` | moi klienci, kontakty do zrobienia, plan dnia, liczby do paska dnia |
 | `GET /api/my-leads/calendar/` | plik `.ics` z terminami kontaktów (np. do Kalendarza Google) |
+| `POST /api/my-leads/{id}/add-callback/` | dodaje termin kontaktu z Kalendarza („+ Dodaj callback”) |
 | `GET /api/offers/?lead=ID`, `POST /api/offers/` | oferty klienta; zapis rozmowy „Wysłana oferta” razem z ofertą i wysyłką |
 | `POST /api/offers/preview/` | wylicza zobowiązanie miesięczne i prowizję bez zapisywania |
 | `GET /api/offers/{id}/html/` | gotowa oferta jako HTML (do pobrania albo skopiowania z formatowaniem) |
@@ -218,8 +227,9 @@ Solid Dialer (telefon agenta):
 | `POST /api/dialer/pairing/` | agent w CRM prosi o 6-cyfrowy kod parowania telefonu |
 | `POST /api/dialer/pair/` | telefon wymienia kod na własny token |
 | `POST /api/dialer/call/` | „Zadzwoń” w CRM: telefon wybierze numer klienta (albo podany numer) |
-| `GET /api/dialer/poll/` | telefon pyta, czy ma coś wybrać (204 = nic) |
+| `GET /api/dialer/poll/` | telefon pyta, czy ma coś wybrać albo wysłać SMS-a z przypomnieniem (204 = nic) |
 | `POST /api/dialer/calls/{id}/finish/` | telefon odsyła wynik z rejestru połączeń: `answered` i `duration_seconds` |
+| `POST /api/dialer/sms/{id}/done/` | telefon potwierdza wysłanie SMS-a z przypomnieniem |
 | `GET /api/dialer/status/`, `DELETE` | stan telefonu i ostatniego połączenia; odłączenie telefonów |
 | `POST /api/dialer/calls/{id}/recording/` | telefon wysyła nagranie rozmowy (gdy nagrywanie jest włączone; opis: `docs/NAGRYWANIE.md`) |
 | `GET/PATCH /api/recordings/settings/` | manager: nagrywanie wł./wył., po ilu dniach usuwać, stan Dysku Google i telefonów |
@@ -236,7 +246,9 @@ Tylko manager (agent dostaje 403):
 | `GET /api/agents/`, `PATCH /api/agents/{id}/`, `POST /api/agents/team-access/` | agenci z liczbą klientów; podgląd rankingu jednej osobie albo wszystkim |
 | `GET /api/work/attendance/?date=` | obecność: kto kiedy przyszedł i wyszedł, czas pracy, przerwy, minuty i cel |
 | `POST /api/users/{id}/reset-password/`, `deactivate/`, `activate/` | hasło tymczasowe, dezaktywacja (z decyzją, co z klientami) i ponowne włączenie konta |
-| `PATCH /api/settings/`, `POST /api/settings/reset/` | zmiana zasad pracy i powrót do wartości domyślnych |
+| `PATCH /api/settings/`, `POST /api/settings/reset/` | zmiana zasad pracy (także SMS-ów z przypomnieniem) i powrót do wartości domyślnych |
+| `POST /api/settings/test-sms/`, `GET .../test-sms/{id}/` | próbny SMS z telefonu managera i sprawdzenie, czy wyszedł |
+| `POST /api/products/clear/` | „Wyczyść wszystkie” taryfy: nieużywane usuwa, sprzedawane wyłącza |
 | `PATCH /api/offer-config/` | ustawienia ofert |
 | `GET /api/devices/`, `POST /api/devices/code/`, `POST /api/devices/{id}/revoke/` | urządzenia z dostępem, nowy kod aktywacji, blokada urządzenia |
 
@@ -275,7 +287,9 @@ Ponowna próba po „Nie odebrał” jest **ustawiana automatycznie**, a godzina
 
 ## Interfejs webowy
 
-Aplikacja pod `/crm/` korzysta z tego samego API i tokenów JWT. Na górze jest menu (Dzwonienie, Kalendarz, Wyniki, Ranking, a u managera także Zespół i Zarządzanie), wyszukiwarka i menu konta w prawym górnym rogu (motyw, zdjęcie, telefon z dialerem, „Moje ustawienia”, zmiana hasła, wylogowanie). Na dole ekranu jest pasek dialera. Zrzuty poniżej są w motywie ciemnym, na danych z `seed_demo`.
+Aplikacja pod `/crm/` korzysta z tego samego API i tokenów JWT. Na górze jest menu (Dzwonienie, Kalendarz, Wyniki, Ranking, a u managera także Zespół i Zarządzanie), wyszukiwarka i menu konta w prawym górnym rogu (motyw, wielkość tekstu, zdjęcie, telefon z dialerem, „Moje ustawienia”, zmiana hasła, wylogowanie). Na dole ekranu jest pasek dialera. Okno stoi w miejscu, a przewija się tylko środek strony, jak w aplikacji.
+
+Zrzuty poniżej są w motywie ciemnym (szerokość 1440 px) i pokazują **zwykły dzień pracy**: dane z `seed_demo` uzupełnione o bazy pokazowe i dwa tygodnie udawanej pracy czterech agentów. Wszystkie firmy, osoby i numery są zmyślone.
 
 Agenci nie muszą znać żadnych kombinacji klawiszy. Pojedyncze klawisze (`N` następny klient, `Z` zadzwoń, `1`–`8` wynik rozmowy, `Enter` zapisz, `Esc` wyczyść, `/` szukaj) są tylko dodatkiem i można je wyłączyć w „Moich ustawieniach”. Pierwsze logowanie uruchamia krótki samouczek (13 kroków dla agenta, 22 dla managera).
 
@@ -294,11 +308,13 @@ Agenci nie muszą znać żadnych kombinacji klawiszy. Pojedyncze klawisze (`N` n
 
 ### Dzwonienie
 
-Po lewej: „Następny klient”, „+ Nowy kontakt”, „Zadzwoń na numer”, grupy klientów (oferty, oddzwonienia, nie odebrali, nowi), ile zostało w bazie i lista „Moi klienci / Historia dziś”. Na środku karta klienta: najpierw **nazwa firmy**, potem numer z przyciskiem „Zadzwoń”, osoba, e-mail, a NIP i adres małym drukiem. Pole **„Stałe informacje o kliencie”** widzi cały zespół, z dopiskiem, kto i kiedy je zmienił. Po prawej panel „Dziś” (telefony, rozmowy, oferty, sprzedane, prowizja, minuty w tej godzinie wobec celu), terminy na dziś i „Solid info”.
+Po lewej: „Następny klient”, „+ Nowy kontakt”, „Zadzwoń na numer”, „Produkty i kanały TV”, grupy klientów (oferty, oddzwonienia, nie odebrali, nowi), ile zostało w bazie i lista „Moi klienci / Historia dziś”. Na środku karta klienta: najpierw **nazwa firmy**, potem numer z przyciskiem „Zadzwoń”, osoba, e-mail, a NIP i adres małym drukiem. Pole **„Stałe informacje o kliencie”** widzi cały zespół, z dopiskiem, kto i kiedy je zmienił. Po prawej panel „Dziś” (telefony, rozmowy, oferty, sprzedane, prowizja, minuty w tej godzinie wobec celu), terminy na dziś i „Solid info”.
 
 Wynik rozmowy wybiera się kafelkiem albo klawiszem `1`–`8`. Zapis można cofnąć przyciskiem „Cofnij” przez 10 sekund. Po „Zapisz i dalej” od razu otwiera się następny klient, zawsze od góry karty.
 
-**Wyślij ofertę** (4): taryfa, liczba numerów, okres, promocja, a zobowiązanie i prowizja liczą się na żywo. Oferta idzie mailem na adres ustawiony przez managera. Bez serwera poczty przycisk „Otwórz w poczcie” kopiuje gotową ofertę z formatowaniem.
+Na górze karty jest pasek z powodem telefonu (np. „Follow-up po wysłanej ofercie”, z tym, co i kiedy wysłano), a przy leadzie przepisanym od innego agenta dopisek „↪ Przepisany od …”.
+
+**Wyślij ofertę** (4): grupy Komórkowe / Światłowód / Telewizja, taryfa, liczba numerów, okres, promocja („Bez promocji” albo jedna z promocji taryfy), przy światłowodzie „Blok / Dom”. „+ Dodaj kolejną usługę” składa zestaw z sumą. Zobowiązanie i prowizja liczą się na żywo. Oferta idzie mailem na adres ustawiony przez managera. Bez serwera poczty przycisk „Otwórz w poczcie” kopiuje gotową ofertę z formatowaniem.
 
 ![Oferta dla klienta](docs/queue_oferta.png)
 
@@ -310,13 +326,17 @@ Wyszukiwarka u góry każdej strony znajduje klienta po numerze telefonu, NIP al
 
 ![Wyszukiwarka](docs/wyszukiwarka.png)
 
+**Produkty i kanały TV**: okno z dwiema zakładkami. „Kanały TV” odpowiada na pytanie klienta „czy macie Polsat Sport?” (od pierwszej litery, z pakietami S/M/L i ceną), „Taryfy i produkty” pokazuje, co zawiera każda taryfa, wraz z informacjami od managera.
+
+![Produkty i kanały TV](docs/produkty_kanaly.png)
+
 „Moje ustawienia” (menu konta) to ustawienia jednej osoby: przypomnienia o terminach (karta na ekranie, dźwięk, powiadomienie przeglądarki), panel „Dziś”, chowanie drobnych dodatków na ekranie Dzwonienie (cel minut, „Twoja baza / Wspólna pula”, liczniki na dolnym pasku) i pojedyncze klawisze.
 
 ![Moje ustawienia](docs/moje_ustawienia.png)
 
 ### Kalendarz
 
-Plan dnia pokazuje umówione kontakty z godziną, sprawą i ostatnim wynikiem. Widok miesiąca pokazuje wszystkie terminy; kliknięcie kontaktu od razu otwiera go do dzwonienia. „Pobierz kalendarz (.ics)” zapisuje terminy do Kalendarza Google.
+Plan dnia pokazuje umówione kontakty z godziną, sprawą i ostatnim wynikiem, a „Zaległe” mają czerwoną plakietkę z liczbą. Widok miesiąca pokazuje wszystkie terminy z nazwą firmy (oferty na zielono, oddzwonienia na bursztynowo). Kliknięcie dnia otwiera panel dnia z przyciskami „Otwórz” i „Zadzwoń”, a „+ Dodaj callback” dopisuje nowy termin. „Pobierz kalendarz (.ics)” zapisuje terminy do Kalendarza Google.
 
 ![Plan dnia](docs/plan.png)
 
@@ -324,7 +344,7 @@ Plan dnia pokazuje umówione kontakty z godziną, sprawą i ostatnim wynikiem. W
 
 ### Wyniki i ranking
 
-Kafelki: rozmowy, dodzwonienia, wysłane oferty, sprzedane („1 sprzedaż na X rozmów”), prowizja i klienci czekający na agenta. Pod nimi minuty rozmów godzina po godzinie wobec celu, a u managera tabela **„Wyniki agentów”** (minuty / powinno być, czas pracy, rozmowy, dodzwonienia, oferty, sprzedane, rozmów na 1 sprzedaż, prowizja, klienci w toku), sortowana kliknięciem nagłówka.
+Kafelki: rozmowy, dodzwonienia, wysłane oferty, sprzedane („1 sprzedaż na X rozmów”), prowizja i klienci czekający na agenta. Pod nimi minuty rozmów godzina po godzinie wobec celu („powinno być” zespołu to suma celów wszystkich osób), a u managera tabela **„Wyniki agentów”** (minuty / powinno być, czas pracy, rozmowy, dodzwonienia, oferty, sprzedane, rozmów na 1 sprzedaż, prowizja, klienci w toku), sortowana kliknięciem nagłówka.
 
 ![Wyniki zespołu](docs/dashboard.png)
 
@@ -334,7 +354,7 @@ Ranking jest domyślnie po minutach rozmów. Manager włącza i wyłącza agento
 
 ### Zespół (manager)
 
-Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wobec celu) i wszyscy klienci zespołu: zakładki „Wszystkie / Zaległe / Pula / Nieosiągalni”, wyszukiwanie, filtry, masowe przypisywanie, „Przepisz leady agenta…” i eksport do Excela z bieżącymi filtrami. Kliknięcie wiersza otwiera szczegóły z historią rozmów i opiekunów.
+Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wobec celu; „Edytuj” zmienia agentowi cel minut na godzinę) i wszyscy klienci zespołu: zakładki „Wszystkie / Zaległe / Pula / Nieosiągalni”, wyszukiwanie, filtry, masowe przypisywanie, „Przepisz leady agenta…” i eksport do Excela z bieżącymi filtrami. Kliknięcie wiersza otwiera szczegóły z historią rozmów i opiekunów (a przy włączonym nagrywaniu także nagrania rozmów do odsłuchania).
 
 ![Zespół](docs/manager.png)
 
@@ -346,7 +366,7 @@ Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wob
 
 ![Import i eksport](docs/import.png)
 
-**Taryfy i produkty**: ceny bez i z promocją, dopłata za kolejny numer. „Pobierz plik taryf” i „Wgraj plik taryf…” przenoszą cennik przez Excela (ta sama nazwa = nowe ceny, nowa nazwa = nowa taryfa). Sprzedawany produkt się wyłącza, a „Usuń” jest dla produktu dodanego przez pomyłkę.
+**Taryfy i produkty**: ceny bez i z promocją, inne promocje do wyboru, dopłata za kolejny numer i „Informacje dla agenta”. „Pobierz plik taryf” i „Wgraj plik taryf…” przenoszą cennik przez Excela (ta sama nazwa = nowe ceny, nowa nazwa = nowa taryfa). „Dodaj brakujące z wzornika” uzupełnia cennik, „Wyczyść wszystkie” zaczyna od zera. Sprzedawany produkt się wyłącza, a „Usuń” jest dla produktu dodanego przez pomyłkę.
 
 ![Taryfy i produkty](docs/products.png)
 
@@ -358,9 +378,13 @@ Obecność dnia (przyszedł, wyszedł, czas pracy, przerwy, telefony, minuty wob
 
 ![Ustawienia zespołu](docs/settings.png)
 
-Niżej: ustawienia ofert (adres, podpis, okres, mnożniki prowizji, treść), „Solid info” dla zespołu i urządzenia z dostępem do CRM.
+Niżej: ustawienia ofert (adres, podpis, okres, mnożniki prowizji, treść), SMS-y z przypomnieniem (ile wcześniej, przy jakich terminach, limity, próbny SMS), „Solid info” dla zespołu i urządzenia z dostępem do CRM.
 
 ![Ustawienia ofert](docs/settings_oferty.png)
+
+Osobna karta **Nagrywanie rozmów**: połączenie z Dyskiem Google firmy, włącznik, po ilu dniach kasować nagrania i lista telefonów z informacją, czy nagrywanie na nich działa. Agent nic o tym nie widzi na ekranie. Opis: [`docs/NAGRYWANIE.md`](docs/NAGRYWANIE.md).
+
+![Nagrywanie rozmów](docs/settings_nagrywanie.png)
 
 ### Logowanie
 
@@ -368,7 +392,11 @@ Niżej: ustawienia ofert (adres, podpis, okres, mnożniki prowizji, treść), �
 
 ## Solid Dialer i hosting
 
-- **Solid Dialer** (`dialer-android/`): agent paruje telefon kodem 6 cyfr (menu konta → „Telefon (dialer)…”). „Zadzwoń” w CRM wybiera numer na telefonie, a po rozmowie aplikacja odsyła z rejestru połączeń, czy klient odebrał i ile trwała rozmowa. Budowanie i instalacja: [`dialer-android/README.md`](dialer-android/README.md).
+- **Solid Dialer** (`dialer-android/`, wersja 1.2): agent paruje telefon kodem 6 cyfr (menu konta → „Telefon (dialer)…”). „Zadzwoń” w CRM wybiera numer na telefonie, a po rozmowie aplikacja odsyła z rejestru połączeń, czy klient odebrał i ile trwała rozmowa. Ta sama aplikacja wysyła SMS-y z przypomnieniem i, gdy manager włączy nagrywanie, nagrywa rozmowy. Dzwoni się zawsze z karty SIM agenta (bez VoIP). Budowanie i instalacja: [`dialer-android/README.md`](dialer-android/README.md).
+
+  | Parowanie z CRM | Dialer gotowy do pracy |
+  |---|---|
+  | ![Solid Dialer – parowanie](docs/dialer_parowanie.png) | ![Solid Dialer – gotowy do pracy](docs/dialer_gotowy.png) |
 - **Hosting** (PythonAnywhere): ustawienia w pliku `.env` (poza repozytorium), HTTPS i bezpieczne ciasteczka, `seed_demo` zablokowane, pierwsze konto przez `start_firm`. **Aktywacja urządzeń**: CRM otwiera się tylko na komputerach i telefonach aktywowanych jednorazowym kodem od managera, a obcy widzi tylko „To urządzenie nie ma dostępu”. Lokalnie blokada jest wyłączona. Instrukcja: [`docs/HOSTING.md`](docs/HOSTING.md).
 
 ## Dokumentacja API i strona z Labu 3
@@ -389,7 +417,7 @@ Lista leadów w szablonie Django (`/crm/leads/`, strona z Labu 3, ma tylko jasny
 python manage.py test
 ```
 
-**481 testów** `APITestCase` w trzynastu plikach w `crm/`:
+**544 testy** `APITestCase` w szesnastu plikach w `crm/`:
 
 | Plik | Co sprawdza |
 |---|---|
@@ -399,6 +427,9 @@ python manage.py test
 | `test_retry.py` | zasady zespołu i automatyczne ponowne próby (pory dnia, godziny pracy, limity) |
 | `test_work.py` | „Następny klient”, grupy, oferty, prowizja, dialer, minuty, obecność, „Solid info” |
 | `test_sales.py` | taryfy z cenami, zapis sprzedaży, walidacje, prowizja w statystykach i rankingu, usuwanie produktu |
+| `test_promos.py` | kilka promocji w jednej taryfie, wybór promocji w ofercie i sprzedaży, uzupełnianie z wzornika, lista kanałów TV |
+| `test_sms.py` | SMS-y z przypomnieniem: kiedy powstają, godziny, limity, próbny SMS, potwierdzenie z telefonu |
+| `test_recordings.py` | nagrywanie rozmów: ustawienia, łączenie z Dyskiem Google (udawany Google), wysyłka z telefonu, foldery, odsłuch, kasowanie starych, strona prywatności |
 | `test_ceidg.py` | import baz z CEIDG (układ kolumn, poprawki dat), bazy agenta, „Pomiń firmę”, stałe informacje o kliencie |
 | `test_missed_calls.py` | nieodebrane umówione kontakty |
 | `test_workdays.py` | dni pracy i kolejne próby po nieodebranym terminie |
@@ -419,7 +450,9 @@ crm/
   users_api.py, rules_api.py, me_view.py   konta, zasady zespołu, profil
   device_lock.py, device_api.py            aktywacja urządzeń
   services.py, rules.py       logika biznesowa: losowanie, skutki rozmów, ponowne próby, statystyki
-  tariffs.py                  wzornik taryf
+  tariffs.py, tv_channels.py  wzornik taryf i lista kanałów TV
+  sms.py                      SMS-y z przypomnieniem
+  recordings.py, recordings_api.py         nagrywanie rozmów i Dysk Google
   excel.py, sample_data.py    import i eksport xlsx, przykładowe pliki
   permissions.py, roles.py    role i uprawnienia
   web_views.py, web_urls.py   strony HTML
@@ -427,5 +460,5 @@ crm/
   management/commands/        seed_demo, reset_leads, setup_roles, start_firm, load_tariffs, device_code, ...
   tests.py, test_*.py         testy
 dialer-android/               aplikacja Solid Dialer na Androida (Java)
-docs/                         zrzuty ekranu, przykładowe pliki Excela, HOSTING.md
+docs/                         zrzuty ekranu, przykładowe pliki Excela, HOSTING.md, NAGRYWANIE.md, DLACZEGO_WARTO.md
 ```
