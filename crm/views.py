@@ -217,6 +217,28 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    @extend_schema(responses=inline_serializer("BatchRemoved", {
+        "name": drf_serializers.CharField(), "removed": drf_serializers.IntegerField(),
+        "kept": drf_serializers.IntegerField()}))
+    def destroy(self, request, *args, **kwargs):
+        """Manager: „Usuń tę bazę”. Firmy, do których nikt nie dzwonił, znikają;
+        firmy z historią pracy (rozmowy, oferty, sprzedaż) zostają w CRM bez bazy."""
+        from .batches import remove_batch
+        return Response(remove_batch(self.get_object()))
+
+    @extend_schema(responses=inline_serializer("BatchOverview", {
+        "id": drf_serializers.IntegerField(), "name": drf_serializers.CharField(),
+        "created_at": drf_serializers.DateTimeField(), "assigned_to": drf_serializers.IntegerField(allow_null=True),
+        "assigned_to_name": drf_serializers.CharField(), "total": drf_serializers.IntegerField(),
+        "untouched": drf_serializers.IntegerField()}, many=True))
+    @action(detail=False, methods=["get"])
+    def overview(self, request):
+        """Manager: wgrane bazy z liczbą firm i ile z nich jeszcze bez telefonu (strona Import)."""
+        if not is_manager(request.user):
+            raise PermissionDenied("Tylko manager.")
+        from .batches import overview
+        return Response(overview())
+
     @extend_schema(request=ImportLeadsSerializer, responses=ImportResultSerializer)
     @action(
         detail=False,

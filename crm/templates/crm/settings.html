@@ -78,9 +78,9 @@
         <p class="card-desc" id="mail-state"></p>
         <form id="offer-form" class="form-grid" novalidate>
             <label class="field">Sposób wysyłki
-                <select id="oc-mode" class="select"><option value="forward">Na jeden adres (np. Czarek wysyła klientom)</option><option value="direct">Od razu do klienta</option></select></label>
+                <select id="oc-mode" class="select"><option value="forward">Na jeden adres (np. jedna osoba wysyła klientom)</option><option value="direct">Od razu do klienta</option></select></label>
             <label class="field">Adres do przekazywania ofert<input id="oc-email" type="email" class="select" placeholder="np. czarek@firma.pl"></label>
-            <label class="field">Kto wysyła oferty (imię)<input id="oc-name" class="select" maxlength="60" placeholder="Czarek"></label>
+            <label class="field">Kto wysyła oferty (imię)<input id="oc-name" class="select" maxlength="60" placeholder="np. Jan"></label>
             <label class="field">Domyślny okres umowy<select id="oc-term" class="select"><option value="36">36 miesięcy</option><option value="24">24 miesiące</option></select></label>
             <label class="field">Mnożnik prowizji – 36 mies.<input id="oc-c36" class="select" inputmode="decimal" placeholder="9"></label>
             <label class="field">Mnożnik prowizji – 24 mies.<input id="oc-c24" class="select" inputmode="decimal" placeholder="6"></label>
@@ -150,8 +150,8 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=130"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=130"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=130"></script>
-<script src="{% static 'crm/js/recordings.js' %}?v=130"></script>
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=134"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=134"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=134"></script>
+<script src="{% static 'crm/js/recordings.js' %}?v=134"></script>
 <script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();CRM.initRecordings();</script>{% endblock %}

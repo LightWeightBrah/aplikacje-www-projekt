@@ -22,6 +22,7 @@ urlpatterns = [
     path("settings/test-sms/<int:pk>/", rules_api.TestSmsStateView.as_view(), name="test-sms-state"),
     path("leaderboard/", views.LeaderboardView.as_view(), name="leaderboard"),
     path("reports/", reports_api.ReportsView.as_view(), name="reports"),
+    path("reports/agent/", reports_api.AgentReportView.as_view(), name="reports-agent"),
     # praca agenta: „Następny klient”, liczniki follow-upów i liczby dnia
     path("work/next/", work_api.NextWorkView.as_view(), name="work-next"),
     path("work/summary/", work_api.WorkSummaryView.as_view(), name="work-summary"),

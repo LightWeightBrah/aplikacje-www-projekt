@@ -237,6 +237,9 @@ CRM.initReminders = function initReminders() {
     el.querySelector(".rem-kind").textContent = soft ? (new Date(iso).getTime() < now ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie";
     el.querySelector(".rem-icon").innerHTML = late ? ICON_ALERT : ICON_PHONE;
   }
+  // Klient ma już ofertę, a potem umówił oddzwonienie: zielona plakietka obok „Do oddzwonienia”
+  const offerChip = (l) => l.last_offer_at && l.status !== "offer"
+    ? `<span class="chip rem-chip" style="--c:#22c55e" title="${esc([l.last_offer_name, l.last_offer_monthly ? CRM.money(l.last_offer_monthly) + "/mies." : ""].filter(Boolean).join(" · "))}">Oferta wysłana ${esc(dm(l.last_offer_at))}, ${esc(hhmm(l.last_offer_at))}</span>` : "";
   function leadCard(l, now) {
     const tel = String(l.phone || "").replace(/[^\d+]/g, "");
     const missed = l.missed_calls > 0 && l.agreed_contact_at
@@ -259,7 +262,7 @@ CRM.initReminders = function initReminders() {
       ${moved}
       <div class="rem-body">
         <div class="rem-name">${esc(CRM.leadTitle(l))}</div>
-        ${st ? `<div class="rem-tags"><span class="chip rem-chip" style="--c:${st[1]}">${esc(st[0])}</span></div>` : ""}
+        ${st ? `<div class="rem-tags"><span class="chip rem-chip" style="--c:${st[1]}">${esc(st[0])}</span>${offerChip(l)}</div>` : ""}
         <div class="rem-company">${[l.contact_name && l.contact_name !== CRM.leadTitle(l) ? esc(l.contact_name) : "", esc(l.phone || "")].filter(Boolean).join(" · ")}</div>
         ${l.next_contact_note ? `<div class="rem-note"><div class="rem-label">Sprawa do omówienia</div><div class="rem-note-text">${esc(l.next_contact_note)}</div></div>` : ""}
         <div class="rem-when">

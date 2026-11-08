@@ -136,6 +136,38 @@ def _slot_of(rules, moment):
     return max(i for i, s in enumerate(starts) if minutes >= s or i == 0)
 
 
+ANSWER_STATS_DAYS = 30        # z ilu ostatnich dni liczymy, o której porze firmy odbierają
+ANSWER_STATS_MIN_CALLS = 30   # tyle telefonów w każdej porze, żeby wynik coś znaczył
+
+
+def answer_rates_by_slot(rules, now=None):
+    """Jak często firmy odbierają w każdej porze dnia (cały zespół, ostatnie 30 dni): [0..1] × SLOTS.
+
+    None, gdy danych jest za mało – wtedy pory dnia zwyczajnie się rotują. Wynik zmienia tylko to,
+    NA KIEDY CRM ustawia ponowną próbę; agent dalej dzwoni przez cały dzień do wszystkich firm."""
+    from django.db.models import Count, Q
+    from django.db.models.functions import ExtractHour, ExtractMinute
+
+    from .models import NON_CALL_OUTCOMES, Activity
+
+    now = now or timezone.now()
+    tz = timezone.get_current_timezone()
+    rows = (Activity.objects.filter(created_at__gte=now - timedelta(days=ANSWER_STATS_DAYS), created_at__lt=now)
+            .exclude(outcome__in=NON_CALL_OUTCOMES)
+            .annotate(h=ExtractHour("created_at", tzinfo=tz), m=ExtractMinute("created_at", tzinfo=tz))
+            .order_by().values("h", "m")
+            .annotate(calls=Count("id"), answered=Count("id", filter=~Q(outcome=Activity.Outcome.NO_ANSWER))))
+    calls, answered = [0] * SLOTS, [0] * SLOTS
+    for r in rows:
+        slot = _slot_of(rules, timezone.localtime(now).replace(hour=r["h"], minute=r["m"]))
+        if slot is not None:
+            calls[slot] += r["calls"]
+            answered[slot] += r["answered"]
+    if min(calls) < ANSWER_STATS_MIN_CALLS:
+        return None
+    return [a / c for a, c in zip(answered, calls)]
+
+
 def attempt_times(rules, attempts):
     """Momenty wcześniejszych prób do rotacji godzin; `attempts` = pary (kiedy dzwoniono, na kiedy przełożono).
 
@@ -174,7 +206,7 @@ def _gap_time(rules, day, previous, earliest=None):
     return day
 
 
-def suggest_retry(rules, tries_before, now=None, previous=()):
+def suggest_retry(rules, tries_before, now=None, previous=(), slot_rates=None):
     """Proponowany termin ponownej próby po nieodebranym telefonie.
 
     Termin wypada w godzinach pracy. Gdy wyliczony moment jest poza nimi (np. dzwonisz wieczorem),
@@ -182,6 +214,8 @@ def suggest_retry(rules, tries_before, now=None, previous=()):
     rotujemy z numerem próby, żeby nie wychodziło zawsze to samo (9:30, 12:00, 15:00, ...).
     `previous` = momenty wcześniejszych prób (z bieżącą włącznie): pory, w których już dzwoniono
     w godzinach pracy, pomijamy, bo klient, który nie odbiera o 10, może odebrać po południu.
+    `slot_rates` (z `answer_rates_by_slot`): gdy próba wypada na inny dzień, najpierw pora,
+    w której firmy najczęściej odbierają (spośród jeszcze niepróbowanych).
     """
     now = now or timezone.now()
     moment = timezone.localtime(now + timedelta(minutes=retry_delay_minutes(rules, tries_before)))
@@ -204,6 +238,8 @@ def suggest_retry(rules, tries_before, now=None, previous=()):
     if forced_day is not None:
         # wybór pory z rotacją: próba 0 -> rano, 1 -> środek dnia, 2 -> popołudnie, ...
         order = [(tries_before + i) % SLOTS for i in range(SLOTS)]
+        if slot_rates:   # najpierw pory, w których firmy częściej odbierają; rotacja rozstrzyga remis
+            order.sort(key=lambda s: -round(slot_rates[s] * 20))   # co 5 punktów procentowych, drobne różnice to przypadek
         slot = next((i for i in order if i not in used), None)
         if slot is None:   # wszystkie pory były już próbowane: szukamy godziny najdalszej od dotychczasowych
             return _gap_time(rules, forced_day, previous)

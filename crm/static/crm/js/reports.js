@@ -100,6 +100,84 @@ CRM.initReports = function initReports() {
       $("page-error").hidden = false;
     }
   }
-  $("rp-days").addEventListener("change", load);
+  /* ---------- „Wszystko po agencie” ---------- */
+  const mins = (m) => CRM.talk(m || 0);
+  const secs = (s) => (s == null ? "" : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`);
+  const agentUrl = (extra = "") => `/api/reports/agent/?user=${$("ag-user").value}&days=${$("rp-days").value}${extra}`;
+  const block = (title, inner) => `<h3 class="ag-h">${title}</h3>${inner}`;
+  // ag-list: Sprzedaż, Oferty i Rozmowy mają te same szerokości pierwszych kolumn („Kiedy”, „Firma”), więc tabele są równo pod sobą
+  const table = (head, rows, empty, cls = "") => rows.length
+    ? `<div class="table-wrap"><table class="table rp-table ${cls}"><thead><tr>${head.map((h) => `<th${h[1] ? ' class="num"' : ""}>${esc(h[0])}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`
+    : `<p class="muted">${esc(empty)}</p>`;
+
+  function agentHtml(d) {
+    const t = d.totals, p = d.person;
+    const tiles = [
+      ["Dni pracy", String(t.days_worked), `czas pracy ${mins(t.worked_minutes)}`],
+      ["Minuty rozmów", mins(t.talk_minutes), `powinno być ${mins(t.goal)}`],
+      ["Telefony", String(t.calls), `odebrane: ${t.talks}`],
+      ["Oferty / sprzedane", `${t.offers} / ${t.sold}`, t.calls_per_sale ? `${t.calls_per_sale} rozmów na 1 sprzedaż` : "bez sprzedaży w tym okresie"],
+      ["Prowizja", money(t.commission), `pominięte firmy: ${t.skipped}`],
+      ["Klienci teraz", String(t.clients_now), "prowadzi ich teraz (do przejęcia)"],
+    ];
+    const who = `<p class="small muted">${esc(p.name)} (${esc(p.username)})${p.active ? "" : " · <b>konto wyłączone</b>"} · w CRM od ${esc(day(p.joined))}${p.last_login ? ` · ostatnio zalogowany ${esc(dayTime(p.last_login))}` : ""} · okres ${esc(day(d.date_from))} – ${esc(day(d.date_to))}</p>`;
+    const kp = `<div class="kpis ag-kpis">${tiles.map(([l, v, s]) => `<div class="kpi"><span>${esc(l)}</span><strong>${esc(v)}</strong><small>${esc(s)}</small></div>`).join("")}</div>`;
+    const daysT = table([["Dzień"], ["Czas pracy", 1], ["Minuty rozmów", 1], ["Powinno być", 1], ["Telefony", 1], ["Odebrane", 1], ["Oferty", 1], ["Sprzedane", 1]],
+      d.days.map((x) => `<tr><td class="nowrap">${esc(day(x.date))}</td><td class="num">${mins(x.worked_minutes)}</td><td class="num">${mins(x.minutes)}</td><td class="num">${mins(x.goal)}</td>
+        <td class="num">${x.calls}</td><td class="num">${x.talks}</td><td class="num">${x.offers}</td><td class="num"><b>${x.sold}</b></td></tr>`), "W tym okresie nie pracował.");
+    const outT = d.outcomes.length ? `<div class="ag-out">${d.outcomes.map((o) => `<span class="rp-day"><b>${esc(o.label)}</b> ${o.count}</span>`).join("")}</div>` : `<p class="muted">Brak rozmów.</p>`;
+    const salesT = table([["Kiedy"], ["Firma"], ["Usługa"], ["Ilość", 1], ["Umowa", 1], ["Prowizja", 1]],
+      d.sales.map((x) => `<tr><td class="nowrap">${esc(dayTime(x.at))}</td><td>${link(x.lead, x.name)}</td><td>${esc(x.product)}${x.promo ? ` <small class="muted">(${esc(x.promo)})</small>` : ""}</td>
+        <td class="num">${x.quantity}</td><td class="num">${x.term_months ? x.term_months + " mies." : "–"}</td><td class="num nowrap">${esc(money(x.commission))}</td></tr>`), "Bez sprzedaży w tym okresie.", "ag-list");
+    const offT = table([["Kiedy"], ["Firma"], ["Oferta"], ["Mies.", 1], ["Status teraz"], ["Prowadzi teraz"]],
+      d.offers.map((x) => `<tr><td class="nowrap">${esc(dayTime(x.at))}</td><td>${link(x.lead, x.name)}</td><td>${esc(x.product)}</td><td class="num nowrap">${esc(money(x.monthly))}</td><td>${esc(x.status)}</td><td>${esc(x.owner_now)}</td></tr>`), "Bez ofert w tym okresie.", "ag-list");
+    const cl = d.clients.map((g) => `<details class="ag-group"${g.count && g.segment !== "new" ? " open" : ""}><summary><b>${esc(g.label)}</b> <span class="muted">${g.count}</span></summary>`
+      + (g.rows.length ? `<ul class="rp-list">${g.rows.map((x) => `<li>${link(x.lead, x.name)}<span class="muted small">${esc(x.phone)}${x.next_contact_at ? ` · termin ${esc(dayTime(x.next_contact_at))}` : ""}</span></li>`).join("")}</ul>`
+        + (g.count > g.rows.length ? `<p class="muted small">…i ${g.count - g.rows.length} więcej (wszyscy są w pliku Excel).</p>` : "") : `<p class="muted small">Nikogo.</p>`) + `</details>`).join("");
+    const logT = table([["Kiedy"], ["Firma"], ["Wynik"], ["Rozmowa", 1], ["Komentarz"]],
+      d.log.map((x) => `<tr><td class="nowrap">${esc(dayTime(x.at))}</td><td>${link(x.lead, x.name)}<small class="muted rp-sub">${esc(x.phone)}</small></td><td>${esc(x.outcome)}</td><td class="num nowrap">${secs(x.seconds)}</td><td class="ag-note">${esc(x.note || "")}</td></tr>`), "Brak rozmów w tym okresie.", "ag-list");
+    return who + kp
+      + block("Dzień po dniu", daysT)
+      + block("Wyniki rozmów", outT)
+      + block("Sprzedaż", salesT)
+      + block("Wysłane oferty", offT)
+      + block("Klienci, których prowadzi teraz", `<div class="ag-groups">${cl}</div>`)
+      + block(`Wszystkie rozmowy <small class="muted">(${d.log_total}${d.log_total > d.log.length ? `, na stronie ostatnie ${d.log.length} – reszta w pliku Excel` : ""})</small>`, logT);
+  }
+  async function loadAgent() {
+    const id = $("ag-user").value;
+    $("ag-xlsx").hidden = !id;
+    if (!id) { $("ag-body").innerHTML = ""; return; }
+    $("ag-body").innerHTML = `<p class="muted">Wczytuję…</p>`;
+    try {
+      const r = await api(agentUrl());
+      if (!r.ok) throw new Error();
+      if ($("ag-user").value === id) $("ag-body").innerHTML = agentHtml(await r.json());
+    } catch { $("ag-body").innerHTML = `<p class="form-error">Nie udało się wczytać raportu tej osoby.</p>`; }
+  }
+  (async () => {
+    try {
+      const r = await api("/api/reports/agent/");
+      if (!r.ok) return;
+      const { people } = await r.json();
+      $("ag-user").insertAdjacentHTML("beforeend", people.map((x) => `<option value="${x.id}">${esc(x.name)}${x.active ? "" : " (konto wyłączone)"}</option>`).join(""));
+    } catch { /* bez listy sekcja zostaje pusta */ }
+  })();
+  $("ag-user").addEventListener("change", loadAgent);
+  $("ag-xlsx").addEventListener("click", async () => {
+    const btn = $("ag-xlsx"); btn.disabled = true;
+    try {
+      const r = await api(agentUrl("&file=xlsx"));
+      if (!r.ok) throw new Error();
+      const name = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(await r.blob());
+      const a = Object.assign(document.createElement("a"), { href: url, download: name ? name[1] : "praca-agenta.xlsx" });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch { $("ag-body").insertAdjacentHTML("afterbegin", `<p class="form-error">Nie udało się pobrać pliku.</p>`); }
+    btn.disabled = false;
+  });
+
+  $("rp-days").addEventListener("change", () => { load(); loadAgent(); });
   load();
 };

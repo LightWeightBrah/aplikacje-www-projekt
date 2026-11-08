@@ -597,7 +597,7 @@ class OfferConfig(models.Model):
 
     mode = models.CharField("sposób wysyłki", max_length=10, choices=Mode.choices, default=Mode.FORWARD)
     forward_email = models.EmailField("adres do przekazywania ofert", blank=True)
-    forward_name = models.CharField("kto wysyła oferty (imię)", max_length=60, blank=True, default="Czarek")
+    forward_name = models.CharField("kto wysyła oferty (imię)", max_length=60, blank=True, default="")
     commission_24 = models.DecimalField("mnożnik prowizji – umowa 24 mies.", max_digits=5, decimal_places=2, default=6)
     commission_36 = models.DecimalField("mnożnik prowizji – umowa 36 mies.", max_digits=5, decimal_places=2, default=9)
     default_term = models.PositiveSmallIntegerField("domyślny okres umowy (mies.)", default=36)

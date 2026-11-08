@@ -69,11 +69,35 @@
     </section>
 
     <section class="card">
+        <h2>Wgrane bazy</h2>
+        <p class="muted small">„Usuń tę bazę” usuwa firmy, do których nikt jeszcze nie dzwonił. Firmy z rozmowami, ofertami albo sprzedażą zostają w CRM razem z całą historią.</p>
+        <div class="table-wrap"><table class="table" id="batches-table"></table></div>
+        <p class="muted small" id="batches-empty" hidden>Nie ma jeszcze żadnej wgranej bazy.</p>
+        <p class="small" id="batches-msg" role="status" hidden></p>
+    </section>
+    <dialog id="del-dialog" class="dialog">
+        <form id="del-form" novalidate>
+            <h2>Usunąć bazę „<span id="del-name"></span>”?</h2>
+            <ul class="del-facts">
+                <li>Zniknie <b id="del-fresh"></b>, do których nikt jeszcze nie dzwonił.</li>
+                <li id="del-kept-row"><b id="del-kept"></b> z rozmowami, ofertami albo sprzedażą zostaje w CRM razem z historią.</li>
+                <li>Tego nie da się cofnąć.</li>
+            </ul>
+            <label class="field">Żeby potwierdzić, wpisz <b>USUŃ</b><input id="del-word" class="select" autocomplete="off" spellcheck="false"></label>
+            <p class="form-error" id="del-error" hidden></p>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-secondary" id="del-cancel">Anuluj</button>
+                <button type="submit" class="btn btn-danger" id="del-ok" disabled>Usuń bazę</button>
+            </div>
+        </form>
+    </dialog>
+
+    <section class="card">
         <h2>Eksport do Excela</h2>
         <p class="muted small">Pobiera wszystkie leady do pliku <code>leady.xlsx</code>. Eksport z filtrami zrobisz w <a href="{% url 'crm:manager' %}">panelu managera</a>.</p>
         <div class="actions"><button type="button" class="btn btn-secondary" id="export-all">Pobierz wszystkie leady</button></div>
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/import.js' %}?v=130"></script>
+{% block scripts %}<script src="{% static 'crm/js/import.js' %}?v=134"></script>
 <script>CRM.initImport();</script>{% endblock %}

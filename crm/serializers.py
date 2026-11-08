@@ -287,6 +287,10 @@ class LeadSerializer(serializers.ModelSerializer):
     last_contact_agent = serializers.SerializerMethodField()
     # Kto ostatnio zmienił „Stałe informacje o kliencie” (imię i nazwisko albo login)
     client_comment_by_name = serializers.SerializerMethodField()
+    # Ostatnia wysłana oferta (listy i przypomnienia: „Oferta wysłana” także przy „Do oddzwonienia”)
+    last_offer_at = serializers.SerializerMethodField()
+    last_offer_name = serializers.SerializerMethodField()
+    last_offer_monthly = serializers.SerializerMethodField()
     # Od kiedy wolno przenieść numery (12 miesięcy przed końcem umowy); null = nie wiadomo / bez terminu
     porting_from = serializers.DateField(read_only=True, allow_null=True)
 
@@ -329,6 +333,20 @@ class LeadSerializer(serializers.ModelSerializer):
             validated_data["client_comment_by"] = request.user if request and request.user.is_authenticated else None
             validated_data["client_comment_at"] = timezone.now()
         return super().update(instance, validated_data)
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_last_offer_at(self, obj):
+        value = getattr(obj, "last_offer_at", None)
+        return value.isoformat() if value else None
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_last_offer_name(self, obj):
+        return getattr(obj, "last_offer_name", None)
+
+    @extend_schema_field(OpenApiTypes.DECIMAL)
+    def get_last_offer_monthly(self, obj):
+        value = getattr(obj, "last_offer_monthly", None)
+        return f"{Decimal(value):.2f}" if value is not None else None
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_last_contact_outcome(self, obj):

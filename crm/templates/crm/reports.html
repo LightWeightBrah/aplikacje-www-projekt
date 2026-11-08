@@ -56,7 +56,17 @@
             <div><h3>Najbliżsi do przeniesienia</h3><div id="rp-upcoming"></div></div>
         </div>
     </section>
+
+    <section class="card" id="ag-card">
+        <div class="ag-head">
+            <h2>Wszystko po agencie</h2>
+            <select id="ag-user" class="select" aria-label="Osoba"><option value="">Wybierz osobę…</option></select>
+            <button type="button" class="btn btn-secondary" id="ag-xlsx" hidden>Pobierz do Excela</button>
+        </div>
+        <p class="card-desc">Cała praca jednej osoby w wybranym okresie: dni i czas pracy, minuty rozmów, wyniki, oferty, sprzedaż i każda rozmowa. Także dla osób, które już nie pracują (konto wyłączone). Niżej klienci, których prowadzi teraz – tych trzeba przejąć, gdy ktoś odchodzi (Zespół → przepisz leady).</p>
+        <div id="ag-body"></div>
+    </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/reports.js' %}?v=130"></script>
+{% block scripts %}<script src="{% static 'crm/js/reports.js' %}?v=134"></script>
 <script>CRM.initReports();</script>{% endblock %}

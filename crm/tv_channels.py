@@ -37,6 +37,28 @@ CHANNELS = {
     ),
 }
 
+PLANS = ("S", "M", "L")
+
+
+def own_groups(plan):
+    """Kanały, które dochodzą w tym pakiecie: [(kategoria, [kanały])]."""
+    out = []
+    for line in CHANNELS[plan]:
+        group, names = line.split(":", 1)
+        out.append((group.strip(), [c.strip() for c in names.split(",") if c.strip()]))
+    return out
+
+
+def all_groups(plan):
+    """WSZYSTKIE kanały pakietu (M = S + M, L = S + M + L), połączone w kategorie:
+    agent widzi w L też np. Nickelodeon z pakietu S, a nie tylko kanały dochodzące w L."""
+    groups = {}
+    for p in PLANS[:PLANS.index(plan) + 1]:
+        for group, names in own_groups(p):
+            groups.setdefault(group, []).extend(n for n in names if n not in groups.get(group, []))
+    return list(groups.items())
+
+
 # Pakiet dodatkowy (za dopłatą, osobno od S / M / L)
 CANAL_PLUS_SUPER_SPORT = (
     "CANAL+ PREMIUM",

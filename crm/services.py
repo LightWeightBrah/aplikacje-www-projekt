@@ -16,9 +16,9 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.renderers import BaseRenderer
 
-from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, Lead, LeadAssignment, SaleItem
+from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, Lead, LeadAssignment, Offer, SaleItem
 from .roles import AGENT
-from .rules import attempt_times, callback_retry_at, fit_work_time, get_rules, suggest_retry
+from .rules import answer_rates_by_slot, attempt_times, callback_retry_at, fit_work_time, get_rules, suggest_retry
 from .phrases import skip_never
 
 # Statusy leadów, nad którymi agent jeszcze pracuje
@@ -132,12 +132,23 @@ def with_owner_tries(queryset):
         Activity.objects.filter(lead=OuterRef("pk")).exclude(outcome__in=NON_CALL_OUTCOMES)
         .order_by("-created_at", "-pk")
     )
-    return queryset.annotate(
+    return with_last_offer(queryset.annotate(
         owner_no_answers=Coalesce(Subquery(tries), 0),
         last_contact_outcome=Subquery(last.values("outcome")[:1]),
         last_contact_at=Subquery(last.values("created_at")[:1]),
         last_contact_agent=Subquery(last.values("agent")[:1]),
-    ).prefetch_related(earlier)
+    ).prefetch_related(earlier))
+
+
+def with_last_offer(queryset):
+    """Dodaje do leadów ostatnią wysłaną ofertę (`last_offer_at`, `last_offer_name`, `last_offer_monthly`):
+    lista klientów i przypomnienie pokazują „oferta wysłana”, też gdy klient potem poprosił o oddzwonienie."""
+    last = Offer.objects.filter(lead=OuterRef("pk")).order_by("-created_at", "-pk")
+    return queryset.annotate(
+        last_offer_at=Subquery(last.values("created_at")[:1]),
+        last_offer_name=Subquery(last.values("product_name")[:1]),
+        last_offer_monthly=Subquery(last.values("monthly_total")[:1]),
+    )
 
 
 def overdue_leads(user):
@@ -156,12 +167,12 @@ def overdue_leads(user):
 def due_leads(user, minutes):
     """Leady agenta do zrobienia: zaległe oraz takie z terminem w ciągu `minutes` minut."""
     now = timezone.now()
-    queryset = with_transfer_info(Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by").filter(
+    queryset = with_last_offer(with_transfer_info(Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by").filter(
         owner=user,
         status__in=ACTIVE_STATUSES,
         next_contact_at__isnull=False,
         next_contact_at__lte=now + timedelta(minutes=minutes),
-    )).order_by("next_contact_at")   # „przepisany od …” na karcie przypomnienia
+    ))).order_by("next_contact_at")   # „przepisany od …” na karcie przypomnienia
     overdue = [lead for lead in queryset if lead.next_contact_at < now]
     upcoming = [lead for lead in queryset if lead.next_contact_at >= now]
     return overdue, upcoming
@@ -425,7 +436,8 @@ def register_activity(
                 lead_id=lead.pk, outcome=outcome).values_list("created_at", "rescheduled_to"))
             earlier = attempt_times(rules, attempts_raw)
             if tries_before + 1 < rules.max_attempts_per_agent:
-                suggested = suggest_retry(rules, tries_before, now, earlier + [now])
+                suggested = suggest_retry(rules, tries_before, now, earlier + [now],
+                                          slot_rates=answer_rates_by_slot(rules, now))
                 # Termin ustawiony wcześniej spoza rozmów (np. wpisany ręcznie albo przez managera)
                 # i późniejszy niż propozycja zostaje. Termin, który powstał przy poprzednich próbach
                 # (automatyczny albo z formularza), zastępuje nowa propozycja: inaczej rotacja godzin

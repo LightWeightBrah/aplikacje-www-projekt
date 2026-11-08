@@ -555,7 +555,7 @@ def build_offer(config, lead, agent, lines, client_email):
     if config.mode == OfferConfig.Mode.FORWARD:
         company_line = company + (f", NIP {lead.company.nip}" if lead.company and lead.company.nip else "")
         note = (
-            # Czarek robi to codziennie – same dane, bez formułek
+            # osoba od ofert robi to codziennie – same dane, bez formułek
             f"Adres klienta: {client_email or '(brak – trzeba dopytać)'}\n"
             f"Firma: {company_line}\nTelefon: {lead.phone}\nAgent: {agent_name}\n"
             f"{'-' * 40}\n\n"

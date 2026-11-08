@@ -534,7 +534,7 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .w-pdialog #pinfo-find{width:100%;margin:.7rem 0}
 .w-plist{display:grid;gap:.7rem;margin-top:.7rem;overflow:auto;max-height:64vh}
 .w-pcard{border:1px solid var(--line);border-radius:12px;padding:.6rem .9rem}.w-pcard h3{margin:0 0 .2rem;font-size:1rem}
-.dialbar #db-dial{margin-left:.4rem}
+.dialbar #db-dial{margin-left:0}
 /* skróty klawiszowe wyłączone w „Moje ustawienia”: chowamy podpowiedzi */
 .no-keys .w-out kbd,.no-keys .w-next kbd,.no-keys .w-kbd,.no-keys .gs-key,.no-keys .w-out-title small{display:none}
 /* Ustawienia: urządzenia z dostępem */
@@ -743,3 +743,25 @@ html.nav-going .topnav::before{content:"";position:absolute;left:0;bottom:-2px;h
 /* Ustawienia i oferty → „Wynik rozmowy: powody i gotowe przyciski” */
 .phrase-lists{display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:.8rem 1rem;margin-top:.9rem}
 .phrase-list textarea{width:100%;resize:vertical;font:inherit;font-size:.92rem;line-height:1.45}
+
+/* Raporty → „Wszystko po agencie” */
+.ag-head{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem 1rem;margin-bottom:.7rem}
+#ag-card>.card-desc{margin-top:0}
+.ag-head h2{margin:0;margin-right:auto}
+.ag-head .select{min-width:16rem;width:auto}
+.ag-kpis{margin:.8rem 0 .4rem}
+.ag-h{font-size:1rem;margin:1.3rem 0 .55rem}
+.ag-out{display:flex;flex-wrap:wrap;gap:.4rem}
+.ag-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:.7rem;align-items:start}
+.ag-group{border:1px solid var(--line);border-radius:12px;padding:.55rem .75rem}
+.ag-group summary{cursor:pointer;list-style-position:inside}
+.ag-group .rp-list{margin-top:.5rem;max-height:22rem;overflow:auto}
+.ag-note{max-width:28rem;white-space:pre-wrap;font-size:.85rem}
+#ag-body .rp-table td:first-child{white-space:nowrap}
+.del-facts{margin:.4rem 0 1rem;padding-left:1.2rem;line-height:1.6}
+/* Tabele „Sprzedaż”, „Wysłane oferty”, „Wszystkie rozmowy” – równe kolumny „Kiedy” i „Firma” */
+#ag-body .ag-list{table-layout:fixed;width:100%}
+#ag-body .ag-list th:nth-child(1){width:9rem}
+#ag-body .ag-list th:nth-child(2){width:28%}
+#ag-body .ag-list td:nth-child(2){overflow-wrap:anywhere}
+.wi-offer{color:#22c55e;font-weight:600}

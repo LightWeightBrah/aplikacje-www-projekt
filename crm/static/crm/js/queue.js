@@ -94,7 +94,7 @@
   /* ---------- stan ---------- */
   let tourDemo = false;
   let leads = [], current = null, segFilter = "all", tab = "todo", summary = null, history = [];
-  let plans = [], config = { default_term: 36, promo_label: "6 miesięcy gratis", mode: "forward", forward_name: "Czarek", forward_email: "" };
+  let plans = [], config = { default_term: 36, promo_label: "6 miesięcy gratis", mode: "forward", forward_name: "", forward_email: "" };
   let dialer = { online: false, paired: false, call: null };
   let form = null;   // stan formularza wyniku: { outcome, ... }
 
@@ -122,7 +122,7 @@
     const sub = [l.phone, l.company_city].filter(Boolean).map(esc).join(" · ");
     return `<button type="button" class="w-item${current && current.id === l.id ? " active" : ""}" data-id="${l.id}" style="--c:${SEG[s] ? SEG[s].color : "var(--line)"}">
       <span class="wi-top"><strong>${esc(title(l))}</strong><span class="wi-when${whenCls}">${esc(whenTxt)}</span></span>
-      <span class="wi-sub">${sub}${s === "retry" ? ` · nie odebrał ${l.owner_no_answers || l.attempts_count}×` : ""}</span>
+      <span class="wi-sub">${sub}${s === "retry" ? ` · nie odebrał ${l.owner_no_answers || l.attempts_count}×` : ""}${l.last_offer_at && l.status !== "offer" ? ` · <span class="wi-offer">oferta wysłana</span>` : ""}</span>
       ${l.next_contact_note ? `<span class="wi-topic">${esc(l.next_contact_note)}</span>` : ""}</button>`;
   }
   function renderList() {
@@ -393,6 +393,8 @@
 
   const lastOffer = (d) => (d.activities || []).find((a) => a.outcome === "offer" && a.offer);
   const lastNote = (d) => (d.activities || []).find((a) => a.note);
+  // „Oferta M × 1, 36 mies., 70,00 zł/mies. · wysłana dziś 22:16 na …” – też gdy klient potem poprosił o oddzwonienie
+  const offerLine = (o) => `Oferta <b>${esc(o.offer.product_name)} × ${o.offer.quantity}</b>, ${o.offer.term_months} mies., <b>${money(o.offer.monthly_total)}</b>/mies. · wysłana ${esc(when(o.created_at))}${o.offer.client_email ? ` na ${esc(o.offer.client_email)}` : ""}`;
   function reasonHtml(d) {
     const s = segOf(d), t = d.next_contact_at, late = t && new Date(t) < Date.now() - 60000 && ["offer", "callback"].includes(s);
     const lateTxt = late ? ` · <b style="color:var(--late)">spóźnione ${rel(t).replace(" temu", "")}</b>` : t ? ` · ${esc(when(t))}` : "";
@@ -400,10 +402,11 @@
     if (s === "offer") {
       const o = lastOffer(d);
       head = d.status === "offer" ? "Follow-up po wysłanej ofercie" : "Zainteresowany – wyślij ofertę";
-      desc = o ? `Oferta <b>${esc(o.offer.product_name)} × ${o.offer.quantity}</b>, ${o.offer.term_months} mies., <b>${money(o.offer.monthly_total)}</b>/mies. · wysłana ${esc(when(o.created_at))}${o.offer.client_email ? ` na ${esc(o.offer.client_email)}` : ""}` : "Klient chce poznać ofertę.";
+      desc = o ? offerLine(o) : "Klient chce poznać ofertę.";
     } else if (s === "callback") {
-      head = "Umówione oddzwonienie";
-      desc = d.knows_caller ? "Klient <b>wie, że dzwonimy z ofertą T-Mobile</b>." : "<b>Nie mówiliśmy jeszcze, skąd dzwonimy</b> – zacznij od przedstawienia się.";
+      const o = lastOffer(d);
+      head = o ? "Umówione oddzwonienie – klient ma już ofertę" : "Umówione oddzwonienie";
+      desc = o ? `${offerLine(o)}` : d.knows_caller ? "Klient <b>wie, że dzwonimy z ofertą T-Mobile</b>." : "<b>Nie mówiliśmy jeszcze, skąd dzwonimy</b> – zacznij od przedstawienia się.";
     } else if (s === "retry") {
       head = `Ponowna próba – nie odebrał ${d.owner_no_answers || d.attempts_count}×`;
       desc = "Jeszcze z nim nie rozmawialiśmy.";
@@ -449,6 +452,8 @@
     const st = CRM.STATUS[d.status] || [d.status, "#64748b"];
     const badges = [`<span class="w-badge" style="--c:${st[1]}">${esc(st[0])}</span>`];
     if (isCompanyEntity(d.company_name)) badges.push(`<span class="w-badge spolka" title="Spółka: zwykle trzeba trafić do osoby decyzyjnej (zarząd, właściciel)">Spółka</span>`);
+    const sentOffer = d.status !== "offer" && lastOffer(d);   // przy statusie „Oferta wysłana” mówi to już pierwsza plakietka
+    if (sentOffer) badges.push(`<span class="w-badge" style="--c:#22c55e" title="Szczegóły oferty są w pasku na górze i w historii kontaktów">Oferta wysłana ${esc(when(sentOffer.created_at))}</span>`);
     if (d.knows_caller) badges.push(`<span class="w-badge" style="--c:var(--ok)">Wie, skąd dzwonimy</span>`);
     if (d.operators) badges.push(`<span class="w-badge">Sieć: ${esc(d.operators.split(",").map((c) => (CRM.OPERATORS.find((o) => o[0] === c) || [c, c])[1]).join(", "))}</span>`);
     const ct = contractBadge(d); if (ct) badges.push(ct);
@@ -938,9 +943,18 @@
   function infoRows(text, chips) {
     return String(text || "").split("\n").map((x) => x.trim()).filter(Boolean).map((x) => {
       const m = x.match(/^([^:]{2,30}):\s*(.+)$/);
-      if (chips && m && !/^za dopłatą/i.test(x) && m[2].includes(",")) return { label: m[1], items: m[2].split(",").map((s) => s.trim()).filter(Boolean) };
+      if (chips && m && !/^(za dopłatą|liczba)/i.test(x) && m[2].includes(",")) return { label: m[1], items: m[2].split(",").map((s) => s.trim()).filter(Boolean) };
       return { label: m && m[1].length < 40 ? m[1] : "", text: m && m[1].length < 40 ? m[2] : x, line: x };
     });
+  }
+  /* Wszystkie kanały pakietu w kategoriach: kanały z S, potem dochodzące w M, potem w L */
+  function allChannelGroups(plan) {
+    const groups = new Map();
+    TV_PLANS.slice(0, TV_PLANS.indexOf(plan) + 1).forEach((x) => TV.packages[x].forEach((g) => {
+      const list = groups.get(g.group) || []; groups.set(g.group, list);
+      g.channels.forEach((c) => { if (!list.includes(c)) list.push(c); });
+    }));
+    return [...groups].map(([group, channels]) => ({ group, channels }));
   }
   const tvPlanOf = (p) => { const m = kindOf(p) === "tv" && p.name.match(/\b(S|M|L)\s*$/i); return m ? m[1].toUpperCase() : null; };
   function rowsHtml(rows, key) {
@@ -956,14 +970,13 @@
     const price = `<div class="w-pinfo-price">${money(p.price)} netto${Number(p.extra_price) > 0 ? ` · kolejny numer +${money(p.extra_price)}` : ""}</div>`
       + (promos.length ? `<ul class="w-pinfo-promos">${promos.map((x) => `<li><b>${esc(x.label || "Promocja")}</b>: ${x.months ? `${money(x.price)} przez ${x.months} mies., potem ` : ""}${money(x.after)}</li>`).join("")}</ul>` : "");
     const feat = p.features ? rowsHtml(infoRows(p.features, kindOf(p) === "tv"), key) : "";
-    // TV bez ściągi w taryfie: pokazujemy kanały z oficjalnej listy (tylko te, które dochodzą w tym pakiecie)
+    // TV bez ściągi w taryfie: WSZYSTKIE kanały pakietu z oficjalnej listy (M = S + M, L = S + M + L)
     const plan = tvPlanOf(p);
-    const own = !p.info && plan && TV ? TV.packages[plan].map((g) => ({ label: g.group, items: g.channels })) : null;
+    const own = !p.info && plan && TV ? allChannelGroups(plan).map((g) => ({ label: g.group, items: g.channels })) : null;
     const info = own ? rowsHtml(own, key) : p.info ? rowsHtml(infoRows(p.info, kindOf(p) === "tv"), key) : "";
-    const head = own && plan !== "S" ? `<li class="w-pinfo-sum">Wszystkie kanały z pakietu ${plan === "M" ? "S" : "S i M"}, a do tego:</li>` : "";
     return (key ? "" : price)
       + (feat ? `<div class="w-pinfo-h">W ofercie dla klienta</div><ul>${feat}</ul>` : "")
-      + (info ? `<div class="w-pinfo-h">${own ? `Kanały (lista T-Mobile, stan na ${esc(TV.as_of)})` : "Dla agenta"}</div><ul>${key ? "" : head}${info}</ul>` : "");
+      + (info ? `<div class="w-pinfo-h">${own ? `Kanały (lista T-Mobile, stan na ${esc(TV.as_of)})` : "Dla agenta"}</div><ul>${info}</ul>` : "");
   }
   /* Kanały pasujące do wpisu, najlepsze na górze: „1” → najpierw TVP 1, Polsat Sport 1, Eurosport 1 (całe słowo),
      potem kanały zaczynające się od wpisu, na końcu reszta. Każdy: od którego pakietu jest (-1 = tylko za dopłatą). */

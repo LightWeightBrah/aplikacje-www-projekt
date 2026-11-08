@@ -29,11 +29,11 @@
     <aside class="w-col w-side" id="side" aria-label="Dziś"></aside>
 </div>
 <footer class="dialbar" id="dialbar">
+    <button type="button" id="db-dial">☎ Zadzwoń na numer</button>
     <span class="db-dot" id="db-dot"></span><span class="db-state" id="db-state">Telefon: sprawdzam…</span>
     <span class="db-timer" id="db-timer" hidden>00:00</span>
     <button type="button" id="db-setup">Połącz telefon</button>
     <span class="db-min" id="db-min"></span>
-    <button type="button" id="db-dial">☎ Zadzwoń na numer</button>
 </footer>
 <dialog id="offer-dialog" class="dialog offer-done">
     <form method="dialog">
@@ -87,5 +87,5 @@
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
 {% block scripts %}{{ tv_channels|json_script:"tv-channels" }}
-<script src="{% static 'crm/js/when.js' %}?v=130"></script>
-<script src="{% static 'crm/js/queue.js' %}?v=130"></script>{% endblock %}
+<script src="{% static 'crm/js/when.js' %}?v=134"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=134"></script>{% endblock %}

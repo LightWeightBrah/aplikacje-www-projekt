@@ -8,7 +8,7 @@ i komenda `manage.py load_tariffs` (także na serwerze). Ceny potem zmienia mana
 from decimal import Decimal
 
 from .models import Product
-from .tv_channels import CANAL_PLUS_SUPER_SPORT, CHANNEL_COUNTS, CHANNELS, CHANNELS_AS_OF
+from .tv_channels import CANAL_PLUS_SUPER_SPORT, CHANNEL_COUNTS, CHANNELS_AS_OF, all_groups
 
 def features(*points):
     return chr(10).join(points)   # chr(10) = nowa linia: jeden punkt oferty w linii
@@ -93,13 +93,12 @@ def jump_features():
 
 def tv_info(plan):
     """Ściąga z kanałami pakietu (lista T-Mobile) – agent ma ją pod ręką, gdy klient pyta o kanały."""
-    head = {"S": [], "M": ["Wszystkie kanały z pakietu S, a do tego:"],
-            "L": ["Wszystkie kanały z pakietów S i M, a do tego:"]}[plan]
-    own = list(CHANNELS[plan])   # pakiety się sumują, więc tu tylko kanały dochodzące w tym pakiecie
+    # pakiety się sumują: w M i L pokazujemy WSZYSTKIE kanały (też te z S i M), nie tylko dochodzące
+    every = [f"{group}: {', '.join(names)}" for group, names in all_groups(plan)]
     return features(
         f"Liczba kanałów: {CHANNEL_COUNTS[plan]} (lista T-Mobile, stan na {CHANNELS_AS_OF})",
         "Oglądanie na dekoderze i na 3 urządzeniach naraz (telefon, tablet, komputer), wideo na żądanie (VOD)",
-        *head, *own,
+        *every,
         "Za dopłatą: pakiet CANAL+ SUPER SPORT (" + ", ".join(CANAL_PLUS_SUPER_SPORT[:6]) + " i inne)",
     )
 

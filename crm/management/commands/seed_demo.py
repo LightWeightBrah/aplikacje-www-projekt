@@ -36,9 +36,9 @@ CEIDG_BATCH_NAME = "Demo - baza CEIDG agent1"
 PRODUCTS = STANDARD_TARIFFS
 
 ANNOUNCEMENTS = (
-    ("Promocja: 6 miesięcy gratis", "Przy umowie na 36 miesięcy klient może dostać 6 miesięcy gratis (cena pierwszego numeru wyższa – patrz taryfy). Zawsze proponuj najpierw 36 miesięcy.", True),
+    ("Promocja: 6 miesięcy gratis", "6 miesięcy gratis możesz dać klientowi zawsze. Wtedy cena miesięczna jest wyższa (patrz taryfy), więc w całej umowie klient płaci więcej, a Twoja prowizja jest wyższa.", True),
     ("Cel dnia", "Minimum 15 minut rozmów na każdą godzinę pracy. Licznik minut jest w prawym panelu.", False),
-    ("Jak zacząć rozmowę", "Dzień dobry, dzwonię w sprawie usług komórkowych dla firmy – czy rozmawiam z osobą, która decyduje o abonamentach?", False),
+    ("Jak zacząć rozmowę", "Dzień dobry… z tej strony [Twoje imię], dzwonię w sprawie telefonów firmowych. Wiem, że dzwonię bez zapowiedzi, więc krótko: w pół minuty powiem, o co chodzi, a pan oceni, czy to w ogóle ma sens. Może tak być?", False),
     ("Spółka na linii? (plakietka „Spółka”)", "Najpierw zapytaj, kto decyduje o telefonach (zarząd, właściciel, biuro). Gdy odbiera sekretariat: poproś o imię decydującego i dobrą godzinę, zapisz to w „Oddzwonić”. Spółki mają zwykle więcej numerów, więc i większą prowizję.", False),
 )
 
