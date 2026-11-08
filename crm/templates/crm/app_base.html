@@ -201,12 +201,13 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
 </dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
 {% comment %}
-Zakładki otwierają się od razu, już z danymi: Chrome przygotowuje stronę w tle (z wczytanymi danymi),
-zanim agent kliknie. Zakładki w górnym menu – od razu po najechaniu kursorem („eager”), pozostałe linki
-po chwili trzymania kursora („moderate”). Przygotowana strona tylko CZYTA dane (app.js → apiCall).
+Zakładki otwierają się szybciej: Chrome pobiera w tle sam plik strony (prefetch), zanim agent kliknie.
+Zakładki w górnym menu – po najechaniu kursorem („eager”), pozostałe linki po chwili trzymania kursora
+(„moderate”). NIE „prerender”: przy szybkim klikaniu w czasie wczytywania innej strony Chrome zamykał
+całą kartę (sprawdzone u Juliana 09.11.2026 – po wyłączeniu wstępnego wczytywania problem znikał).
 {% endcomment %}
 <script type="speculationrules">
-{"prerender": [
+{"prefetch": [
  {"where": {"and": [{"href_matches": "/crm/*"}, {"selector_matches": ".topnav a"},
    {"not": {"href_matches": "/crm/login/*"}}, {"not": {"href_matches": "/crm/activate/*"}},
    {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
