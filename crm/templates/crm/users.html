@@ -75,6 +75,10 @@
             </select>
             <small class="muted" id="edit-role-hint"></small>
         </label>
+        <label class="field">Cel: minut rozmów na godzinę pracy
+            <input id="edit-goal" class="select" type="number" min="1" max="60" step="1" inputmode="numeric">
+            <small class="muted">Domyślnie 15. Np. 20 = przy 4 h pracy powinno być 80 min rozmów. Widać to w „Dzwonieniu”, „Minutach rozmów” i „Obecności”.</small>
+        </label>
         <p class="form-error" id="edit-error" hidden></p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" id="edit-cancel">Anuluj</button>
@@ -145,5 +149,5 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/users.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/users.js' %}?v=112"></script>
 <script>CRM.initUsers();</script>{% endblock %}

@@ -18,6 +18,8 @@ router.register("stats", views.StatsViewSet, basename="stats")
 urlpatterns = [
     path("settings/", rules_api.TeamRulesView.as_view(), name="team-rules"),
     path("settings/reset/", rules_api.TeamRulesResetView.as_view(), name="team-rules-reset"),
+    path("settings/test-sms/", rules_api.TestSmsView.as_view(), name="test-sms"),
+    path("settings/test-sms/<int:pk>/", rules_api.TestSmsStateView.as_view(), name="test-sms-state"),
     path("leaderboard/", views.LeaderboardView.as_view(), name="leaderboard"),
     # praca agenta: „Następny klient”, liczniki follow-upów i liczby dnia
     path("work/next/", work_api.NextWorkView.as_view(), name="work-next"),
@@ -46,5 +48,6 @@ urlpatterns = [
     path("dialer/pair/", work_api.DialerPairView.as_view(), name="dialer-pair"),
     path("dialer/poll/", work_api.DialerPollView.as_view(), name="dialer-poll"),
     path("dialer/calls/<int:pk>/finish/", work_api.DialerFinishView.as_view(), name="dialer-finish"),
+    path("dialer/sms/<int:pk>/done/", work_api.DialerSmsDoneView.as_view(), name="dialer-sms-done"),
     *router.urls,
 ]

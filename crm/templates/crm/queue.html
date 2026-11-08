@@ -13,6 +13,7 @@
                 <button type="button" class="btn-mini" id="contact-open" title="Np. klient z polecenia: „Kogo Pan zna, kto jeszcze mógłby skorzystać?”">+ Nowy kontakt</button>
                 <button type="button" class="btn-mini" id="dial-open" title="Zadzwoń na dowolny numer bez szukania klienta">☎ Zadzwoń na numer</button>
             </div>
+            <button type="button" class="btn-mini w-pinfo-open" id="pinfo-open" title="Ceny, co zawiera taryfa, wyszukiwarka kanałów TV – gdy klient o coś pyta, np. „czy jest Jedynka?”"><svg class="w-info-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="M10 9v5.5M10 5.6v.2"/></svg><span>Produkty i kanały TV<small>czy jest kanał…? ceny, promocje</small></span></button>
         </div>
         <div class="w-panel"><div class="w-segs" id="segs"></div></div>
         <div class="w-panel w-base" id="base-progress" hidden></div>
@@ -85,5 +86,6 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/when.js' %}?v=89"></script>
-<script src="{% static 'crm/js/queue.js' %}?v=89"></script>{% endblock %}
+{% block scripts %}{{ tv_channels|json_script:"tv-channels" }}
+<script src="{% static 'crm/js/when.js' %}?v=112"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=112"></script>{% endblock %}

@@ -291,3 +291,37 @@ class ProductDeleteTests(SalesBase):
         lead.refresh_from_db()
         self.assertIsNone(lead.product)
 
+
+
+class ProductClearTests(SalesBase):
+    """„Wyczyść wszystkie”: nieużywane znikają, sprzedawane tylko się wyłączają, wzornik je przywraca."""
+
+    def test_clear_deletes_unused_and_disables_sold(self):
+        lead = self.make_lead(owner=self.agent1)
+        self.assertEqual(self.sell(self.agent1, lead, [(self.sim, 1)]).status_code, 201)
+        self.assertEqual(self.api(self.agent1).post("/api/products/clear/").status_code, status.HTTP_403_FORBIDDEN)
+        r = self.api(self.manager).post("/api/products/clear/")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual((r.data["deleted"], r.data["disabled"]), (["Internet"], ["Karta SIM"]))
+        self.assertFalse(Product.objects.filter(pk=self.internet.pk).exists())
+        self.sim.refresh_from_db()
+        self.assertFalse(self.sim.is_active)
+        self.assertEqual(SaleItem.objects.filter(product=self.sim).count(), 1)
+
+    def test_template_brings_back_disabled_tariff(self):
+        Product.objects.create(name="M", price=Decimal("99"), is_active=False)
+        Product.objects.create(name="L", price=Decimal("77"))
+        created = self.api(self.manager).post("/api/products/load-standard/").data["created"]
+        self.assertIn("M", created)
+        self.assertNotIn("L", created)
+        m = Product.objects.get(name="M")
+        self.assertEqual((m.is_active, m.price), (True, Decimal("70")))
+        self.assertEqual(Product.objects.get(name="L").price, Decimal("77"))
+
+
+class BundleSaleTests(SalesBase):
+    def test_sale_with_several_services(self):
+        lead = self.make_lead(owner=self.agent1)
+        r = self.sell(self.agent1, lead, [(self.internet, 1), (self.sim, 3)])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(SaleItem.objects.filter(activity_id=r.data["id"]).count(), 2)

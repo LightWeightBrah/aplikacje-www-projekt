@@ -9,6 +9,8 @@
         <p class="muted" id="subtitle">Ładowanie…</p>
     </div>
     <div class="head-actions">
+        <button type="button" class="btn btn-secondary" id="load-standard-top" title="Dodaje taryfy z wzornika ofert, których nie ma do sprzedaży. Włączone zostają bez zmian, wyłączone wracają z cenami z wzornika.">Dodaj brakujące z wzornika</button>
+        <button type="button" class="btn btn-secondary btn-danger-soft" id="clear-all" title="Usuwa wszystkie taryfy, żeby wgrać je od nowa. Sprzedawane już tylko się wyłączają, więc historia zostaje.">Wyczyść wszystkie</button>
         <button type="button" class="btn btn-secondary" id="tariff-export">Pobierz plik taryf</button>
         <button type="button" class="btn btn-secondary" id="tariff-import">Wgraj plik taryf…</button>
         <input type="file" id="tariff-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
@@ -50,10 +52,27 @@
                 <input id="prod-extra" class="select" inputmode="decimal" autocomplete="off" placeholder="np. 25,00 (0 = cena × ilość)">
             </label>
         </div>
+        <div class="field-row">
+            <label class="field">Nazwa promocji (puste = z ustawień)
+                <input id="prod-promo-label" class="select" maxlength="80" autocomplete="off" placeholder="np. 12 miesięcy za 50 zł">
+            </label>
+            <label class="field">Miesiące promocji
+                <input id="prod-promo-months" class="select" inputmode="numeric" autocomplete="off" placeholder="np. 6 albo 12">
+            </label>
+            <label class="field">Cena w tych miesiącach (zł)
+                <input id="prod-promo-month-price" class="select" inputmode="decimal" autocomplete="off" placeholder="0 = gratis">
+            </label>
+        </div>
+        <label class="field">Inne promocje do wyboru (jedna w linii: nazwa; miesiące; cena w tych miesiącach; cena potem)
+            <textarea id="prod-promos" class="select" rows="2" maxlength="1000" placeholder="6 miesięcy za 0 zł; 6; 0; 45&#10;12 miesięcy za 10 zł; 12; 10; 45"></textarea>
+        </label>
         <label class="field">Co zawiera (punkty oferty, każdy w nowej linii)
             <textarea id="prod-features" class="select" rows="7" maxlength="2000" placeholder="Internet bez limitu&#10;Roaming w UE: 23 GB"></textarea>
         </label>
         <datalist id="unit-list"><option value="szt."><option value="umowa"><option value="abonament"><option value="mies."></datalist>
+        <label class="field">Informacje dla agenta (np. lista kanałów TV; nie trafiają do oferty)
+            <textarea id="prod-info" class="select" rows="5" maxlength="4000" placeholder="Np. Sport: Eurosport 1, Polsat Sport 1"></textarea>
+        </label>
         <label class="field">Opis (opcjonalnie)
             <textarea id="prod-desc" class="select" rows="2" maxlength="500"></textarea>
         </label>
@@ -67,5 +86,5 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/products.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/products.js' %}?v=112"></script>
 <script>CRM.initProducts();</script>{% endblock %}

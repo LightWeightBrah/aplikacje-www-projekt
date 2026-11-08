@@ -5,7 +5,7 @@
 {% block content %}
 <header class="page-head">
     <div>
-        <h1 id="greeting">Dashboard</h1>
+        <h1 id="greeting">Wyniki</h1>
         <p class="muted" id="subtitle">Ładowanie danych…</p>
     </div>
     <div class="period">
@@ -57,5 +57,5 @@
     <div class="card"><h2 id="daily-title">Rozmowy dzień po dniu</h2><div id="daily" class="chart"></div></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/minutes.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/minutes.js' %}?v=112"></script>
 <script>CRM.initDashboard();CRM.initMinutes();</script>{% endblock %}

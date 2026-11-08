@@ -12,6 +12,7 @@ CRM.initManager = function initManager() {
   const OUTCOME = {
     no_answer: "Nie odebrał", callback: "Prosił o oddzwonienie", interested: "Zainteresowany",
     sold: "Sprzedane", refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka",
+    offer: "Wysłana oferta", skipped: "Pominięty bez dzwonienia",
   };
   const state = { total: null, tab: "all", page: 1, ordering: "", search: "", count: 0, pageSize: 20 };
   let agents = [], leads = [], selected = new Set(), openId = null, searchTimer;
@@ -41,7 +42,7 @@ CRM.initManager = function initManager() {
   async function readJson(r) { try { return await r.json(); } catch { return {}; } }
   async function fetchAll(path) {
     const out = [];
-    let url = path;
+    let url = path + (path.includes("?") ? "&" : "?") + "page_size=500";   // jedno zapytanie zamiast kilku po kolei
     while (url) {
       const r = await api(url);
       if (!r.ok) throw new Error("Nie udało się wczytać danych (" + r.status + ").");

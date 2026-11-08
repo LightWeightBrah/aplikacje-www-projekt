@@ -40,7 +40,8 @@ CRM.initSettings = function initSettings() {
   const STEPS_MAX = 8;
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   // karta „Losowanie nowych firm” (radio w szablonie) zapisuje się razem z zasadami
-  const KEYS = FIELDS.map((f) => f.key).concat("companies_last");
+  const KEYS = FIELDS.map((f) => f.key).concat("companies_last", "sms_reminder_minutes", "sms_min_gap_minutes",
+    ...["offer", "talked", "stranger"].flatMap((k) => [`sms_${k}_enabled`, `sms_${k}_text`]));
   const FACTOR = { min: { min: 1, h: 60, d: 1440 }, h: { h: 1, d: 24 }, d: { d: 1 } };   // ile jednostek bazowych ma 1 jednostka z listy
   const UNIT_LABEL = { min: "min", h: "godz.", d: "dni" };
 
@@ -102,8 +103,88 @@ CRM.initSettings = function initSettings() {
     paintSteps(saved.callback_retry_steps && saved.callback_retry_steps.length ? saved.callback_retry_steps : [15, 60, 120, 1440]);
     const draw = document.querySelector(`input[name="draw"][value="${saved.companies_last ? "last" : "random"}"]`);
     if (draw) draw.checked = true;
+    const m = Number(saved.sms_reminder_minutes) || 60, u = m % 1440 === 0 ? "d" : m % 60 === 0 ? "h" : "min";
+    $("sms-minutes-u").value = u; $("sms-minutes-n").value = m / FACTOR.min[u];
+    $("sms-gap").value = saved.sms_min_gap_minutes;
+    $("sms-kinds").innerHTML = SMS_KINDS.map(smsKindHtml).join("");
+    $("sms-test-kind").innerHTML = SMS_KINDS.map((k) => `<option value="${k.key}">${esc(k.title)}</option>`).join("");
     readForm(); refresh();
   }
+
+  /* Trzy rodzaje SMS-ów (crm/sms.py → kind_for): każdy z włącznikiem i własną treścią */
+  const SMS_KINDS = [
+    { key: "offer", title: "Po wysłanej ofercie", who: "Klient z wynikiem „Oferta”: wyliczenie ma już w skrzynce, więc SMS do niego nawiązuje." },
+    { key: "talked", title: "Po rozmowie", who: "Zainteresowany albo „oddzwonić” po rozmowie, w której agent powiedział, kto i w jakiej sprawie dzwoni." },
+    { key: "stranger", title: "Umówiony tylko termin", who: "Klient powiedział tylko „proszę zadzwonić później” i nie wie jeszcze, w jakiej sprawie dzwonimy. Domyślnie wyłączone: SMS od obcego numeru może skończyć się zablokowaniem numeru albo „proszę nie dzwonić”. Bez nazwy T-Mobile i bez sprzedaży." },
+  ];
+  function smsKindHtml(k) {
+    return `<div class="sms-kind" data-kind="${k.key}">
+      <label class="check"><input type="checkbox" id="sms-${k.key}-on"${saved[`sms_${k.key}_enabled`] ? " checked" : ""}> <span><strong>${esc(k.title)}</strong><small class="muted">${esc(k.who)}</small></span></label>
+      <textarea id="sms-${k.key}-text" class="select" rows="3" maxlength="320" aria-label="Treść SMS-a: ${esc(k.title)}">${esc(saved[`sms_${k.key}_text`] || "")}</textarea>
+      <small class="form-error" id="e-sms_${k.key}_text" hidden></small>
+      <div class="sms-preview"><p id="sms-${k.key}-preview"></p><span class="muted small" id="sms-${k.key}-count"></span></div></div>`;
+  }
+  /* Podgląd SMS-a jak w crm/sms.py → render_sms (przykład: agent Julian, telefon jutro o 14:00) */
+  const SMS_SAMPLE = { imie: "Julian", kiedy: "jutro o 14:00", Kiedy: "Jutro o 14:00", godzina: "14:00", data: "" };
+  const smsRender = (tpl) => (tpl || "").replace(/\{(\w+)\}/g, (all, k) => (k in SMS_SAMPLE ? SMS_SAMPLE[k] : all)).replace(/\s+/g, " ").trim();
+  function smsPreview() {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    SMS_SAMPLE.data = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+    SMS_KINDS.forEach((k) => {
+      const text = smsRender($(`sms-${k.key}-text`).value);
+      $(`sms-${k.key}-preview`).textContent = text || "(pusta treść)";
+      // z polskimi znakami 1 SMS = 70 znaków, dłuższy dzieli się po 67 (bez polskich: 160 / 153)
+      const gsm = /^[\x20-\x7E\n]*$/.test(text), n = text.length;
+      const parts = n <= (gsm ? 160 : 70) ? 1 : Math.ceil(n / (gsm ? 153 : 67));
+      $(`sms-${k.key}-count`).textContent = `${n} znaków = ${parts} ${parts === 1 ? "SMS" : parts < 5 ? "SMS-y" : "SMS-ów"} (w abonamencie bez limitu bez znaczenia)`;
+      document.querySelector(`.sms-kind[data-kind="${k.key}"]`).classList.toggle("is-off", !$(`sms-${k.key}-on`).checked);
+    });
+  }
+
+  /* Próbny SMS: z telefonu managera na wpisany numer, po potwierdzeniu; potem sprawdzamy, czy wyszedł */
+  let testTimer = null;
+  function testMsg(text, ok) { const el = $("sms-test-msg"); el.textContent = text; el.className = "small " + (ok === false ? "form-error" : ok ? "ok-text" : "muted"); }
+  async function sendTest() {
+    const phone = $("sms-test-phone").value.trim(), kind = SMS_KINDS.find((k) => k.key === $("sms-test-kind").value);
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 9) { testMsg("Wpisz cały numer telefonu (9 cyfr albo z +48).", false); $("sms-test-phone").focus(); return; }
+    const tpl = $(`sms-${kind.key}-text`).value.trim();
+    if (!tpl) { testMsg("Treść tego SMS-a jest pusta.", false); return; }
+    // termin w próbnym SMS-ie = teraz + „ile wcześniej” (tak liczy serwer), więc pokazujemy dokładnie to, co pójdzie
+    const mins = Number.isFinite(current.sms_reminder_minutes) ? current.sms_reminder_minutes : 60;
+    const at = new Date(Date.now() + mins * 60000), now = new Date();
+    const hm = `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
+    const days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+    const WD = ["w niedzielę", "w poniedziałek", "we wtorek", "w środę", "w czwartek", "w piątek", "w sobotę"];
+    const when = days <= 0 ? `dziś o ${hm}` : days === 1 ? `jutro o ${hm}` : days < 7 ? `${WD[at.getDay()]} o ${hm}`
+      : `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")} o ${hm}`;
+    const real = { ...SMS_SAMPLE, imie: (me.full_name || me.username || SMS_SAMPLE.imie).split(" ")[0], kiedy: when, Kiedy: when[0].toUpperCase() + when.slice(1), godzina: hm,
+      data: `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}` };
+    const text = tpl.replace(/\{(\w+)\}/g, (all, k) => (k in real ? real[k] : all)).replace(/\s+/g, " ").trim();
+    if (!confirm(`Wysłać próbny SMS na numer ${phone}?\n\nPójdzie z Twojego telefonu (dialer), jak zwykły SMS (termin w przykładzie: ${when}):\n\n„${text}”`)) return;
+    const btn = $("sms-test-send"); btn.disabled = true; clearTimeout(testTimer);
+    try {
+      const r = await api("/api/settings/test-sms/", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, text: tpl, minutes: current.sms_reminder_minutes }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { testMsg(d.detail || d.phone || d.text || "Nie udało się zlecić SMS-a.", false); return; }
+      testMsg(d.online ? "Zlecone – Twój telefon wyśle SMS za kilka sekund…" : "Zlecone, ale Twój telefon nie jest teraz połączony z CRM. SMS wyjdzie, gdy włączysz dialer (najpóźniej w ciągu 10 minut).");
+      watchTest(d.id, 0);
+    } catch { testMsg("Brak połączenia z serwerem.", false); } finally { btn.disabled = false; }
+  }
+  function watchTest(id, n) {
+    testTimer = setTimeout(async () => {
+      try {
+        const r = await api(`/api/settings/test-sms/${id}/`), d = await r.json();
+        if (d.state === "sent") return testMsg("✓ Próbny SMS wysłany z Twojego telefonu.", true);
+        if (d.state === "failed") return testMsg(`SMS nie wyszedł: ${d.error || "telefon zgłosił błąd"}.`, false);
+        if (d.state === "expired") return testMsg("Telefon nie odebrał zlecenia w ciągu 10 minut – SMS anulowany.", false);
+      } catch { /* spróbujemy za chwilę */ }
+      if (n < 200) watchTest(id, n + 1);
+    }, 3000);
+  }
+  $("sms-test-send").addEventListener("click", sendTest);
+  $("sms-test-phone").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendTest(); } });
 
   function unitOf(f) {
     const sel = document.querySelector(`[data-unit-for="${f.key}"]`);
@@ -126,6 +207,15 @@ CRM.initSettings = function initSettings() {
     });
     const draw = document.querySelector('input[name="draw"]:checked');
     current.companies_last = draw ? draw.value === "last" : saved.companies_last;
+    const smsN = $("sms-minutes-n").value.trim();
+    current.sms_reminder_minutes = smsN === "" ? NaN : Number(smsN) * FACTOR.min[$("sms-minutes-u").value];
+    const gap = $("sms-gap").value.trim();
+    current.sms_min_gap_minutes = gap === "" ? NaN : Number(gap);
+    SMS_KINDS.forEach((k) => {
+      current[`sms_${k.key}_enabled`] = $(`sms-${k.key}-on`).checked;
+      current[`sms_${k.key}_text`] = $(`sms-${k.key}-text`).value.trim();
+    });
+    smsPreview();
   }
   const dur = (minutes) => {
     if (minutes % 1440 === 0) { const d = minutes / 1440; return d === 1 ? "1 dzień" : `${d} dni`; }
@@ -148,6 +238,12 @@ CRM.initSettings = function initSettings() {
   const tries = (n) => (n === 1 ? "próbę" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "próby" : "prób");
   const allOk = (r) => NUM_FIELDS.every((f) => Number.isFinite(r[f.key]))
     && r.callback_retry_steps.length > 0 && r.callback_retry_steps.every(Number.isFinite);
+  function smsSummary(r) {
+    const on = SMS_KINDS.filter((k) => r[`sms_${k.key}_enabled`]).map((k) => k.title.toLowerCase());
+    if (!on.length) return `SMS z przypomnieniem przed umówionym telefonem jest <b>wyłączony</b>.`;
+    if (!Number.isFinite(r.sms_reminder_minutes) || !Number.isFinite(r.sms_min_gap_minutes)) return "Uzupełnij czasy SMS-ów liczbami.";
+    return `SMS z przypomnieniem idzie <b>${dur(r.sms_reminder_minutes)} przed</b> umówionym telefonem (${on.join(", ")}), z telefonu agenta, gdy jest włączony; na ten sam numer najwyżej co <b>${dur(r.sms_min_gap_minutes)}</b>.`;
+  }
   function summary(r) {
     if (!allOk(r)) return ["Uzupełnij wszystkie pola liczbami."];
     return [
@@ -158,6 +254,7 @@ CRM.initSettings = function initSettings() {
       `Gdy <b>${r.unreachable_after_agents}</b> różnych agentów nie dodzwoni się, lead trafia do nieosiągalnych; wraca do obiegu po <b>${dur(r.unreachable_cooldown_days * 1440)}</b>.`,
       `Lead, do którego agent nie zadzwonił w ciągu <b>${hours(r.claim_timeout_hours)}</b> od pobrania, wraca do puli.`,
       r.companies_last ? `Nowe firmy: <b>najpierw jednoosobowe</b>, spółki dopiero, gdy jednoosobowych zabraknie.` : `Nowe firmy losowane są <b>wszystkie razem</b> (jednoosobowe i spółki).`,
+      smsSummary(r),
     ];
   }
   const dirty = () => KEYS.some((k) => !same(current[k], saved[k]));

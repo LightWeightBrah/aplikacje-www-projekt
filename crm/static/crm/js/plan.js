@@ -54,7 +54,9 @@ CRM.initPlan = function initPlan() {
         : `<span class="try-chip" title="Po ${maxTries} nieodebranych próbach lead wraca do puli">Nie odbiera · ${tries} z ${maxTries}</span>`)
       : chip(l.status);
     const last = CRM.lastContact(l, me.id);
-    return `<article class="plan-item${opts.next ? " is-next" : ""}${opts.passed ? (retry ? " is-retry" : " is-passed") : ""}" data-href="/crm/queue/?lead=${l.id}">
+    // kolor jak w Dzwonieniu: oferty i zainteresowani = zielony, oddzwonienia = bursztyn
+    const seg = l.status === "offer" || l.status === "interested" ? " seg-offer" : l.status === "callback" ? " seg-callback" : "";
+    return `<article class="plan-item${seg}${opts.next ? " is-next" : ""}${opts.passed ? (retry ? " is-retry" : " is-passed") : ""}" data-href="/crm/queue/?lead=${l.id}">
       <div class="plan-time">${date}<span class="plan-hour">${hhmm(l.next_contact_at)}</span>${sub}</div>
       <div class="plan-body">
         <div class="plan-title"><strong>${esc(CRM.leadTitle(l))}</strong>${company}${l.product_name ? `<span class="muted small"> · ${esc(l.product_name)}</span>` : ""}</div>
@@ -80,7 +82,8 @@ CRM.initPlan = function initPlan() {
     // zaległe z wcześniejszych dni: oddzwonienia obiecane klientowi (czerwone) osobno od ponownych prób (spokojne)
     const overdue = all.filter((l) => !isRetry(l)), retries = all.filter(isRetry);
     $("overdue-card").hidden = !overdue.length;
-    $("overdue-count").textContent = overdue.length ? `(${overdue.length})` : "";
+    $("overdue-count").textContent = overdue.length ? String(overdue.length) : "";
+    $("overdue-count").title = overdue.length ? `${overdue.length} ${overdue.length === 1 ? "zaległy kontakt" : "zaległe kontakty"}` : "";
     paint("overdue-list", overdue.map((l) => item(l, { withDate: true, passed: true })).join(""));
 
     const passed = (l) => isToday && new Date(l.next_contact_at).getTime() < now;

@@ -122,7 +122,7 @@ Dane w repozytorium są wyłącznie **fikcyjne** (zmyślone firmy, numery i adre
 | `python manage.py reset_leads` | kasuje wszystkich klientów, historię, bazy i firmy, zostawia konta, taryfy i ustawienia, wgrywa dane demo; tylko przy `DEBUG=True`, pyta o wpisanie `RESET` (`--empty` bez danych demo) |
 | `python manage.py setup_roles [--demo]` | tworzy grupy Agent i Manager (z `--demo` także konta demo, bez klientów) |
 | `python manage.py start_firm` | start na serwerze: grupy i pierwsze konto managera, bez danych demo (hasło wpisuje się w konsoli) |
-| `python manage.py load_tariffs [--overwrite]` | wgrywa taryfy ze wzornika (S, M100, M, L, VIP); działa też na serwerze |
+| `python manage.py load_tariffs [--overwrite]` | wgrywa taryfy ze wzornika (komórkowe S–VIP, światłowód, Magenta TV); działa też na serwerze |
 | `python manage.py device_code` | wypisuje jednorazowy kod aktywacji urządzenia (ważny 24 h) |
 | `python manage.py make_sample_excel` | tworzy przykładowe pliki Excela do importu: `docs/przykladowa_baza.xlsx`, `przykladowa_baza_ceidg.xlsx` i bazy do pokazu `przykladowa_baza_pokaz_1..3.xlsx` |
 | `python manage.py release_stale_leads` | zwraca do puli klientów nietkniętych przez agenta ponad ustawiony czas (`--dry-run` tylko liczy) |

@@ -22,7 +22,7 @@
 <p id="page-error" class="form-error" hidden></p>
 
 <section class="card" id="overdue-card" hidden>
-    <h2 class="late">Zaległe <small class="muted" id="overdue-count"></small></h2>
+    <h2 class="late">Zaległe <span class="count-badge" id="overdue-count"></span></h2>
     <p class="card-desc">Termin tych kontaktów już minął, zadzwoń do nich w pierwszej kolejności.</p>
     <div id="overdue-list" class="plan-list"></div>
 </section>
@@ -33,5 +33,5 @@
 </section>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=112"></script>
 <script>CRM.initPlan();</script>{% endblock %}

@@ -1428,7 +1428,9 @@ class LeaderboardTests(CrmTestBase):
         ws = wb.active
         self.assertEqual(ws.cell(1, 1).value, "Nazwa")
         rows = {ws.cell(i, 1).value: i for i in range(2, ws.max_row + 1)}
-        self.assertEqual(set(rows), {"S", "M100", "M", "L", "VIP"})
+        from .tariffs import STANDARD_TARIFFS
+        self.assertEqual(set(rows), {t[0] for t in STANDARD_TARIFFS})
+        self.assertIn("Magenta TV M", rows)
         ws.cell(rows["VIP"], 2).value = "110,50"          # nowa cena VIP
         ws.append(["XL", 150, 180, 30, "mies.", "Internet bez limitu", "", "tak", 6])
         ws.append(["Zła", "dużo"])                        # pominięty wiersz
@@ -1462,7 +1464,15 @@ class LeaderboardTests(CrmTestBase):
                          status.HTTP_403_FORBIDDEN)
         response = self.api(self.manager).post("/api/products/load-standard/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["created"], ["S", "M100", "L", "VIP"])
+        self.assertEqual(response.data["created"][:4], ["S", "M100", "L", "VIP"])
+        self.assertIn("Światłowód VIP – dom", response.data["created"])
+        fiber = Product.objects.get(name="Światłowód M – blok")
+        self.assertEqual((fiber.price, fiber.promo_price, fiber.extra_price), (Decimal("45"), Decimal("85"), Decimal("0")))
+        self.assertEqual((fiber.promo_label, fiber.promo_months, fiber.promo_month_price),
+                         ("12 miesięcy za 50 zł", 12, Decimal("50")))   # jak we wzorniku: 12 mies. po 50 zł, potem 85 zł
+        self.assertIn("HBO", Product.objects.get(name="Magenta TV L").info)        # kanały z listy T-Mobile
+        self.assertNotIn("HBO", Product.objects.get(name="Magenta TV M").info)
+        self.assertEqual(Product.objects.get(name="Magenta TV S").price, Decimal("18.52"))
         self.assertEqual(Product.objects.get(name="M").price, Decimal("99"))
         vip = Product.objects.get(name="VIP")
         self.assertEqual((vip.price, vip.promo_price, vip.extra_price), (Decimal("105"), Decimal("140"), Decimal("25")))

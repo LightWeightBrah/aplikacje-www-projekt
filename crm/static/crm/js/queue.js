@@ -96,7 +96,7 @@
 
   /* ================= LEWA KOLUMNA ================= */
   async function loadLeads() {
-    let url = "/api/my-leads/", all = [];
+    let url = "/api/my-leads/?page_size=500", all = [];
     for (let i = 0; i < 10 && url; i++) {
       const r = await api(url); if (!r.ok) break;
       const d = await r.json(); all = all.concat(d.results);
@@ -308,30 +308,46 @@
   /* ================= ŚRODEK: KLIENT ================= */
   /* empty = komunikat, gdy „Następny klient” nic nie znalazł (pokazany w środku, nie w dymku nad paskiem „Cofnij”) */
   function welcome(empty) {
-    current = null; form = null; renderList();
+    current = null; form = null;
     const later = leads.filter((l) => !isDue(l)).sort(cmp)[0];
-    $("lead-pane").innerHTML = empty
+    const pane = $("lead-pane");
+    const html = empty
       ? `<div class="w-panel w-welcome done"><h2>Na teraz wszystko zrobione ✓</h2>
           <p>${esc(empty)}</p>
           ${later ? `<p>Najbliższy kontakt: <b>${esc(title(later))}</b> · ${esc(when(later.next_contact_at))}. Wróci tu sam, gdy przyjdzie jego pora.</p>` : ""}
           <p class="muted">Możesz dodać klienta z polecenia („+ Nowy kontakt” po lewej) albo zadzwonić na dowolny numer z paska na dole.</p>
-          <button type="button" class="w-next" data-next-btn>▶ Sprawdź jeszcze raz <kbd>N</kbd></button></div>`
+          <button type="button" class="w-next" data-next-btn>▶ Sprawdź jeszcze raz <kbd>N</kbd></button>
+          <p class="muted small w-checked" data-checked></p></div>`
       : `<div class="w-panel w-welcome"><h2>Gotowy do dzwonienia?</h2>
       <p>„Następny klient” sam wybierze, do kogo zadzwonić: najpierw follow-upy po ofertach, potem umówione oddzwonienia, ponowne próby, a na końcu nowe firmy z Twojej bazy.</p>
       <button type="button" class="w-next" data-next-btn>▶ Następny klient <kbd>N</kbd></button></div>`;
+    // Ten sam komunikat co przed chwilą („Sprawdź jeszcze raz” i dalej nic): karty nie rysujemy od nowa
+    // (to mrugało), tylko dopisujemy, kiedy sprawdzono
+    if (empty && pane.dataset.welcome === html && pane.querySelector(".w-welcome.done")) {
+      const at = new Date(), line = pane.querySelector("[data-checked]");
+      if (line) line.textContent = `Sprawdzone o ${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}:${String(at.getSeconds()).padStart(2, "0")} – nadal nic nowego.`;
+      return;
+    }
+    renderList();
+    pane.innerHTML = html;
+    pane.dataset.welcome = html;
   }
   /* Nowy klient = karta od początku: środkowa kolumna ma własny pasek przewijania (window.scrollTo go nie rusza) */
-  function toTop() { $("lead-pane").scrollTop = 0; window.scrollTo({ top: 0 }); }
-  async function openLead(id, reason) {
-    const r = await api(`/api/leads/${id}/`);
-    if (!r.ok) { toast("Nie udało się wczytać klienta.", true); return false; }
-    current = await r.json(); current._reason = reason || null; form = null;
+  function toTop() { $("lead-pane").scrollTop = 0; CRM.scrollTop(); }
+  async function openLead(id, reason, data) {
+    let lead = data;   // „Następny klient” od razu oddaje pełną kartę – bez drugiego zapytania
+    if (!lead) {
+      const r = await api(`/api/leads/${id}/`);
+      if (!r.ok) { toast("Nie udało się wczytać klienta.", true); return false; }
+      lead = await r.json();
+    }
+    current = lead; current._reason = reason || null; form = null;
     renderCard(); renderList();
     toTop();
     const item = document.querySelector(`#lead-list [data-id="${id}"]`); if (item) item.scrollIntoView({ block: "nearest" });
     return true;
   }
-  CRM.openLead = async (id) => { if (!leads.some((l) => l.id === id)) await loadLeads(); const ok = await openLead(id); window.scrollTo({ top: 0 }); return ok; };
+  CRM.openLead = async (id) => { if (!leads.some((l) => l.id === id)) await loadLeads(); const ok = await openLead(id); CRM.scrollTop(); return ok; };
 
   const lastOffer = (d) => (d.activities || []).find((a) => a.outcome === "offer" && a.offer);
   const lastNote = (d) => (d.activities || []).find((a) => a.note);
@@ -393,7 +409,7 @@
     if (isCompanyEntity(d.company_name)) badges.push(`<span class="w-badge spolka" title="Spółka: zwykle trzeba trafić do osoby decyzyjnej (zarząd, właściciel)">Spółka</span>`);
     if (d.knows_caller) badges.push(`<span class="w-badge" style="--c:var(--ok)">Wie, skąd dzwonimy</span>`);
     if (d.operators) badges.push(`<span class="w-badge">Sieć: ${esc(d.operators.split(",").map((c) => (CRM.OPERATORS.find((o) => o[0] === c) || [c, c])[1]).join(", "))}</span>`);
-    if (d.transferred_from) badges.push(`<span class="w-badge" style="--c:#2563eb">Przepisany od ${esc(d.transferred_from)}</span>`);
+    if (d.transferred_from) badges.push(`<span class="w-badge moved">↪ Przepisany od ${esc(d.transferred_from)}</span>`);
     if (d.missed_calls > 0) badges.push(`<span class="w-badge" style="--c:var(--late)">Nie odebrał w terminie ×${d.missed_calls}</span>`);
     const closed = CLOSED.includes(d.status);
     $("lead-pane").innerHTML = `
@@ -561,59 +577,385 @@
       <div class="w-chips">${PRESETS[kind].map(([l], i) => `<button type="button" class="w-chip" data-preset="${kind}:${i}">${typeof l === "function" ? l() : l}</button>`).join("")}</div>
       <div class="w-when-preview" id="f-preview"></div>`;
   }
-  function planPicker(sel) {
-    if (!plans.length) return `<p class="w-info">Brak taryf w katalogu. Manager dodaje je w „Zarządzanie → Taryfy i produkty”.</p>`;
-    return `<div class="w-field"><span>Taryfa</span><div class="w-chips" id="f-plans">${plans.map((p) =>
-      `<button type="button" class="w-chip plan" data-plan="${p.id}" aria-pressed="${p.id === sel.product}"><b>${esc(p.name)}</b><small>${money(sel.promo && p.promo_price ? p.promo_price : p.price)}</small></button>`).join("")}</div></div>
+  /* Taryfy w trzech grupach (Komórkowe / Światłowód / Telewizja). Światłowód ma dwie ceny:
+     „… – blok” (MFH) i „… – dom” (SFH) – agent wybiera rodzaj budynku przełącznikiem, a nie osobny kafelek.
+     Zestaw: kilka usług naraz (np. numery + światłowód + TV) – form.basket to lista pozycji,
+     form.plan to pozycja, którą agent właśnie ustawia. */
+  const KINDS = [["mobile", "Komórkowe"], ["fiber", "Światłowód"], ["tv", "Telewizja"]];
+  const INFO_ICON = '<svg class="w-info-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="M10 9v5.5M10 5.6v.2"/></svg>';
+  const HOME_RE = /\s*[–-]\s*(blok|dom)\s*$/i;
+  const kindOf = (p) => /światłowód|swiatlowod|internet/i.test(p.name) ? "fiber" : /\btv\b/i.test(p.name) ? "tv" : "mobile";
+  const homeOf = (p) => { const m = p.name.match(HOME_RE); return m ? m[1].toLowerCase() : null; };
+  const baseOf = (p) => p.name.replace(HOME_RE, "");
+  // na kafelku krótko jak przy komórkowych: „M”, „L”, „VIP” (pełna nazwa idzie do oferty)
+  const chipName = (p) => baseOf(p).replace(/^(magenta\s+)?(światłowód|swiatlowod)(\s+biznes)?\s+|^magenta\s+tv\s+/i, "").trim() || baseOf(p);
+  const planOf = (sel) => plans.find((x) => x.id === sel.product);
+  /* Promocje taryfy: najpierw główna (np. światłowód „12 miesięcy za 50 zł”, pusta nazwa = „6 miesięcy gratis”
+     z „Ustawienia i oferty”), potem inne do wyboru (np. „6 miesięcy za 0 zł”). Każda: miesiące, cena w nich, cena potem. */
+  function promosOf(p) {
+    if (!p) return [];
+    const out = [];
+    if (p.promo_price != null) {
+      const label = p.promo_label || config.promo_label || "";
+      out.push({ label, months: p.promo_months != null ? Number(p.promo_months) : parseInt(label, 10) || 0,
+        price: Number(p.promo_month_price || 0), after: Number(p.promo_price) });
+    }
+    (Array.isArray(p.promos) ? p.promos : []).forEach((x) => out.push({ label: x.label, months: Number(x.months) || 0, price: Number(x.month_price) || 0, after: Number(x.price) }));
+    return out;
+  }
+  const hasPromo = (p) => promosOf(p).length > 0;
+  const promoOf = (p, option) => { const l = promosOf(p); return l[option] || l[0] || { label: "", months: 0, price: 0, after: p ? Number(p.price) : 0 }; };
+  const linePromo = (sel) => !!sel.promo && hasPromo(planOf(sel));
+  const lineOption = (sel) => { const l = promosOf(planOf(sel)); return linePromo(sel) && sel.option < l.length ? sel.option || 0 : 0; };
+  const chipPrice = (sel, p) => sel.promo && hasPromo(p) ? promoOf(p, sel.option).after : Number(p.price);
+  // światłowód i np. JUMP są wg materiałów na 24 miesiące: CRM sam ustawia 24, 36 da się kliknąć, ale widać podpowiedź
+  const only24 = (p) => !!p && (kindOf(p) === "fiber" || /umowa na 24 miesiące/i.test(p.features || ""));
+  const speedOf = (p) => { const m = (p.features || "").match(/(\d+)\s*Mb\/s/i); return m ? m[1] + " Mb/s" : ""; };
+  /* Kafelki wybranej grupy: przy światłowodzie jeden kafelek na wariant (M/L/VIP) w wybranym rodzaju budynku */
+  function plansOf(kind, home) {
+    const list = plans.filter((p) => kindOf(p) === kind), seen = new Map();
+    list.forEach((p) => {
+      const key = baseOf(p), h = homeOf(p), had = seen.get(key);
+      if (!had || (h === home && homeOf(had) !== home)) seen.set(key, p);
+    });
+    return [...seen.values()];
+  }
+  function planChips(sel) {
+    // światłowód: na kafelku też prędkość (ta sama w bloku i w domu – różni się tylko cena)
+    return plansOf(sel.kind, sel.home).map((p) =>
+      `<button type="button" class="w-chip plan" data-plan="${p.id}" aria-pressed="${p.id === sel.product}" title="${esc(p.name)}"><b>${esc(chipName(p))}</b>${sel.kind === "fiber" && speedOf(p) ? `<em>${esc(speedOf(p))}</em>` : ""}<small>${money(chipPrice(sel, p))}</small></button>`).join("");
+  }
+  /* Promocja: przyciski „Bez promocji” + każda promocja taryfy (światłowód ma kilka do wyboru) */
+  function promoButtons(sel) {
+    const list = promosOf(planOf(sel));
+    if (!list.length) return `<span class="w-promo-none">Ta taryfa nie ma promocji</span>`;
+    const on = linePromo(sel), opt = lineOption(sel);
+    return `<button type="button" data-promo="-1" aria-pressed="${!on}">Bez promocji</button>`
+      + list.map((x, i) => `<button type="button" data-promo="${i}" aria-pressed="${on && opt === i}">${esc(x.label || "Promocja")}</button>`).join("");
+  }
+  function syncKind(sel) {   // grupa i rodzaj budynku wynikają z wybranej taryfy
+    const p = planOf(sel);
+    if (p) { sel.kind = kindOf(p); if (homeOf(p)) sel.home = homeOf(p); }
+    sel.kind = sel.kind || "mobile"; sel.home = sel.home || "blok";
+  }
+  function pickerInner(sel) {
+    syncKind(sel);
+    const kinds = KINDS.filter(([k]) => plans.some((p) => kindOf(p) === k));
+    const homes = plans.some((p) => kindOf(p) === "fiber" && homeOf(p));
+    const head = (kinds.length > 1 ? `<div class="w-toggle" id="f-kind">${kinds.map(([k, l]) => `<button type="button" data-kind="${k}" aria-pressed="${sel.kind === k}">${l}</button>`).join("")}</div>` : "")
+      + (homes ? `<div class="w-home" id="f-home" ${sel.kind === "fiber" ? "" : "hidden"}><span>Gdzie światłowód?</span><div class="w-toggle"><button type="button" data-home="blok" aria-pressed="${sel.home === "blok"}">Blok / mieszkanie</button><button type="button" data-home="dom" aria-pressed="${sel.home === "dom"}">Dom jednorodzinny</button></div></div>` : "");
+    return `${head ? `<div class="w-plan-head">${head}</div>` : ""}
+      <div class="w-field"><span>Taryfa</span><div class="w-chips" id="f-plans">${planChips(sel)}</div></div>
+      <p class="w-fiber-note" id="f-fiber-note" ${sel.kind === "fiber" ? "" : "hidden"}>Prędkość jest taka sama w bloku i w domu – różni się tylko cena (dom +10 zł).</p>
+      <button type="button" class="w-pinfo-btn" id="f-pinfo" title="Otwiera okno z pełną informacją o tej taryfie (także lista kanałów TV z wyszukiwarką)">${INFO_ICON}<span>Co zawiera <b id="f-pinfo-name"></b> i informacje dla agenta</span><span class="w-pinfo-go">Pokaż ›</span></button>
+      <div class="w-field" id="f-promo-row"><span>Promocja</span><div class="w-toggle w-promos" id="f-promos">${promoButtons(sel)}</div></div>
       <div class="w-row">
-        <div class="w-field"><span>Liczba numerów</span><div class="w-qty"><button type="button" data-qty="-1" aria-label="Mniej">−</button><input id="f-qty" type="number" min="1" max="500" value="${sel.quantity}" inputmode="numeric"><button type="button" data-qty="1" aria-label="Więcej">+</button></div></div>
-        <div class="w-field"><span>Okres umowy</span><div class="w-toggle" id="f-term"><button type="button" data-term="36" aria-pressed="${sel.term === 36}">36 mies.</button><button type="button" data-term="24" aria-pressed="${sel.term === 24}">24 mies.</button></div></div>
-        <label class="w-check"><input type="checkbox" id="f-promo" ${sel.promo ? "checked" : ""}> Promocja: ${esc(config.promo_label || "tak")}</label>
-      </div>
+        <div class="w-field"><span id="f-qty-label">Liczba numerów</span><div class="w-qty"><button type="button" data-qty="-1" aria-label="Mniej">−</button><input id="f-qty" type="number" min="1" max="500" value="${sel.quantity}" inputmode="numeric"><button type="button" data-qty="1" aria-label="Więcej">+</button></div></div>
+        <div class="w-field"><span>Okres umowy</span><div class="w-toggle" id="f-term"><button type="button" data-term="36" aria-pressed="${sel.term === 36}">36 mies.</button><button type="button" data-term="24" aria-pressed="${sel.term === 24}">24 mies.</button></div><small class="w-term-hint" id="f-term-hint" hidden>W materiałach: umowa na 24 miesiące</small></div>
+      </div>`;
+  }
+  function planPicker() {
+    if (!plans.length) return `<p class="w-info">Brak taryf w katalogu. Manager dodaje je w „Zarządzanie → Taryfy i produkty”.</p>`;
+    return `<div class="w-basket" id="f-basket"></div>
+      <div id="f-picker">${pickerInner(form.plan)}</div>
       <div class="w-sum" id="f-sum"></div>`;
   }
   function calcPlan(sel) {
-    const p = plans.find((x) => x.id === sel.product);
+    const p = planOf(sel);
     if (!p) return null;
-    const first = sel.promo && p.promo_price != null ? Number(p.promo_price) : Number(p.price);
+    const promo = linePromo(sel), pr = promoOf(p, lineOption(sel));
+    const first = promo ? pr.after : Number(p.price);
     const extra = Number(p.extra_price || 0), q = Math.max(1, sel.quantity || 1);
     const monthly = extra ? first + (q - 1) * extra : first * q;
     const mult = Number(sel.term === 24 ? config.commission_24 : config.commission_36) || 0;
-    return { p, monthly, commission: monthly * mult };
+    const perNumber = extra > 0;   // komórkowe liczą numery; światłowód i TV – sztuki
+    // jak we wzorniku: przy promocji średni koszt w całym okresie umowy (np. 6 miesięcy po 0 zł, 12 po 50 zł)
+    const months = promo && pr.months > 0 && pr.months < sel.term ? pr.months : 0;
+    const start = months ? pr.price * q : null;   // opłata w miesiącach promocji
+    const average = months ? (start * months + monthly * (sel.term - months)) / sel.term : null;
+    return { p, monthly, commission: monthly * mult, perNumber, average, months, start, promo, label: pr.label };
+  }
+  function basketTotals() {
+    const cs = form.basket.map(calcPlan).filter(Boolean);
+    const monthly = cs.reduce((s, c) => s + c.monthly, 0), commission = cs.reduce((s, c) => s + c.commission, 0);
+    const average = cs.some((c) => c.average != null) ? cs.reduce((s, c) => s + (c.average != null ? c.average : c.monthly), 0) : null;
+    return { cs, monthly, commission, average };
+  }
+  const lineLabel = (sel) => { const p = planOf(sel); return p ? `${p.name}${sel.quantity > 1 ? " ×" + sel.quantity : ""}` : "?"; };
+  function paintBasket() {
+    const el = $("f-basket"); if (!el) return;
+    const used = new Set(form.basket.map((l) => l.kind));
+    const next = KINDS.find(([k]) => !used.has(k) && plans.some((p) => kindOf(p) === k));
+    el.innerHTML = (form.basket.length > 1 ? form.basket.map((l, i) =>
+      `<span class="w-bitem${l === form.plan ? " on" : ""}"><button type="button" data-bpick="${i}" title="Zmień tę usługę">${i + 1}. ${esc(lineLabel(l))}</button><button type="button" class="x" data-bdel="${i}" aria-label="Usuń z zestawu" title="Usuń z zestawu">×</button></span>`).join("") : "")
+      + `<button type="button" class="w-badd" id="f-badd">+ Dodaj kolejną usługę${next ? ` (np. ${next[1].toLowerCase()})` : ""}</button>`;
   }
   function paintSum() {
     const el = $("f-sum"); if (!el || !form.plan) return;
     const c = calcPlan(form.plan);
-    el.innerHTML = c ? `<div><span>Zobowiązanie miesięczne (netto)</span><br><b>${money(c.monthly)}</b>${form.plan.quantity > 1 ? ` <span>(${money(c.monthly / form.plan.quantity)} za numer)</span>` : ""}</div>
+    if (form.basket.length > 1) {
+      const t = basketTotals();
+      el.innerHTML = `<div><span>Razem miesięcznie za ${form.basket.length} usługi (netto)</span><br><b>${money(t.monthly)}</b>${t.average != null ? `<br><span>średnio ${money(t.average)} w okresie umowy</span>` : ""}
+        <ul class="w-blines">${t.cs.map((x, i) => `<li>${esc(lineLabel(form.basket[i]))}: ${money(x.monthly)}${x.start != null ? ` <span>(${money(x.start)} przez ${x.months} mies.)</span>` : ""}</li>`).join("")}</ul></div>
+        <div class="comm"><span>Twoja prowizja przy sprzedaży (ok.)</span><br><b>${money(t.commission)}</b></div>`;
+    } else {
+      el.innerHTML = c ? `<div><span>${c.perNumber ? "Zobowiązanie miesięczne" : "Opłata miesięczna"} (netto)</span><br><b>${money(c.monthly)}</b>${form.plan.quantity > 1 && c.perNumber ? ` <span>(${money(c.monthly / form.plan.quantity)} za numer)</span>` : ""}${c.start ? `<br><span>${money(c.start)} przez pierwsze ${c.months} mies., potem ${money(c.monthly)}</span>` : ""}${c.average != null ? `<br><span>średnio ${money(c.average)} w ${form.plan.term} mies.</span>` : ""}</div>
       <div class="comm"><span>Twoja prowizja przy sprzedaży (ok.)</span><br><b>${money(c.commission)}</b></div>` : `<span>Wybierz taryfę.</span>`;
-    document.querySelectorAll("#f-plans [data-plan]").forEach((b) => { const p = plans.find((x) => x.id === Number(b.dataset.plan)); b.setAttribute("aria-pressed", String(Number(b.dataset.plan) === form.plan.product)); b.querySelector("small").textContent = money(form.plan.promo && p.promo_price != null ? p.promo_price : p.price); });
+    }
+    document.querySelectorAll("#f-plans [data-plan]").forEach((b) => { const p = plans.find((x) => x.id === Number(b.dataset.plan)); b.setAttribute("aria-pressed", String(Number(b.dataset.plan) === form.plan.product)); b.querySelector("small").textContent = money(chipPrice(form.plan, p)); });
     document.querySelectorAll("#f-term [data-term]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.term) === form.plan.term)));
+    const th = $("f-term-hint"); if (th) th.hidden = !(c && only24(c.p));
+    if (c) {
+      const ql = $("f-qty-label"); if (ql) ql.textContent = c.perNumber ? "Liczba numerów" : "Ilość";
+      // promocje zależą od taryfy (TV nie ma żadnej, światłowód ma kilka)
+      const pb = $("f-promos"); if (pb) pb.innerHTML = promoButtons(form.plan);
+      const info = $("f-pinfo-name");
+      if (info) info.textContent = c.p.name;
+    }
+    document.querySelectorAll("#f-kind [data-kind]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === form.plan.kind)));
+    document.querySelectorAll("#f-home [data-home]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.home === form.plan.home)));
+    const fh = $("f-home"); if (fh) fh.hidden = form.plan.kind !== "fiber";
+    const fn = $("f-fiber-note"); if (fn) fn.hidden = form.plan.kind !== "fiber";
+    paintBasket();
     const prev = $("f-mail-preview"); if (prev && !prev.hidden) prev.textContent = offerPreviewText();
   }
-  function wirePlan() {
-    document.querySelectorAll("#f-plans [data-plan]").forEach((b) => b.addEventListener("click", () => { form.plan.product = Number(b.dataset.plan); paintSum(); }));
+  /* Nowa pozycja zestawu: pierwsza grupa, której jeszcze nie ma (numery → światłowód → TV), taryfa „M” albo pierwsza */
+  function newLine(kind) {
+    const list = plansOf(kind, "blok"), m = list.find((p) => chipName(p) === "M") || list[0] || plans[0] || {};
+    // światłowód ma umowę na 24 miesiące (regulamin T-Mobile), reszta – domyślny okres z ustawień
+    return { product: m.id, quantity: 1, term: kind === "fiber" ? 24 : Number(config.default_term) || 36, promo: false, option: 0, kind, home: "blok" };
+  }
+  function renderPicker() {
+    const box = $("f-picker"); if (!box) return;
+    box.innerHTML = pickerInner(form.plan);
+    wirePicker();
+    paintSum();
+  }
+  function wirePicker() {
+    const box = $("f-plans");
+    if (box) box.addEventListener("click", (e) => { const b = e.target.closest("[data-plan]"); if (b) { form.plan.product = Number(b.dataset.plan); if (only24(planOf(form.plan))) form.plan.term = 24; paintSum(); } });
+    /* Zmiana grupy albo rodzaju budynku: ta sama taryfa (np. „L”) w nowym wariancie, inaczej pierwsza z grupy */
+    const pick = () => {
+      const old = planOf(form.plan), list = plansOf(form.plan.kind, form.plan.home);
+      const same = old && list.find((p) => chipName(p) === chipName(old));
+      const m = same || list.find((p) => chipName(p) === "M") || list[0];
+      if (m) form.plan.product = m.id;
+      if (box) box.innerHTML = planChips(form.plan);
+      paintSum();
+    };
+    // światłowód: umowa tylko na 24 miesiące (regulamin T-Mobile)
+    document.querySelectorAll("#f-kind [data-kind]").forEach((b) => b.addEventListener("click", () => { form.plan.kind = b.dataset.kind; if (b.dataset.kind === "fiber") form.plan.term = 24; pick(); }));
+    document.querySelectorAll("#f-home [data-home]").forEach((b) => b.addEventListener("click", () => { form.plan.home = b.dataset.home; pick(); }));
     document.querySelectorAll("#f-term [data-term]").forEach((b) => b.addEventListener("click", () => { form.plan.term = Number(b.dataset.term); paintSum(); }));
     const q = $("f-qty");
     if (q) {
       q.addEventListener("input", () => { form.plan.quantity = Math.max(1, Math.min(500, parseInt(q.value, 10) || 1)); paintSum(); });
-      document.querySelectorAll("[data-qty]").forEach((b) => b.addEventListener("click", () => { form.plan.quantity = Math.max(1, Math.min(500, form.plan.quantity + Number(b.dataset.qty))); q.value = form.plan.quantity; paintSum(); }));
+      document.querySelectorAll("#f-picker [data-qty]").forEach((b) => b.addEventListener("click", () => { form.plan.quantity = Math.max(1, Math.min(500, form.plan.quantity + Number(b.dataset.qty))); q.value = form.plan.quantity; paintSum(); }));
     }
-    const pr = $("f-promo"); if (pr) pr.addEventListener("change", () => { form.plan.promo = pr.checked; paintSum(); });
+    const pr = $("f-promos");
+    if (pr) pr.addEventListener("click", (e) => { const b = e.target.closest("[data-promo]"); if (!b) return; const i = Number(b.dataset.promo); form.plan.promo = i >= 0; form.plan.option = Math.max(0, i); paintSum(); });
+    const det = $("f-pinfo"); if (det) det.addEventListener("click", () => openProductInfo(form.plan.product));
+  }
+  function wirePlan() {
+    const basket = $("f-basket");
+    if (basket) basket.addEventListener("click", (e) => {
+      const add = e.target.closest("#f-badd"), pick = e.target.closest("[data-bpick]"), del = e.target.closest("[data-bdel]");
+      if (add) {
+        const used = new Set(form.basket.map((l) => l.kind));
+        const kind = (KINDS.find(([k]) => !used.has(k) && plans.some((p) => kindOf(p) === k)) || [form.plan.kind])[0];
+        form.plan = newLine(kind); form.basket.push(form.plan);
+      } else if (pick) {
+        form.plan = form.basket[Number(pick.dataset.bpick)];
+      } else if (del) {
+        const i = Number(del.dataset.bdel), was = form.basket[i] === form.plan;
+        form.basket.splice(i, 1);
+        if (was || !form.basket.includes(form.plan)) form.plan = form.basket[Math.max(0, i - 1)];
+      } else return;
+      renderPicker();
+    });
+    wirePicker();
     paintSum();
   }
-  function defaultPlan() {
+  function defaultBasket() {
     const o = current && lastOffer(current);
-    if (o) { const p = plans.find((x) => x.id === o.offer.product || x.name === o.offer.product_name); return { product: p ? p.id : (plans[0] || {}).id, quantity: o.offer.quantity, term: o.offer.term_months, promo: o.offer.promo }; }
-    const m = plans.find((p) => p.name === "M") || plans[0] || {};
-    return { product: m.id, quantity: 1, term: Number(config.default_term) || 36, promo: false };
+    const find = (id, name) => plans.find((x) => x.id === id || x.name === name);
+    if (o) {   // ostatnia oferta (także zestaw kilku usług) – agent zwykle sprzedaje to, co wysłał
+      const lines = (o.offer.lines && o.offer.lines.length ? o.offer.lines : [o.offer])
+        .map((l) => { const p = find(l.product, l.product_name); return p && { product: p.id, quantity: l.quantity, term: l.term_months, promo: !!l.promo, option: Number(l.option) || 0 }; })
+        .filter(Boolean);
+      if (lines.length) return lines;
+    }
+    return [newLine("mobile")];
   }
+  /* Tekst do podglądu „jak zobaczy klient” – ten sam układ co oferta z serwera */
   function offerPreviewText() {
-    const c = calcPlan(form.plan); if (!c) return "";
-    const lines = [`Oferta: ${c.p.name}`, `Liczba numerów: ${form.plan.quantity}`, `Okres umowy: ${form.plan.term} miesięcy`];
-    if (form.plan.promo && config.promo_label) lines.push(`Promocja: ${config.promo_label}`);
-    lines.push(`Zobowiązanie miesięczne: ${money(c.monthly)} netto`);
-    if (c.p.features) lines.push("", ...c.p.features.split("\n").filter(Boolean).map((f) => "• " + f));
-    return lines.join("\n");
+    const out = [];
+    form.basket.forEach((sel, i) => {
+      const c = calcPlan(sel); if (!c) return;
+      if (i) out.push("", "-".repeat(30), "");
+      out.push(`Oferta: ${c.p.name}`, `${c.perNumber ? "Liczba numerów" : "Ilość"}: ${sel.quantity}`, `Okres umowy: ${sel.term} miesięcy`);
+      if (c.promo && c.label) out.push(`Promocja: ${c.label}`);
+      out.push(`${c.perNumber ? "Zobowiązanie miesięczne" : "Opłata miesięczna"}: ${money(c.monthly)} netto`);
+      if (c.start) out.push(`Przez pierwsze ${c.months} miesięcy: ${money(c.start)} netto miesięcznie, od ${c.months + 1}. miesiąca: ${money(c.monthly)} netto`);
+      if (c.average != null) out.push(`Średni miesięczny koszt w okresie ${sel.term} miesięcy: ${money(c.average)} netto`);
+      if (c.p.features) out.push("", ...c.p.features.split("\n").filter(Boolean).map((f) => "• " + f));
+    });
+    if (form.basket.length > 1) {
+      const t = basketTotals();
+      out.push("", "=".repeat(30), `RAZEM miesięcznie za wszystkie usługi: ${money(t.monthly)} netto`);
+      if (t.average != null) out.push(`Średni miesięczny koszt w okresie umowy: ${money(t.average)} netto`);
+    }
+    return out.join("\n");
+  }
+  const basketLines = () => form.basket.filter((l) => planOf(l)).map((l) => ({ product: l.product, quantity: l.quantity, term_months: l.term, promo: linePromo(l), option: lineOption(l) }));
+
+  /* ---------- informacje o produktach i kanały TV: okno „Produkty i kanały TV” ---------- */
+  /* Szukanie bez względu na wielkość liter, polskie znaki i spacje: „tvp1” = „TVP 1”, „polsat sport” = „Polsat Sport” */
+  const normFind = (s) => String(s || "").toLowerCase().replace(/ł/g, "l").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9+]/g, "");
+  // jak klienci mówią na kanały → jak są zapisane na liście T-Mobile
+  const CH_ALIASES = { jedynka: "tvp1", dwojka: "tvp2", trojka: "tvp3", czworka: "tv4", szostka: "tv6", siodemka: "tvnsiedem", tvn7: "tvnsiedem",
+    canalplus: "canal+", kanalplus: "canal+", canal: "canal+", natgeo: "nationalgeographic", nationalgeo: "nationalgeographic", tvpinfo: "tvpinfo" };
+  const findKey = (q) => { const n = normFind(q); return CH_ALIASES[n] || n; };
+  /* Oficjalna lista kanałów (T-Mobile) przychodzi razem ze stroną; pakiety się sumują: M = S + …, L = S + M + … */
+  const TV = (() => { try { return JSON.parse(document.getElementById("tv-channels").textContent); } catch { return null; } })();
+  const TV_PLANS = ["S", "M", "L"];
+  /* Wiersz informacji: „Kategoria: kanał, kanał, …” to lista kanałów (pokazujemy jako plakietki), reszta – zwykły punkt */
+  // plakietki tylko dla list kanałów TV – zwykłe „Roaming UE: 8,95 GB” albo „15 zł netto, umowa…” zostają tekstem
+  function infoRows(text, chips) {
+    return String(text || "").split("\n").map((x) => x.trim()).filter(Boolean).map((x) => {
+      const m = x.match(/^([^:]{2,30}):\s*(.+)$/);
+      if (chips && m && !/^za dopłatą/i.test(x) && m[2].includes(",")) return { label: m[1], items: m[2].split(",").map((s) => s.trim()).filter(Boolean) };
+      return { label: m && m[1].length < 40 ? m[1] : "", text: m && m[1].length < 40 ? m[2] : x, line: x };
+    });
+  }
+  const tvPlanOf = (p) => { const m = kindOf(p) === "tv" && p.name.match(/\b(S|M|L)\s*$/i); return m ? m[1].toUpperCase() : null; };
+  function rowsHtml(rows, key) {
+    const hit = (t) => key && normFind(t).includes(key);
+    if (key) rows = rows.map((r) => r.items ? { ...r, items: r.items.filter(hit) } : r).filter((r) => r.items ? r.items.length : hit(r.line));
+    return rows.map((r) => r.items
+      ? `<li class="w-chrow"><b>${esc(r.label)}:</b> ${r.items.map((c) => `<span class="w-ch${hit(c) ? " hit" : ""}">${esc(c)}</span>`).join("")}</li>`
+      : `<li${hit(r.line) ? ' class="hit"' : ""}>${r.label ? `<b>${esc(r.label)}:</b> ${esc(r.text)}` : esc(r.text)}</li>`).join("");
+  }
+  function productInfoHtml(p, find) {
+    const key = find ? findKey(find) : "";
+    const promos = promosOf(p);
+    const price = `<div class="w-pinfo-price">${money(p.price)} netto${Number(p.extra_price) > 0 ? ` · kolejny numer +${money(p.extra_price)}` : ""}</div>`
+      + (promos.length ? `<ul class="w-pinfo-promos">${promos.map((x) => `<li><b>${esc(x.label || "Promocja")}</b>: ${x.months ? `${money(x.price)} przez ${x.months} mies., potem ` : ""}${money(x.after)}</li>`).join("")}</ul>` : "");
+    const feat = p.features ? rowsHtml(infoRows(p.features, kindOf(p) === "tv"), key) : "";
+    // TV bez ściągi w taryfie: pokazujemy kanały z oficjalnej listy (tylko te, które dochodzą w tym pakiecie)
+    const plan = tvPlanOf(p);
+    const own = !p.info && plan && TV ? TV.packages[plan].map((g) => ({ label: g.group, items: g.channels })) : null;
+    const info = own ? rowsHtml(own, key) : p.info ? rowsHtml(infoRows(p.info, kindOf(p) === "tv"), key) : "";
+    const head = own && plan !== "S" ? `<li class="w-pinfo-sum">Wszystkie kanały z pakietu ${plan === "M" ? "S" : "S i M"}, a do tego:</li>` : "";
+    return (key ? "" : price)
+      + (feat ? `<div class="w-pinfo-h">W ofercie dla klienta</div><ul>${feat}</ul>` : "")
+      + (info ? `<div class="w-pinfo-h">${own ? `Kanały (lista T-Mobile, stan na ${esc(TV.as_of)})` : "Dla agenta"}</div><ul>${key ? "" : head}${info}</ul>` : "");
+  }
+  /* Kanały pasujące do wpisu, najlepsze na górze: „1” → najpierw TVP 1, Polsat Sport 1, Eurosport 1 (całe słowo),
+     potem kanały zaczynające się od wpisu, na końcu reszta. Każdy: od którego pakietu jest (-1 = tylko za dopłatą). */
+  function channelMatches(find) {
+    const key = findKey(find); if (!key || !TV) return [];
+    const words = String(find).toLowerCase().trim();
+    const found = new Map();
+    TV_PLANS.forEach((plan, i) => TV.packages[plan].forEach((g) => g.channels.forEach((c) => {
+      if (normFind(c).includes(key) && !found.has(c)) found.set(c, i);
+    })));
+    TV.extra.forEach((c) => { if (normFind(c).includes(key) && !found.has(c)) found.set(c, -1); });
+    const wordRe = new RegExp("(^|[\\s(])" + words.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s)])", "i");
+    const rank = (c) => wordRe.test(c) ? 0 : normFind(c).startsWith(key) ? 1 : 2;
+    return [...found].map(([name, from], i) => ({ name, from, r: rank(name), i })).sort((a, b) => a.r - b.r || a.i - b.i);
+  }
+  function channelAnswer(find) {
+    if (!TV) return `<p class="w-info">Lista kanałów nie wczytała się – odśwież stronę.</p>`;
+    const all = channelMatches(find);
+    if (!all.length) return `<div class="w-chans no"><b>✕ Nie ma takiego kanału</b> w żadnym pakiecie Magenta TV (lista T-Mobile, stan na ${esc(TV.as_of)}).<br><span class="muted">Sprawdź pisownię, np. „TVN 24”, „Polsat Sport”, „jedynka”.</span></div>`;
+    const tvProducts = plans.filter((p) => kindOf(p) === "tv");
+    const priceOf = (plan) => { const p = tvProducts.find((x) => tvPlanOf(x) === plan); return p ? ` <span class="muted">(${money(p.price)})</span>` : ""; };
+    const LIMIT = 20;
+    const rows = all.slice(0, LIMIT).map(({ name, from }) => {
+      if (from < 0) return `<li><span class="w-ch hit">${esc(name)}</span> <b>tylko za dopłatą</b> – pakiet CANAL+ SUPER SPORT (do S, M albo L)</li>`;
+      return `<li><span class="w-ch hit">${esc(name)}</span> ${from === 0 ? "jest <b>we wszystkich pakietach</b>" : `jest od pakietu <b>${TV_PLANS[from]}</b>`}:
+        ${TV_PLANS.map((x, i) => i >= from ? `<span class="w-pk yes">✓ ${x}${priceOf(x)}</span>` : `<span class="w-pk no">✕ ${x}</span>`).join("")}</li>`;
+    }).join("");
+    return `<div class="w-chans"><div class="w-pinfo-h">Czy jest ten kanał? (${all.length})</div><ul>${rows}</ul>${all.length > LIMIT ? `<p class="muted small">…i jeszcze ${all.length - LIMIT}. Wpisz dokładniej.</p>` : ""}</div>`;
+  }
+  /* Okno ma dwie zakładki: „Kanały TV” (klient pyta „czy jest Jedynka?”) i „Taryfy i produkty” (ceny, co zawiera,
+     szukanie po produktach, np. „300” → Światłowód M). Każda ma swoje pole szukania. */
+  const PINFO_HINT = { tv: "Czy jest kanał…? Wpisz np. jedynka, 1, HBO, Eurosport, TVN 24, Polsat Sport",
+    prod: "Szukaj w taryfach, np. 300 Mb/s, roaming, JUMP, dekoder" };
+  function openProductInfo(productId) {
+    let dlg = $("pinfo-dialog");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "pinfo-dialog"; dlg.className = "dialog w-pdialog";
+      dlg.innerHTML = `<div class="w-pdhead"><h2>Produkty i kanały TV</h2><button type="button" class="btn-mini" data-close>Zamknij</button></div>
+        <div class="w-toggle w-pmode" id="pinfo-mode"><button type="button" data-mode="tv">Kanały TV</button><button type="button" data-mode="prod">Taryfy i produkty</button></div>
+        <input id="pinfo-find" class="select" type="search" autocomplete="off">
+        <div class="w-toggle" id="pinfo-kinds"></div>
+        <p class="muted small" id="pinfo-note"></p>
+        <div id="pinfo-list" class="w-plist"></div>`;
+      document.body.appendChild(dlg);
+      dlg.querySelector("[data-close]").addEventListener("click", () => dlg.close());
+      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+      const findEl = dlg.querySelector("#pinfo-find");
+      findEl.addEventListener("keydown", (e) => e.stopPropagation());
+      findEl.addEventListener("input", () => { dlg.dataset["find_" + dlg.dataset.mode] = findEl.value; paintProductInfo(); });
+      dlg.querySelector("#pinfo-mode").addEventListener("click", (e) => { const b = e.target.closest("[data-mode]"); if (b) { setPinfoMode(dlg, b.dataset.mode); findEl.focus(); } });
+      dlg.querySelector("#pinfo-kinds").addEventListener("click", (e) => { const b = e.target.closest("[data-pk]"); if (b) { dlg.dataset.kind = b.dataset.pk; dlg.dataset.only = ""; paintProductInfo(); } });
+      dlg.querySelector("#pinfo-list").addEventListener("click", (e) => { if (e.target.closest("[data-pall]")) { dlg.dataset.only = ""; paintProductInfo(); } });
+    }
+    const p = productId && plans.find((x) => x.id === Number(productId));
+    dlg.dataset.only = p ? String(p.id) : "";
+    if (p) dlg.dataset.kind = kindOf(p);
+    else if (!dlg.dataset.kind) dlg.dataset.kind = form && form.plan ? form.plan.kind || "mobile" : "mobile";
+    dlg.dataset.find_tv = ""; dlg.dataset.find_prod = "";
+    setPinfoMode(dlg, p ? "prod" : "tv");   // z „Co zawiera …” – od razu ta taryfa; z lewego panelu – kanały
+    dlg.showModal();
+    dlg.querySelector("#pinfo-find").focus();
+  }
+  function setPinfoMode(dlg, mode) {
+    dlg.dataset.mode = mode;
+    const f = dlg.querySelector("#pinfo-find");
+    f.placeholder = PINFO_HINT[mode]; f.value = dlg.dataset["find_" + mode] || "";
+    dlg.querySelectorAll("#pinfo-mode [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+    dlg.querySelector("#pinfo-kinds").hidden = mode !== "prod";
+    dlg.querySelector("#pinfo-note").textContent = mode === "tv"
+      ? `Pakiety TV się sumują: M ma wszystko z S, a L wszystko z S i M.${TV ? ` Lista kanałów: T-Mobile, stan na ${TV.as_of}.` : ""}`
+      : "Ceny netto. Szukanie przeszukuje wszystkie grupy taryf.";
+    paintProductInfo();
+  }
+  function paintProductInfo() {
+    const dlg = $("pinfo-dialog"); if (!dlg) return;
+    const list = dlg.querySelector("#pinfo-list");
+    const find = dlg.querySelector("#pinfo-find").value.trim(), key = find ? findKey(find) : "";
+    if (dlg.dataset.mode === "tv") {
+      list.innerHTML = key ? channelAnswer(find)
+        : `<p class="w-info">Wpisz nazwę kanału, o który pyta klient. Zobaczysz, w których pakietach jest (S / M / L).</p>`
+          + (TV ? `<ul class="w-pinfo-promos">${TV_PLANS.map((x) => `<li><b>Magenta TV ${x}</b>: ${TV.counts[x]} kanałów</li>`).join("")}</ul>` : "");
+      return;
+    }
+    const only = !find && Number(dlg.dataset.only) || 0;
+    const kinds = KINDS.filter(([k]) => plans.some((p) => kindOf(p) === k));
+    dlg.querySelector("#pinfo-kinds").innerHTML = kinds.map(([k, l]) => `<button type="button" data-pk="${k}" aria-pressed="${!find && !only && dlg.dataset.kind === k}">${l}</button>`).join("");
+    // szukanie przeszukuje wszystkie grupy taryf
+    const text = (p) => p.name + "\n" + (p.features || "") + "\n" + (p.info || "") + (tvPlanOf(p) && !p.info && TV ? "\n" + TV.packages[tvPlanOf(p)].map((g) => g.channels.join(",")).join(",") : "");
+    const shown = plans.filter((p) => only ? p.id === only : key ? normFind(text(p)).includes(key) : kindOf(p) === dlg.dataset.kind);
+    const nameHit = (p) => !!key && normFind(p.name).includes(key);
+    // pasuje nazwa (np. „jump”) → cała karta; inaczej tylko pasujące punkty
+    const card = (p) => `<section class="w-pcard"><h3>${esc(p.name)}</h3>${productInfoHtml(p, nameHit(p) ? "" : find)}</section>`;
+    if (!key) {
+      list.innerHTML = (only ? `<p><button type="button" class="w-link" data-pall>← Pokaż wszystkie produkty z tej grupy</button></p>` : "")
+        + (shown.length ? shown.map(card).join("") : `<p class="w-info">Brak taryf w tej grupie.</p>`);
+      return;
+    }
+    // kolejność: pasuje nazwa → punkty oferty (np. „Prędkość: do 300 Mb/s”) → tylko ściąga dla agenta
+    const rank = (p) => nameHit(p) ? 0 : normFind(p.features).includes(key) ? 1 : 2;
+    const sorted = shown.map((p, i) => [rank(p), i, p]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+    const tvHits = channelMatches(find).length;
+    list.innerHTML = (sorted.length ? sorted.map(card).join("") : `<p class="w-info">Nic nie znaleziono dla „${esc(find)}”.</p>`)
+      + (tvHits ? `<p class="muted small">Szukasz kanału? Pasuje ${tvHits} – <button type="button" class="w-link" data-gotv>sprawdź w „Kanały TV”</button>.</p>` : "");
+    const go = list.querySelector("[data-gotv]");
+    if (go) go.addEventListener("click", () => { dlg.dataset.find_tv = find; setPinfoMode(dlg, "tv"); });
   }
 
   function stepHtml(o) {
@@ -640,7 +982,7 @@
     }
     if (o === "offer") {
       const target = config.mode === "direct" ? "prosto na e-mail klienta" : `do: <b>${esc(config.forward_name || "osoby wysyłającej")}</b>${config.forward_email ? ` (${esc(config.forward_email)})` : " – adres ustawia manager"}`;
-      return `<div class="w-step"><h3>Oferta dla klienta</h3>${planPicker(form.plan)}
+      return `<div class="w-step"><h3>Oferta dla klienta</h3>${planPicker()}
         <label class="w-field grow">E-mail klienta${config.mode === "direct" ? "" : " (żeby osoba wysyłająca wiedziała, dokąd)"}<input id="f-email" type="email" maxlength="254" value="${esc(d.email || "")}" placeholder="np. biuro@firma.pl"></label>
         ${whenField("offer", "Kiedy zadzwonić w sprawie oferty (follow-up)", nextWorkday(10), true)}
         <label class="w-field grow">Sprawa przy follow-upie<input id="f-topic" maxlength="255" value="Omówić wysłaną ofertę"></label>
@@ -648,7 +990,7 @@
         <pre class="w-preview" id="f-mail-preview" hidden></pre></div>`;
     }
     if (o === "sold") {
-      return `<div class="w-step"><h3>Co klient kupił?</h3>${planPicker(form.plan)}<p class="w-info">Klient zostanie zamknięty jako <b>sprzedany</b>. Prowizja doliczy się do Twoich wyników.</p>
+      return `<div class="w-step"><h3>Co klient kupił?</h3>${planPicker()}<p class="w-info">Klient zostanie zamknięty jako <b>sprzedany</b>. Prowizja doliczy się do Twoich wyników.</p>
         <p class="w-info">Zapytaj o polecenie: „Kogo Pan zna, kto jeszcze mógłby skorzystać?” → <button type="button" class="w-link" data-referral>+ dodaj polecony kontakt</button></p></div>`;
     }
     if (o === "refused") return `<div class="w-step"><h3>Dlaczego odmówił? (dopisze się do komentarza)</h3><div class="w-chips">${REFUSE_CHIPS.map((c) => `<button type="button" class="w-chip" data-refuse="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>`;
@@ -663,7 +1005,8 @@
   function pick(o) {
     if (!current || CLOSED.includes(current.status) || !$("out-panel")) return;
     if (form && form.outcome === o) { resetForm(); return; }
-    form = { outcome: o, plan: ["offer", "sold"].includes(o) ? defaultPlan() : null, skip: "" };
+    const basket = ["offer", "sold"].includes(o) && plans.length ? defaultBasket() : null;
+    form = { outcome: o, basket, plan: basket ? basket[0] : null, skip: "" };
     document.querySelectorAll("[data-out]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.out === o)));
     $("step").innerHTML = stepHtml(o) + (TALKED.includes(o) ? `<div class="w-step w-step-net">${networkHtml(current)}</div>` : "");
     paintPhrases(o);
@@ -744,11 +1087,11 @@
     if (!form) { fail("Wybierz wynik rozmowy (klawisze 1–8)."); return; }
     const o = form.outcome, lead = current.id;
     if (o === "offer") {
-      if (!form.plan || !form.plan.product) { fail("Wybierz taryfę."); return; }
+      if (!form.plan || !basketLines().length) { fail("Wybierz taryfę."); return; }
       const w = readWhen(true); if (!w.ok) { fail(w.error); return; }
       const email = $("f-email").value.trim();
       if (config.mode === "direct" && !email) { fail("Podaj e-mail klienta."); return; }
-      return submitOffer({ lead, product: form.plan.product, quantity: form.plan.quantity, term_months: form.plan.term, promo: form.plan.promo,
+      return submitOffer({ lead, lines: basketLines(),
         client_email: email, next_contact_at: w.value.toISOString(), next_contact_note: $("f-topic").value.trim(), note }, goNext);
     }
     const body = { lead, outcome: o, note };
@@ -767,8 +1110,8 @@
     }
     if (o === "sold") {
       if (plans.length) {
-        if (!form.plan.product) { fail("Wybierz taryfę."); return; }
-        body.sale_lines = [{ product: form.plan.product, quantity: form.plan.quantity, term_months: form.plan.term, promo: form.plan.promo }];
+        if (!basketLines().length) { fail("Wybierz taryfę."); return; }
+        body.sale_lines = basketLines();   // zestaw: numery + światłowód + TV w jednej sprzedaży
       }
     }
     if (o === "skipped") { if (!form.skip) { fail("Wybierz powód pominięcia."); return; } body.skip_reason = form.skip; }
@@ -790,7 +1133,8 @@
   function lock(on) { saving = on; ["save-next", "save-only"].forEach((id) => { const b = $(id); if (b) b.disabled = on; }); }
   async function submit(body, goNext) {
     lock(true);
-    const r = await jsonReq("/api/activities/", "POST", body);
+    // „Zapisz i dalej”: serwer od razu oddaje następnego klienta (pole `next`) – jedno zapytanie
+    const r = await jsonReq(goNext ? "/api/activities/?next=1" : "/api/activities/", "POST", body);
     lock(false);
     if (r.error) { fail(r.error); return; }
     afterSave(r.data, goNext);
@@ -899,27 +1243,40 @@
     const again = saved && saved.rescheduled_to ? ` · następny kontakt ${esc(when(saved.rescheduled_to))}` : "";
     showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(OUT_LABEL[saved.outcome] || "")} · ${esc(name)}${again}`);
     if (CRM.refreshReminders) CRM.refreshReminders();
+    // „Zapisz i dalej”: od razu następny klient, a listy po lewej i panel „Dziś” odświeżają się w tle
+    if (goNext) { await nextClient(true, saved && saved.next); refreshAll(); return; }
     await refreshAll();
-    if (goNext) { await nextClient(); return; }
     if (leadId) openLead(leadId);
   }
   async function refreshAll() { await Promise.all([loadLeads(), loadSummary(), loadHistory(), loadSideData()]); }
 
   /* ---------- „Następny klient” ---------- */
   const REASON_TOAST = { offer: "Follow-up po ofercie", callback: "Umówione oddzwonienie", retry: "Ponowna próba", new: "Nowa firma" };
-  async function nextClient() {
-    const btns = document.querySelectorAll("#claim-btn, [data-next-btn]");
-    btns.forEach((b) => { b.disabled = true; });
+  /* Bez mrugania: przyciski i karta przygasają dopiero, gdy serwer odpowiada dłużej niż 0,3 s
+     (szybka odpowiedź nie zmienia wyglądu); drugie kliknięcie w trakcie nic nie robi */
+  let nextBusy = false;
+  async function nextClient(refreshLater, ready) {
+    if (nextBusy) return;
+    nextBusy = true;
+    const pane = $("lead-pane");
+    const slow = setTimeout(() => {
+      document.querySelectorAll("#claim-btn, [data-next-btn]").forEach((b) => { b.disabled = true; });
+      if (pane) pane.classList.add("w-busy");
+    }, 300);
     try {
-      const r = await api("/api/work/next/", { method: "POST" });
-      const d = await r.json().catch(() => ({}));
+      // `ready` = następny klient przyszedł już w odpowiedzi na zapis („Zapisz i dalej”)
+      const r = ready ? { ok: !!ready.lead, status: ready.lead ? 200 : 404 } : await api("/api/work/next/", { method: "POST" });
+      const d = ready || await r.json().catch(() => ({}));
       if (r.status === 404) { welcome(d.detail || "Na teraz nie ma nic do zrobienia."); return; }
       if (!r.ok) { toast(d.detail || "Nie udało się pobrać klienta.", true); return; }
-      if (!leads.some((l) => l.id === d.lead.id)) await loadLeads();
-      await openLead(d.lead.id, d.reason);
-      loadSummary();
-      window.scrollTo({ top: 0 });
-    } catch { toast("Brak połączenia z serwerem.", true); } finally { btns.forEach((b) => { b.disabled = false; }); }
+      await openLead(d.lead.id, d.reason, d.lead.activities ? d.lead : null);
+      if (!refreshLater) { if (!leads.some((l) => l.id === d.lead.id)) loadLeads(); loadSummary(); }
+      CRM.scrollTop();
+    } catch { toast("Brak połączenia z serwerem.", true); } finally {
+      clearTimeout(slow); nextBusy = false;
+      document.querySelectorAll("#claim-btn, [data-next-btn]").forEach((b) => { b.disabled = false; });
+      if (pane) pane.classList.remove("w-busy");
+    }
   }
 
   /* ---------- wyszukiwarka z górnego paska ---------- */
@@ -1011,6 +1368,7 @@
     if (andCall) callNow();
   }
   $("contact-open").addEventListener("click", () => openContact());
+  $("pinfo-open").addEventListener("click", () => openProductInfo());
   $("nc-cancel").addEventListener("click", () => $("contact-dialog").close());
   $("contact-form").addEventListener("submit", (e) => { e.preventDefault(); saveContact(false); });
   $("nc-call").addEventListener("click", () => saveContact(true));
@@ -1083,11 +1441,13 @@
   setInterval(() => { if (!document.hidden) { loadSummary(); loadDialer(); } }, 20000);
   setInterval(() => { if (!document.hidden) loadSideData(); }, 120000);
   (async () => {
-    const [pr, cf, rl] = await Promise.all([api("/api/products/?is_active=true").catch(() => null), api("/api/offer-config/").catch(() => null), api("/api/settings/").catch(() => null)]);
+    // wszystko naraz (nie w dwóch turach po kolei) – ekran otwiera się szybciej
+    const lists = Promise.all([loadLeads(), loadSummary(), loadDialer(), loadSideData(), loadHistory()]);
+    const [pr, cf, rl] = await Promise.all([api("/api/products/?is_active=true&page_size=500").catch(() => null), api("/api/offer-config/").catch(() => null), api("/api/settings/").catch(() => null)]);
     try { if (rl && rl.ok) { const d = await rl.json(); if (d.work_days) workDays = new Set([...d.work_days].map(Number)); } } catch { /* pon–pt */ }
     try { if (pr && pr.ok) { const d = await pr.json(); plans = (d.results || d).filter((p) => p.is_active); } } catch { /* bez taryf */ }
     try { if (cf && cf.ok) config = { ...config, ...(await cf.json()) }; } catch { /* domyślne ustawienia */ }
-    await Promise.all([loadLeads(), loadSummary(), loadDialer(), loadSideData(), loadHistory()]);
+    await lists;
     const params = new URLSearchParams(location.search);
     const wanted = Number(params.get("lead")), find = params.get("find");
     if (find) { const input = $("gsearch-input"); if (input) input.value = find; document.dispatchEvent(new CustomEvent("crm:search", { detail: { q: find }, cancelable: true })); return; }

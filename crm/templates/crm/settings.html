@@ -25,6 +25,34 @@
             <label class="check"><input type="radio" name="draw" value="random"> <span><strong>Wszystko losowo</strong><small class="muted">Firmy jednoosobowe i spółki w jednej puli – spółki też są obdzwaniane na bieżąco.</small></span></label>
             <label class="check"><input type="radio" name="draw" value="last"> <span><strong>Najpierw firmy jednoosobowe, potem spółki</strong><small class="muted">Spółki trafią do agentów dopiero, gdy w bazie skończą się firmy jednoosobowe.</small></span></label>
         </section>
+        <section class="card" id="sms-card">
+            <h2>SMS z przypomnieniem</h2>
+            <p class="card-desc">Przed umówionym telefonem aplikacja dialera sama wysyła klientowi SMS z telefonu agenta, z tego samego numeru, z którego dzwoni. Działa jak SMS napisany ręcznie, więc kosztuje tyle co zwykły SMS w abonamencie, bez żadnych dopłat. Idzie tylko wtedy, gdy telefon agenta jest włączony, i tylko między 8:00 a 20:00. Zapisuje się razem z zasadami powyżej.</p>
+            <div class="form-grid sms-times">
+                <div class="field"><label for="sms-minutes-n">Ile wcześniej wysłać SMS</label>
+                    <div class="rule-input"><input id="sms-minutes-n" type="number" class="select" min="1" step="1" inputmode="numeric">
+                        <select id="sms-minutes-u" class="select" aria-label="Jednostka"><option value="min">min</option><option value="h">godz.</option><option value="d">dni</option></select>
+                        <span class="muted">przed telefonem</span></div>
+                    <small class="muted">Dowolnie od 10 minut do 7 dni, np. 45 min, 2 godz., 1 dzień. Gdy termin umówiono później niż tyle przed rozmową (np. „proszę zadzwonić za 20 minut”), SMS nie idzie.</small>
+                    <small class="form-error" id="e-sms_reminder_minutes" hidden></small></div>
+                <div class="field"><label for="sms-gap">Zabezpieczenie: kolejny SMS na ten sam numer najwcześniej po</label>
+                    <div class="rule-input"><input id="sms-gap" type="number" class="select" min="1" max="1440" step="1" inputmode="numeric"> <span class="muted">min</span></div>
+                    <small class="muted">Chroni przed serią SMS-ów na jeden numer (dotyczy też próbnych). Dodatkowo na jeden numer idzie najwyżej 5 SMS-ów na dobę.</small>
+                    <small class="form-error" id="e-sms_min_gap_minutes" hidden></small></div>
+            </div>
+            <div id="sms-kinds" class="sms-kinds"></div>
+            <p class="muted small">W treści można wstawić: <code>{imie}</code> imię agenta, <code>{kiedy}</code> „jutro o 14:00” (<code>{Kiedy}</code> z wielkiej litery, na początek zdania), <code>{godzina}</code>, <code>{data}</code>. Podgląd: agent Julian, telefon jutro o 14:00.</p>
+            <div class="sms-test">
+                <h3>Próbny SMS</h3>
+                <p class="muted small">Idzie z <strong>Twojego</strong> telefonu (sparowanego z dialerem) na numer, który wpiszesz, z treścią z wybranego pola powyżej (też niezapisaną). Przed wysłaniem CRM zapyta, czy na pewno.</p>
+                <div class="sms-test-row">
+                    <input id="sms-test-phone" class="select" inputmode="tel" maxlength="20" placeholder="np. 600 100 200" aria-label="Numer do próbnego SMS-a">
+                    <select id="sms-test-kind" class="select" aria-label="Który SMS"></select>
+                    <button type="button" class="btn btn-secondary" id="sms-test-send">Wyślij próbny SMS…</button>
+                </div>
+                <p class="small" id="sms-test-msg" aria-live="polite"></p>
+            </div>
+        </section>
         <div class="rules-bar" id="rules-bar">
         <p id="rules-error" class="form-error" hidden></p>
         <div class="actions rules-actions">
@@ -84,7 +112,7 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=89"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=89"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=112"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=112"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=112"></script>
 <script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();</script>{% endblock %}

@@ -7,13 +7,14 @@
     <div>
         <div class="cal-tabs" style="margin-bottom:.6rem"><a href="/crm/plan/">Dzień</a><a href="/crm/calendar/" class="active">Miesiąc</a></div>
         <h1>Kalendarz kontaktów</h1>
-        <p class="muted">Wszystkie umówione kontakty: oferty, oddzwonienia i ponowne próby. Kliknij kontakt, żeby od razu do niego zadzwonić.</p>
+        <p class="muted">Wszystkie umówione kontakty: oferty, oddzwonienia i ponowne próby. Kliknij dzień, żeby zobaczyć go dokładnie i zadzwonić.</p>
     </div>
     <div class="cal-head">
         <button type="button" class="btn-mini" id="m-prev" aria-label="Poprzedni miesiąc">&lsaquo;</button>
         <h2 id="m-title">…</h2>
         <button type="button" class="btn-mini" id="m-next" aria-label="Następny miesiąc">&rsaquo;</button>
         <button type="button" class="btn-mini" id="m-today">Dziś</button>
+        <button type="button" class="btn btn-primary" id="cb-open">+ Dodaj callback</button>
     </div>
 </header>
 <section class="card">
@@ -25,5 +26,39 @@
         <span><i style="--c:var(--late)"></i>Spóźnione</span>
     </div>
 </section>
+
+<dialog id="day-dialog" class="dialog cal-dialog" aria-labelledby="day-title">
+    <div class="cal-dhead">
+        <div><h2 id="day-title">…</h2><p class="muted" id="day-sub"></p></div>
+    </div>
+    <div id="day-list" class="cal-list"></div>
+    {# zamykanie w tym samym miejscu co „Anuluj” w „Dodaj callback”: na dole, po lewej od głównego przycisku #}
+    <div class="dialog-actions"><button type="button" class="btn btn-secondary" id="day-close">Zamknij</button><button type="button" class="btn btn-primary" id="day-add">+ Dodaj callback na ten dzień</button></div>
+</dialog>
+
+<dialog id="cb-dialog" class="dialog" aria-labelledby="cb-title">
+    <form id="cb-form" novalidate>
+        <h2 id="cb-title">Dodaj callback</h2>
+        <p class="muted small">Umawiasz termin rozmowy z jednym ze swoich klientów. To nie zapisuje rozmowy, tylko termin: przypomnienie przyjdzie jak przy zwykłym oddzwonieniu.</p>
+        <label class="field">Klient
+            <input id="cb-find" class="select" autocomplete="off" placeholder="Nazwa firmy, telefon albo NIP">
+        </label>
+        <div id="cb-picked" class="cb-picked" hidden></div>
+        <div id="cb-results" class="cb-results"></div>
+        <div class="field-row">
+            <label class="field">Dzień<input id="cb-date" class="select" type="date"></label>
+            <label class="field">Godzina<input id="cb-time" class="select" type="time" step="300"></label>
+        </div>
+        <label class="field">W jakiej sprawie (opcjonalnie)
+            <input id="cb-note" class="select" maxlength="255" autocomplete="off" placeholder="np. omówić ofertę na 3 numery">
+        </label>
+        <p class="form-error" id="cb-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="cb-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="cb-ok">Zapisz termin</button>
+        </div>
+    </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=89"></script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=112"></script>{% endblock %}

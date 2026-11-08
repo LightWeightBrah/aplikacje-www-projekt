@@ -5,7 +5,7 @@ from crm.tariffs import STANDARD_TARIFFS, load_standard_tariffs
 
 class Command(BaseCommand):
     help = (
-        "Wgrywa taryfy T-Mobile z wzornika ofert (S, M100, M, L, VIP) do „Taryfy i produkty”. "
+        "Wgrywa taryfy T-Mobile z wzornika ofert (komórkowe S–VIP, światłowód, Magenta TV) do „Taryfy i produkty”. "
         "Istniejące taryfy o tej samej nazwie zostają bez zmian (chyba że podasz --overwrite). "
         "Działa także na serwerze – to nie są dane klientów."
     )

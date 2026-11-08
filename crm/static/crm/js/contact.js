@@ -4,8 +4,8 @@
 (() => {
   const { esc } = CRM;
   const OUT_LABEL = { no_answer: "Nie odebrał", callback: "Oddzwonić", interested: "Zainteresowany", sold: "Sprzedane",
-    refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka", skipped: "Pominięty" };
-  const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e",
+    refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka", skipped: "Pominięty", offer: "Wysłana oferta" };
+  const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e", offer: "#22c55e",
     refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8", skipped: "#78716c" };
   /* Główna nazwa leada: firma (w bazach z CEIDG prawie zawsze jest), a bez niej osoba albo numer */
   const leadTitle = (l) => (l && (l.display_name || l.company_name || l.contact_name || l.phone)) || "–";
@@ -80,6 +80,7 @@
   /* Wszystkie strony listy DRF (paginacja) jako jedna tablica */
   async function fetchAll(url) {
     const items = [];
+    url += (url.includes("?") ? "&" : "?") + "page_size=500";   // jedno zapytanie zamiast kilku po kolei
     while (url) {
       const r = await CRM.api(url);
       if (!r.ok) throw new Error("Nie udało się pobrać danych (" + r.status + ").");

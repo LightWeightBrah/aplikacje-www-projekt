@@ -20,7 +20,7 @@
         <thead><tr><th>Agent</th><th>Przyszedł</th><th>Wyszedł</th><th class="num">Czas pracy</th><th class="num">Przerwy</th><th class="num">Telefony</th><th class="num">Minuty / powinno być</th></tr></thead>
         <tbody id="att-list"></tbody>
     </table></div>
-    <p class="card-desc">Przyszedł = zalogowanie albo pierwszy ruch w CRM tego dnia. Wyszedł = wylogowanie; godzina ze znakiem „?” to ostatni ruch agenta, który się nie wylogował (np. wyłączył laptopa). Liczą się tylko prawdziwe ruchy (dzwonienie, zapis rozmowy, „Następny klient”) – karta zostawiona otwarta na noc nie nabija czasu. Przerwa = co najmniej 15 min bez ruchu; pokazujemy ją, ale czas pracy jej nie odejmuje. Powinno być 15 min rozmów na każdą godzinę pracy (4 h → 60 min).</p>
+    <p class="card-desc">Przyszedł = zalogowanie albo pierwszy ruch w CRM tego dnia. Wyszedł = wylogowanie; godzina ze znakiem „?” to ostatni ruch agenta, który się nie wylogował (np. wyłączył laptopa). Liczą się tylko prawdziwe ruchy (dzwonienie, zapis rozmowy, „Następny klient”) – karta zostawiona otwarta na noc nie nabija czasu. Przerwa = co najmniej 15 min bez ruchu; pokazujemy ją, ale czas pracy jej nie odejmuje. Powinno być tyle minut rozmów na każdą godzinę pracy, ile wynosi cel agenta (domyślnie 15: 4 h → 60 min). Cel zmienisz każdemu w „Zespół → Edytuj”.</p>
 </section>
 
 <div class="tabs-row">
@@ -111,7 +111,7 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=89"></script>
-<script src="{% static 'crm/js/attendance.js' %}?v=89"></script>
+{% block scripts %}<script src="{% static 'crm/js/manager.js' %}?v=112"></script>
+<script src="{% static 'crm/js/attendance.js' %}?v=112"></script>
 <script>CRM.initAttendance();</script>
 <script>CRM.initManager();</script>{% endblock %}

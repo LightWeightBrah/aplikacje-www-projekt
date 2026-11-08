@@ -16,6 +16,9 @@ from .rules import (
     CALLBACK_STEP_LIMITS,
     CALLBACK_STEPS_MAX,
     FIELD_LIMITS,
+    SMS_KINDS,
+    SMS_PLACEHOLDERS,
+    SMS_TEXT_MAX,
     attempt_times,
     get_rules,
     suggest_retry,
@@ -29,6 +32,14 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = "__all__"
 
+    def validate_promos(self, value):
+        from .tariffs import clean_promos
+
+        try:
+            return clean_promos(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error))
+
 
 # Największa ilość jednej pozycji w jednej sprzedaży (zabezpieczenie przed literówką, np. 5000 zamiast 5)
 MAX_SALE_QUANTITY = 9999
@@ -39,7 +50,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SaleItem
-        fields = ("id", "product", "product_name", "unit", "unit_price", "quantity", "total", "term_months", "promo", "commission")
+        fields = ("id", "product", "product_name", "unit", "unit_price", "quantity", "total", "term_months", "promo", "promo_label", "commission")
         read_only_fields = fields
 
 
@@ -51,6 +62,7 @@ class SaleLineSerializer(serializers.Serializer):
     # taryfy: okres umowy (z niego liczy się prowizja) i czy z promocją
     term_months = serializers.ChoiceField(choices=(24, 36), required=False, allow_null=True)
     promo = serializers.BooleanField(required=False, default=False)
+    option = serializers.IntegerField(required=False, default=0, min_value=0, max_value=20)
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -172,17 +184,18 @@ class ActivitySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Produkt „{product.name}” jest wyłączony ze sprzedaży."
                 )
-            key = (product.pk, line.get("term_months"), bool(line.get("promo")))
+            promo = bool(line.get("promo"))
+            key = (product.pk, line.get("term_months"), promo, int(line.get("option") or 0) if promo else 0)
             prev = merged.get(key, (product, 0))[1]
             merged[key] = (product, prev + line["quantity"])
-        for (_pk, term, promo), (product, quantity) in merged.items():
+        for (_pk, term, promo, option), (product, quantity) in merged.items():
             if quantity > MAX_SALE_QUANTITY:
                 raise serializers.ValidationError(
                     f"Ilość produktu „{product.name}” nie może przekraczać {MAX_SALE_QUANTITY}."
                 )
         return [
-            {"product": product, "quantity": quantity, "term_months": term, "promo": promo}
-            for (_pk, term, promo), (product, quantity) in merged.items()
+            {"product": product, "quantity": quantity, "term_months": term, "promo": promo, "option": option}
+            for (_pk, term, promo, option), (product, quantity) in merged.items()
         ]
 
     def validate_next_contact_at(self, value):
@@ -259,6 +272,7 @@ class LeadSerializer(serializers.ModelSerializer):
     batch_name = serializers.CharField(source="batch.name", read_only=True, allow_null=True)
     # Od kogo lead został przepisany obecnemu opiekunowi (null = wzięty z puli)
     transferred_from = serializers.SerializerMethodField()
+    transferred_at = serializers.SerializerMethodField()
     # Ile razy obecny opiekun nie dodzwonił się do leada i kiedy system proponuje następną próbę
     owner_no_answers = serializers.SerializerMethodField()
     suggested_retry_at = serializers.SerializerMethodField()
@@ -315,7 +329,15 @@ class LeadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_transferred_from(self, obj):
-        return getattr(obj, "transferred_from_name", None)
+        full = " ".join(filter(None, [getattr(obj, "transferred_from_first", None), getattr(obj, "transferred_from_last", None)]))
+        return full.strip() or getattr(obj, "transferred_from_name", None)
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_transferred_at(self, obj):
+        if not getattr(obj, "transferred_from_name", None):   # z puli – nie był przepisany
+            return None
+        value = getattr(obj, "transferred_at", None)
+        return value.isoformat() if value else None
 
     def _rules(self):
         # jedno zapytanie o ustawienia na całą listę leadów
@@ -626,6 +648,20 @@ class LeaderboardSerializer(serializers.Serializer):
     results = LeaderboardRowSerializer(many=True)
 
 
+def sms_text_error(text):
+    """Błąd w treści SMS-a z przypomnieniem (pusta, za długa, nieznane pole) albo None."""
+    text = (text or "").strip()
+    if not text:
+        return "Wpisz treść SMS-a."
+    if len(text) > SMS_TEXT_MAX:
+        return f"SMS może mieć najwyżej {SMS_TEXT_MAX} znaków."
+    unknown = set(re.findall(r"\{([^{}]*)\}", text)) - set(SMS_PLACEHOLDERS)
+    if unknown:
+        return ("Nieznane pole: " + ", ".join("{" + u + "}" for u in sorted(unknown)) + ". Można użyć: "
+                + ", ".join("{" + p + "}" for p in SMS_PLACEHOLDERS) + ".")
+    return None
+
+
 class TeamRulesSerializer(serializers.ModelSerializer):
     """Ustawienia zespołu (limit prób, ponowne próby, zwroty do puli) – zmienia je manager."""
 
@@ -646,6 +682,14 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             "claim_timeout_hours",
             "unreachable_cooldown_days",
             "companies_last",
+            "sms_reminder_minutes",
+            "sms_min_gap_minutes",
+            "sms_offer_enabled",
+            "sms_offer_text",
+            "sms_talked_enabled",
+            "sms_talked_text",
+            "sms_stranger_enabled",
+            "sms_stranger_text",
             "updated_at",
             "updated_by_name",
         )
@@ -673,6 +717,13 @@ class TeamRulesSerializer(serializers.ModelSerializer):
             if any(isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi for v in steps):
                 raise serializers.ValidationError(
                     {"callback_retry_steps": f"Każda próba: od {lo} min do {hi // 1440} dni."})
+        for kind in SMS_KINDS:
+            name = f"sms_{kind}_text"
+            if name in attrs:
+                error = sms_text_error(attrs[name])
+                if error:
+                    raise serializers.ValidationError({name: error})
+                attrs[name] = attrs[name].strip()
         start = attrs.get("work_start_hour", getattr(self.instance, "work_start_hour", 8))
         end = attrs.get("work_end_hour", getattr(self.instance, "work_end_hour", 20))
         if start >= end:
@@ -680,3 +731,15 @@ class TeamRulesSerializer(serializers.ModelSerializer):
                 {"work_end_hour": "Koniec dnia pracy musi być później niż jego początek."}
             )
         return attrs
+
+
+class ScheduleCallbackSerializer(serializers.Serializer):
+    """Kalendarz → „Dodaj callback”: termin kontaktu z klientem i sprawa do omówienia."""
+
+    next_contact_at = serializers.DateTimeField()
+    next_contact_note = serializers.CharField(required=False, allow_blank=True, max_length=255, default="")
+
+    def validate_next_contact_at(self, value):
+        if value < timezone.now():
+            raise serializers.ValidationError("Termin nie może być w przeszłości.")
+        return value

@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator, RegexValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
 
@@ -30,12 +30,60 @@ class Product(models.Model):
     )
     # Punkty oferty, po jednym w linii (trafiają do treści oferty dla klienta)
     features = models.TextField("co zawiera (punkty oferty)", blank=True)
+    # Promocja tej taryfy. Puste pola = ustawienia z „Ustawienia i oferty” (np. „6 miesięcy gratis”).
+    # Przez `promo_months` miesięcy klient płaci `promo_month_price`, potem `promo_price` (np. światłowód:
+    # 12 miesięcy po 50 zł, od 13. miesiąca 85 zł).
+    promo_label = models.CharField("nazwa promocji", max_length=80, blank=True)
+    promo_months = models.PositiveSmallIntegerField("miesiące promocji", null=True, blank=True)
+    promo_month_price = models.DecimalField(
+        "cena w miesiącach promocji (zł)", max_digits=10, decimal_places=2, default=0,
+        validators=[MinValueValidator(0)],
+    )
+    # Inne promocje do wyboru (np. światłowód: „6 miesięcy za 0 zł” albo „12 miesięcy za 10 zł”):
+    # lista {"label", "months", "month_price", "price"} – przez `months` miesięcy `month_price`, potem `price`.
+    promos = models.JSONField("inne promocje", default=list, blank=True)
+    # Ściąga dla agenta (np. lista kanałów TV): widać ją w „Dzwonieniu”, nie trafia do oferty
+    info = models.TextField("informacje dla agenta", blank=True)
     sort_order = models.PositiveSmallIntegerField("kolejność", default=100)
 
-    def monthly_total(self, quantity=1, promo=False):
+    def promo_choices(self, default_label=""):
+        """Wszystkie promocje taryfy: najpierw główna (pola promo_*), potem `promos`.
+
+        Każda: {"label", "months", "month_price", "price"} (Decimal). Pusta lista = taryfa bez promocji (np. TV).
+        """
+        import re
+        from decimal import Decimal, InvalidOperation
+
+        out = []
+        if self.promo_price is not None:
+            label = (self.promo_label or default_label or "").strip()
+            months = self.promo_months
+            if months is None:
+                found = re.match(r"\s*(\d+)", label)
+                months = int(found.group(1)) if found else 0
+            out.append({"label": label, "months": int(months), "month_price": self.promo_month_price or Decimal("0"),
+                        "price": self.promo_price})
+        for raw in self.promos if isinstance(self.promos, list) else []:
+            try:
+                out.append({"label": str(raw.get("label") or "").strip()[:80], "months": max(0, min(60, int(raw.get("months") or 0))),
+                            "month_price": Decimal(str(raw.get("month_price") or 0)), "price": Decimal(str(raw["price"]))})
+            except (AttributeError, KeyError, TypeError, ValueError, InvalidOperation):
+                continue   # zły wpis (np. ręcznie poprawiony plik) pomijamy
+        return out
+
+    def promo_choice(self, option=0, default_label=""):
+        """Wybrana promocja (numer z listy promo_choices; zły numer = pierwsza) albo None."""
+        choices = self.promo_choices(default_label)
+        if not choices:
+            return None
+        option = int(option or 0)
+        return choices[option] if 0 <= option < len(choices) else choices[0]
+
+    def monthly_total(self, quantity=1, promo=False, option=0):
         """Wartość miesięczna: pierwszy numer (z promocją albo bez) + kolejne numery po extra_price."""
         quantity = max(int(quantity or 1), 1)
-        first = self.promo_price if promo and self.promo_price is not None else self.price
+        choice = self.promo_choice(option) if promo else None
+        first = choice["price"] if choice else self.price
         if self.extra_price:
             return first + (quantity - 1) * self.extra_price
         return first * quantity
@@ -323,6 +371,7 @@ class SaleItem(models.Model):
     # Taryfy: na ile miesięcy umowa i ile wynosi prowizja (zobowiązanie × mnożnik z ustawień ofert)
     term_months = models.PositiveSmallIntegerField("okres umowy (mies.)", null=True, blank=True)
     promo = models.BooleanField("z promocją", default=False)
+    promo_label = models.CharField("nazwa promocji", max_length=80, blank=True)
     commission = models.DecimalField("prowizja (zł)", max_digits=14, decimal_places=2, default=0)
 
     class Meta:
@@ -391,6 +440,12 @@ class AgentProfile(models.Model):
         default=False,
         help_text="Włączane po założeniu konta lub resecie hasła przez managera; zdejmowane po zmianie hasła przez użytkownika.",
     )
+    goal_minutes_per_hour = models.PositiveSmallIntegerField(
+        "minut rozmów na godzinę pracy (cel)",
+        default=15,
+        validators=[MinValueValidator(1), MaxValueValidator(60)],
+        help_text="Ile minut rozmów powinno być na każdą godzinę pracy (ustawia manager, domyślnie 15).",
+    )
     avatar = models.TextField(
         "zdjęcie profilowe",
         blank=True,
@@ -403,6 +458,26 @@ class AgentProfile(models.Model):
 
     def __str__(self):
         return f"Profil: {self.user}"
+
+
+# SMS-y z przypomnieniem – jak w screenplayu i wg RSN („No Show No Dough”): nie „przypomnienie jak
+# u dentysty”, tylko „jesteśmy umówieni” + jak dać znać, gdy coś wypadnie. Pola {imie}, {kiedy} itd. –
+# crm.sms.render_sms. Trzy rodzaje, bo klient jest na innym etapie:
+#  - po ofercie: wyliczenie już jest w jego skrzynce, więc SMS do niego odsyła,
+#  - po rozmowie (zainteresowany / oddzwonić, wie, kto dzwoni),
+#  - tylko termin (odebrał, ale nie usłyszał, w jakiej sprawie): bez T-Mobile i bez sprzedaży.
+DEFAULT_SMS_OFFER_TEXT = (
+    "Dzień dobry, tu {imie}. {Kiedy} dzwonię, tak jak się umawialiśmy, żeby omówić wyliczenie, "
+    "które wysłaliśmy Państwu mailem. Gdyby coś wypadło, proszę o SMS na ten numer, przełożymy."
+)
+DEFAULT_SMS_TALKED_TEXT = (
+    "Dzień dobry, tu {imie}. {Kiedy} dzwonię, tak jak się umawialiśmy. "
+    "Gdyby coś wypadło, proszę o SMS na ten numer, przełożymy."
+)
+DEFAULT_SMS_STRANGER_TEXT = (
+    "Dzień dobry, tu {imie}. Tak jak się umówiliśmy, zadzwonię {kiedy}. "
+    "Gdyby ta pora nie pasowała, proszę o SMS na ten numer."
+)
 
 
 class TeamRules(models.Model):
@@ -444,6 +519,18 @@ class TeamRules(models.Model):
     )
     # Losowanie nowych firm: False = wszystko losowo, True = najpierw firmy jednoosobowe, potem spółki
     companies_last = models.BooleanField("spółki na końcu przy losowaniu", default=False)
+    # SMS z przypomnieniem przed umówionym telefonem: wysyła go aplikacja dialera z telefonu agenta
+    # (z jego karty SIM, jak zwykły SMS – bez bramki i dopłat), tylko gdy telefon jest włączony
+    sms_reminder_minutes = models.PositiveIntegerField("ile minut przed terminem wysłać SMS", default=60)
+    # zabezpieczenie: na ten sam numer kolejny SMS najwcześniej po tylu minutach (też próbny)
+    sms_min_gap_minutes = models.PositiveIntegerField("odstęp między SMS-ami na ten sam numer (min)", default=60)
+    sms_offer_enabled = models.BooleanField("SMS po wysłanej ofercie", default=True)
+    sms_offer_text = models.TextField("treść SMS-a po wysłanej ofercie", default=DEFAULT_SMS_OFFER_TEXT)
+    sms_talked_enabled = models.BooleanField("SMS po rozmowie", default=True)
+    sms_talked_text = models.TextField("treść SMS-a po rozmowie", default=DEFAULT_SMS_TALKED_TEXT)
+    # domyślnie wyłączony: klient nie wie jeszcze, kto i w jakiej sprawie dzwoni
+    sms_stranger_enabled = models.BooleanField("SMS, gdy umówiony jest tylko termin", default=False)
+    sms_stranger_text = models.TextField("treść SMS-a, gdy umówiony jest tylko termin", default=DEFAULT_SMS_STRANGER_TEXT)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -522,6 +609,9 @@ class Offer(models.Model):
     promo = models.BooleanField(default=False)
     monthly_total = models.DecimalField(max_digits=12, decimal_places=2)
     commission = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Zestaw kilku usług w jednej ofercie (np. numery + światłowód + TV): lista pozycji
+    # {product, product_name, quantity, term_months, promo, monthly}. Pola wyżej = pierwsza pozycja i suma.
+    lines = models.JSONField("pozycje oferty", default=list, blank=True)
     client_email = models.EmailField(blank=True)
     recipient = models.EmailField("wysłano na adres", blank=True)
     sent = models.BooleanField("wysłana przez system", default=False)
@@ -589,6 +679,46 @@ class CallRequest(models.Model):
         verbose_name = "Połączenie z dialera"
         verbose_name_plural = "Połączenia z dialera"
         ordering = ["-created_at"]
+
+
+class SmsReminder(models.Model):
+    """SMS z przypomnieniem o umówionym telefonie, wysłany przez aplikację dialera z telefonu agenta.
+
+    Jeden na lead i termin (unikalna para), więc ten sam termin nie dostanie dwóch SMS-ów,
+    a przełożenie terminu daje nowy SMS przed nowym terminem."""
+
+    class State(models.TextChoices):
+        QUEUED = "queued", "Czeka na telefon"     # próbny SMS zlecony w ustawieniach
+        SENDING = "sending", "Telefon wysyła"
+        SENT = "sent", "Wysłany"
+        FAILED = "failed", "Nie wysłano"
+
+    class Kind(models.TextChoices):
+        OFFER = "offer", "Po wysłanej ofercie"
+        TALKED = "talked", "Po rozmowie"
+        STRANGER = "stranger", "Umówiony tylko termin"
+        TEST = "test", "Próbny"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sms_reminders")
+    # puste przy próbnym SMS-ie (wysłanym z ustawień na wpisany numer)
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, null=True, blank=True, related_name="sms_reminders")
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.TALKED)
+    appointment_at = models.DateTimeField("umówiony termin")
+    phone = models.CharField(max_length=30)
+    text = models.TextField()
+    state = models.CharField(max_length=10, choices=State.choices, default=State.SENDING)
+    error = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "SMS z przypomnieniem"
+        verbose_name_plural = "SMS-y z przypomnieniem"
+        ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=["lead", "appointment_at"], name="one_sms_per_appointment")]
+
+    def __str__(self):
+        return f"SMS do {self.lead or self.phone} przed {self.appointment_at:%d.%m %H:%M}"
 
 
 class Announcement(models.Model):

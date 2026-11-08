@@ -57,6 +57,7 @@ from .serializers import (
     LeadSerializer,
     ProductSerializer,
     ReassignLeadsSerializer,
+    ScheduleCallbackSerializer,
     ScheduleSerializer,
     StatsSerializer,
     assignable_users,
@@ -77,6 +78,7 @@ from .services import (
     LEADERBOARD_SORT_KEYS,
     build_stats,
     leaderboard,
+    CLOSED_STATUSES,
     PROMISED_STATUSES,
     with_owner_tries,
     with_transfer_info,
@@ -127,15 +129,44 @@ class ProductViewSet(viewsets.ModelViewSet):
         request=None,
         responses=inline_serializer("StandardTariffsResult", {
             "created": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "updated": drf_serializers.ListField(child=drf_serializers.CharField()),
         }),
     )
     @action(detail=False, methods=["post"], url_path="load-standard")
     def load_standard(self, request):
-        """Dodaje brakujące taryfy z wzornika ofert (S, M100, M, L, VIP); istniejące zostają bez zmian."""
+        """Dodaje brakujące taryfy z wzornika ofert (komórkowe S–VIP, światłowód, Magenta TV).
+
+        Włączone taryfy o tej samej nazwie zostają bez zmian; wyłączone wracają do sprzedaży z cenami z wzornika."""
         from .tariffs import load_standard_tariffs
 
-        created, _ = load_standard_tariffs()
-        return Response({"created": created})
+        created, updated = load_standard_tariffs()   # updated: uzupełnione puste pola (ściąga, promocje)
+        return Response({"created": created, "updated": updated})
+
+    @extend_schema(
+        request=None,
+        responses=inline_serializer("ClearProductsResult", {
+            "deleted": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "disabled": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="clear", permission_classes=[IsManager])
+    def clear(self, request):
+        """Manager: czyści katalog jednym przyciskiem, żeby wgrać taryfy od nowa.
+
+        Produkt, którego nikt nie sprzedał ani nie ofertował, jest usuwany. Produkt z historią
+        sprzedaży lub ofert zostaje tylko wyłączony, żeby dawne wyniki i przychód się zgadzały.
+        """
+        deleted, disabled = [], []
+        for product in Product.objects.all():
+            if product.sale_items.exists() or product.offers.exists():
+                if product.is_active:
+                    product.is_active = False
+                    product.save(update_fields=["is_active"])
+                disabled.append(product.name)
+            else:
+                deleted.append(product.name)
+                product.delete()
+        return Response({"deleted": deleted, "disabled": disabled})
 
     @extend_schema(responses={(200, XLSX_CONTENT_TYPE): OpenApiTypes.BINARY})
     @action(detail=False, methods=["get"], url_path="export", renderer_classes=[XlsxRenderer],
@@ -480,6 +511,18 @@ class ActivityViewSet(
     owner_lookup = "lead__owner"
     filterset_fields = ["lead", "agent", "outcome"]
 
+    @extend_schema(parameters=[OpenApiParameter(
+        "next", int, description="1 = w odpowiedzi także następny klient (pole `next`, jak POST /api/work/next/)")])
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        # „Zapisz i dalej”: zapis i następny klient w jednym zapytaniu – na serwerze w internecie
+        # każde zapytanie to opóźnienie, więc następny klient wchodzi od razu
+        if request.query_params.get("next") == "1" and response.status_code == status.HTTP_201_CREATED:
+            from .work_api import next_work_payload
+
+            response.data["next"] = next_work_payload(request)
+        return response
+
     def perform_create(self, serializer):
         lead = serializer.validated_data["lead"]
         if not is_manager(self.request.user) and lead.owner_id != self.request.user.id:
@@ -496,7 +539,7 @@ class ActivityViewSet(
             next_contact_note=data.get("next_contact_note"),
             # sprzedane produkty (tylko przy wyniku „Sprzedane”): pary (produkt, ilość)
             sale_items=[
-                (line["product"], line["quantity"], line.get("term_months"), line.get("promo", False))
+                (line["product"], line["quantity"], line.get("term_months"), line.get("promo", False), line.get("option", 0))
                 for line in data.get("sale_lines", [])
             ],
             skip_reason=data.get("skip_reason", ""),
@@ -625,6 +668,29 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             next_contact_at__lt=datetime.combine(until, dtime.min, tz),
         ).order_by("next_contact_at")[:2000]
         return Response(LeadSerializer(leads, many=True, context=self.get_serializer_context()).data)
+
+    @extend_schema(request=ScheduleCallbackSerializer, responses=LeadSerializer)
+    @action(detail=True, methods=["post"], url_path="add-callback")
+    def add_callback(self, request, pk=None):
+        """Kalendarz → „Dodaj callback”: umówiony termin kontaktu z własnym klientem bez zapisywania rozmowy.
+
+        Lead dostaje termin i sprawę (status „oddzwonić”, chyba że jest już ofertą / zainteresowanym),
+        a w historii zostaje notatka (nie liczy się jako telefon)."""
+        lead = self.get_object()
+        serializer = ScheduleCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        at, note = serializer.validated_data["next_contact_at"], serializer.validated_data.get("next_contact_note", "")
+        if lead.status in CLOSED_STATUSES:
+            return Response({"detail": "Ten klient jest zamknięty (sprzedany, odmówił albo nie dzwonić). Otwórz go w „Dzwonieniu”."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        new_status = lead.status if lead.status in PROMISED_STATUSES else Lead.Status.CALLBACK
+        with transaction.atomic():
+            Lead.objects.filter(pk=lead.pk).update(next_contact_at=at, next_contact_note=note, status=new_status,
+                                                   agreed_contact_at=at, missed_calls=0)
+            when = timezone.localtime(at).strftime("%d.%m.%Y, %H:%M")
+            Activity.objects.create(lead=lead, agent=request.user, outcome=Activity.Outcome.NOTE,
+                                    note=f"Callback dodany w kalendarzu: {when}" + (f" – {note}" if note else ""))
+        return Response(LeadSerializer(self.get_queryset().get(pk=lead.pk), context=self.get_serializer_context()).data)
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=["get"])

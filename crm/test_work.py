@@ -31,6 +31,23 @@ class NextWorkTests(CrmTestBase):
     def next(self):
         return self.api(self.agent1).post("/api/work/next/")
 
+    # „Zapisz i dalej”: zapis wyniku z ?next=1 oddaje od razu następnego klienta (jedno zapytanie)
+    def test_save_with_next_returns_next_client(self):
+        r = self.api(self.agent1).post("/api/activities/?next=1", {"lead": self.offer.id, "outcome": "no_answer"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["next"]["reason"], "callback")
+        self.assertEqual(r.data["next"]["lead"]["id"], self.callback.id)
+        self.assertIn("activities", r.data["next"]["lead"])
+        plain = self.api(self.agent1).post("/api/activities/", {"lead": self.callback.id, "outcome": "note", "note": "x"}, format="json")
+        self.assertNotIn("next", plain.data)
+
+    # „Następny klient” oddaje od razu pełną kartę (historia, segment) – ekran nie pyta drugi raz
+    def test_next_returns_full_lead_card(self):
+        lead = self.next().data["lead"]
+        self.assertIn("activities", lead)
+        self.assertIn("segment", lead)
+        self.assertIn("owner_no_answers", lead)
+
     def test_offer_follow_up_comes_first_then_callback_then_retry(self):
         r = self.next()
         self.assertEqual((r.data["reason"], r.data["lead"]["id"]), ("offer", self.offer.id))
@@ -417,3 +434,139 @@ class IdleWorkDayTests(CrmTestBase):
         self.assertEqual(row["goal"], 30)
         self.assertEqual(row["break_minutes"], 120)   # 9:00–11:00 bez żadnego ruchu = przerwa (pokazana, nie odjęta)
 
+
+
+class OfferTextTests(CrmTestBase):
+    """Treść oferty jak we wzorniku 11.0: średni koszt przy promocji, światłowód / TV bez „numerów”."""
+
+    def setUp(self):
+        super().setUp()
+        self.lead = self.make_lead(owner=self.agent1, phone="555100009")
+        self.config = OfferConfig.get()
+
+    def test_promo_adds_average_monthly_cost(self):
+        from .work import build_offer, offer_letter_html
+
+        product = plan()                                    # M: 85 zł z promocją
+        _, body = build_offer(self.config, self.lead, self.agent1, [{"product": product, "quantity": 1, "term": 24, "promo": True}], "")
+        self.assertIn("Średni miesięczny koszt w okresie 24 miesięcy: 63,75 zł netto", body)   # 85 × 18 / 24
+        html = offer_letter_html(self.config, [{"product": product, "quantity": 1, "term": 36, "promo": True}])
+        self.assertIn("Średni miesięczny koszt w okresie 36 miesięcy: 70,83 zł netto", html)
+        _, body = build_offer(self.config, self.lead, self.agent1, [{"product": product, "quantity": 1, "term": 24, "promo": False}], "")
+        self.assertNotIn("Średni", body)
+
+    def test_fiber_offer_speaks_of_monthly_fee_not_numbers(self):
+        from .work import build_offer, offer_letter_html
+
+        fiber = Product.objects.create(name="Światłowód L – blok", price=Decimal("65"), extra_price=0,
+                                       features="Prędkość światłowodu: do 600 Mb/s")
+        _, body = build_offer(self.config, self.lead, self.agent1, [{"product": fiber, "quantity": 2, "term": 24, "promo": True}], "")
+        self.assertIn("Ilość: 2", body)
+        self.assertIn("Opłata miesięczna: 130,00 zł netto", body)
+        self.assertNotIn("numer", body.split("Z poważaniem")[0].lower().replace("liczba numerów", "x"))
+        self.assertNotIn("Promocja", body)                  # światłowód nie ma „6 miesięcy gratis”
+        self.assertNotIn("Średni", body)
+        html = offer_letter_html(self.config, [{"product": fiber, "quantity": 2, "term": 24, "promo": False}])
+        self.assertIn("Opłata miesięczna za 2 szt.: 130,00 zł netto", html)
+
+    # Promocja taryfy z własnymi polami (światłowód z wzornika: 12 miesięcy po 50 zł, potem 85 zł)
+    def test_fiber_promo_with_paid_months(self):
+        from .work import build_offer, line_numbers
+
+        fiber = Product.objects.create(name="Światłowód M – blok", price=Decimal("45"), promo_price=Decimal("85"),
+                                       promo_label="12 miesięcy za 50 zł", promo_months=12,
+                                       promo_month_price=Decimal("50"))
+        n = line_numbers(self.config, {"product": fiber, "quantity": 1, "term": 24, "promo": True})
+        self.assertEqual((n["monthly"], n["first"], n["average"]), (Decimal("85"), Decimal("50.00"), Decimal("67.50")))
+        _, body = build_offer(self.config, self.lead, self.agent1, [{"product": fiber, "quantity": 1, "term": 24, "promo": True}], "")
+        self.assertIn("Promocja: 12 miesięcy za 50 zł", body)
+        self.assertIn("Przez pierwsze 12 miesięcy: 50,00 zł netto miesięcznie, od 13. miesiąca: 85,00 zł netto", body)
+        self.assertIn("Ilość: 1", body)                     # światłowód: sztuki, nie numery
+        n = line_numbers(self.config, {"product": fiber, "quantity": 1, "term": 24, "promo": False})
+        self.assertEqual((n["monthly"], n["first"], n["average"]), (Decimal("45"), None, None))
+
+    # Zestaw kilku usług: osobna sekcja dla każdej i suma na końcu
+    def test_bundle_offer_lists_all_services_and_total(self):
+        from .work import build_offer, offer_letter_html
+
+        mobile = plan()                                     # M: 70 / 85 zł, +25 zł za numer
+        tv = Product.objects.create(name="Magenta TV M", price=Decimal("46.30"), extra_price=0)
+        lines = [{"product": mobile, "quantity": 3, "term": 24, "promo": False},
+                 {"product": tv, "quantity": 1, "term": 24, "promo": True}]   # TV bez promocji – flaga ignorowana
+        _, body = build_offer(self.config, self.lead, self.agent1, lines, "")
+        self.assertIn("OFERTA: M", body)
+        self.assertIn("OFERTA: Magenta TV M", body)
+        self.assertIn("RAZEM miesięcznie za wszystkie usługi: 166,30 zł netto", body)   # 70 + 2 × 25 + 46,30
+        self.assertIn("Razem miesięcznie za wszystkie usługi: 166,30 zł netto", offer_letter_html(self.config, lines))
+
+
+class BundleOfferTests(OfferTests):
+    """Zestaw kilku usług w jednej ofercie (np. numery + światłowód)."""
+
+    def test_offer_with_several_lines(self):
+        fiber = Product.objects.create(name="Światłowód L – blok", price=Decimal("65"), extra_price=0)
+        r = self.send(lines=[{"product": self.plan.id, "quantity": 3, "term_months": 36, "promo": False},
+                             {"product": fiber.id, "quantity": 1, "term_months": 24, "promo": False}])
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        offer = Offer.objects.get()
+        self.assertEqual(offer.monthly_total, Decimal("185.00"))   # 70 + 2 × 25 + 65
+        self.assertEqual(offer.commission, Decimal("1080.00") + Decimal("65") * OfferConfig.get().multiplier(24))
+        self.assertEqual([x["product_name"] for x in offer.lines], ["M", "Światłowód L – blok"])
+        self.assertIn("M ×3 + Światłowód L – blok", offer.product_name)
+        self.assertIn("RAZEM miesięcznie za wszystkie usługi", offer.body)
+
+    def test_offer_without_any_product_is_rejected(self):
+        r = self.send(product=None, lines=[])
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class CalendarCallbackTests(CrmTestBase):
+    """Kalendarz → „+ Dodaj callback”: termin bez zapisywania rozmowy."""
+
+    def test_agent_adds_callback_to_own_lead(self):
+        lead = self.make_lead(owner=self.agent1, phone="555300001")
+        at = timezone.now() + timedelta(days=2)
+        r = self.api(self.agent1).post(f"/api/my-leads/{lead.id}/add-callback/",
+                                       {"next_contact_at": at.isoformat(), "next_contact_note": "omówić 3 numery"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        lead.refresh_from_db()
+        self.assertEqual((lead.status, lead.next_contact_note), (Lead.Status.CALLBACK, "omówić 3 numery"))
+        self.assertEqual(lead.next_contact_at.replace(microsecond=0), at.replace(microsecond=0))
+        note = Activity.objects.get(lead=lead)
+        self.assertEqual(note.outcome, Activity.Outcome.NOTE)       # notatka, nie telefon
+        self.assertIn("Callback dodany w kalendarzu", note.note)
+
+    def test_callback_rules(self):
+        mine = self.make_lead(owner=self.agent1, phone="555300002")
+        other = self.make_lead(owner=self.agent2, phone="555300003")
+        future = (timezone.now() + timedelta(hours=3)).isoformat()
+        self.assertEqual(self.api(self.agent1).post(f"/api/my-leads/{other.id}/add-callback/",
+                                                    {"next_contact_at": future}, format="json").status_code, 404)
+        past = (timezone.now() - timedelta(hours=1)).isoformat()
+        self.assertEqual(self.api(self.agent1).post(f"/api/my-leads/{mine.id}/add-callback/",
+                                                    {"next_contact_at": past}, format="json").status_code, 400)
+        Lead.objects.filter(pk=mine.pk).update(status=Lead.Status.WON)
+        self.assertEqual(self.api(self.agent1).post(f"/api/my-leads/{mine.id}/add-callback/",
+                                                    {"next_contact_at": future}, format="json").status_code, 400)
+        Lead.objects.filter(pk=mine.pk).update(status=Lead.Status.OFFER)
+        self.api(self.agent1).post(f"/api/my-leads/{mine.id}/add-callback/", {"next_contact_at": future}, format="json")
+        mine.refresh_from_db()
+        self.assertEqual(mine.status, Lead.Status.OFFER)              # oferta zostaje ofertą
+
+
+class MinutesGoalTests(CrmTestBase):
+    """Manager ustawia agentowi cel minut rozmów na godzinę (domyślnie 15)."""
+
+    def test_manager_changes_goal(self):
+        from .work import goal_per_hour
+
+        self.assertEqual(goal_per_hour(self.agent1), 15)
+        r = self.api(self.manager).patch(f"/api/users/{self.agent1.id}/", {"goal_minutes_per_hour": 20}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["goal_minutes_per_hour"], 20)
+        self.assertEqual(goal_per_hour(self.agent1), 20)
+        self.assertEqual(self.api(self.agent1).get("/api/work/summary/").data["today"]["goal_minutes_per_hour"], 20)
+        bad = self.api(self.manager).patch(f"/api/users/{self.agent1.id}/", {"goal_minutes_per_hour": 0}, format="json")
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.api(self.agent1).patch(f"/api/users/{self.agent2.id}/", {"goal_minutes_per_hour": 5},
+                                                     format="json").status_code, status.HTTP_403_FORBIDDEN)

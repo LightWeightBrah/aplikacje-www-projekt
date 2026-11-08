@@ -42,7 +42,15 @@ from .services import (
 )
 
 DUE_SOON = timedelta(minutes=2)       # termin za chwilę = już do zrobienia
-GOAL_MINUTES_PER_HOUR = 15            # cel managera: min. 15 minut rozmów na godzinę pracy
+GOAL_MINUTES_PER_HOUR = 15            # domyślny cel: 15 minut rozmów na godzinę pracy (manager zmienia go agentowi)
+
+
+def goal_per_hour(user):
+    """Cel minut rozmów na godzinę pracy tego agenta (Zespół → Edytuj), domyślnie 15."""
+    from .models import AgentProfile
+
+    value = AgentProfile.objects.filter(user=user).values_list("goal_minutes_per_hour", flat=True).first()
+    return value or GOAL_MINUTES_PER_HOUR
 
 SEGMENTS = {
     "offer": (Lead.Status.OFFER, Lead.Status.INTERESTED),
@@ -226,7 +234,7 @@ def work_span(user, day):
 
 
 def day_minutes(user, day):
-    """Minuty rozmów jednego dnia i ile powinno ich być: 15 min na każdą godzinę pracy.
+    """Minuty rozmów jednego dnia i ile powinno ich być: cel agenta (domyślnie 15 min) na każdą godzinę pracy.
 
     Pracuje 4 h → powinien mieć 60 min rozmów (3 h 20 min → 50 min). Liczy się wynik dnia,
     więc godzina z 30 minutami nadrabia słabszą godzinę obok.
@@ -247,7 +255,7 @@ def day_minutes(user, day):
     return {
         "date": day.isoformat(), "minutes": minutes,
         "worked_minutes": worked, "hours": round(worked / 60, 2),
-        "goal": round(worked * GOAL_MINUTES_PER_HOUR / 60),
+        "goal": round(worked * goal_per_hour(user) / 60), "goal_minutes_per_hour": goal_per_hour(user),
         "started_at": began.isoformat() if began else None,
         "ended_at": ended.isoformat() if finished else None,
         "last_seen": ended.isoformat() if began else None,
@@ -273,7 +281,7 @@ def attendance(day):
             and day == timezone.localdate(),
             "last_seen": d["last_seen"],
             "breaks": d["breaks"], "break_minutes": d["break_minutes"], "on_break_since": d["on_break_since"],
-            "minutes": d["minutes"], "goal": d["goal"],
+            "minutes": d["minutes"], "goal": d["goal"], "goal_minutes_per_hour": d["goal_minutes_per_hour"],
             "calls": acts.exclude(outcome__in=NON_CALL_OUTCOMES).count(),
         })
     return rows
@@ -292,8 +300,8 @@ def minutes_report(user, date_from, date_to):
     return {
         "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
         "minutes": total, "goal": goal, "worked_minutes": worked, "hours": round(worked / 60, 2),
-        "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
-        "days": [{k: v for k, v in d.items() if k != "by_hour"} for d in days],
+        "goal_minutes_per_hour": goal_per_hour(user),
+        "days": [{k: v for k, v in d.items() if k not in ("by_hour", "goal_minutes_per_hour")} for d in days],
         "by_hour": days[0]["by_hour"] if len(days) == 1 else None,
     }
 
@@ -372,7 +380,7 @@ def today_stats(user):
         "minutes_today": round(sum(h["minutes"] for h in by_hour), 2),
         "minutes_this_hour": by_hour[hour_now]["minutes"],
         "minutes_by_hour": by_hour,
-        "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR,
+        "goal_minutes_per_hour": goal_per_hour(user),
         "dialer_used": dialer_used,
         "day_goal": day_minutes(user, timezone.localdate())["goal"],
     }
@@ -384,42 +392,47 @@ def _money(value):
     return f"{value:,.2f}".replace(",", " ").replace(".", ",") + " zł"
 
 
-def offer_numbers(product, quantity, term, promo, config=None):
-    """(zobowiązanie miesięczne, prowizja) dla wybranej taryfy."""
+def offer_numbers(product, quantity, term, promo, config=None, option=0):
+    """(zobowiązanie miesięczne, prowizja) dla wybranej taryfy (option = która promocja z listy)."""
     config = config or OfferConfig.get()
-    monthly = product.monthly_total(quantity, promo)
+    promo = bool(promo) and product.promo_choice(option) is not None
+    monthly = product.monthly_total(quantity, promo, option)
     return monthly, (monthly * config.multiplier(term)).quantize(Decimal("0.01"))
 
 
-def build_offer(config, lead, agent, product, quantity, term, promo, client_email):
-    """Temat i treść oferty. W trybie „forward” na górze jest notka dla osoby, która ją przekaże."""
-    monthly, _ = offer_numbers(product, quantity, term, promo, config)
-    company = lead.display_name
-    numbers = "1 numer" if quantity == 1 else f"{quantity} numery" if 2 <= quantity % 10 <= 4 and not 12 <= quantity % 100 <= 14 else f"{quantity} numerów"
-    lines = [config.greeting.strip(), "", f"OFERTA: {product.name}", f"Liczba numerów: {quantity}",
-             f"Okres umowy: {term} miesięcy"]
-    if promo and config.promo_label:
-        lines.append(f"Promocja: {config.promo_label}")
-    lines.append(f"Całkowite zobowiązanie miesięczne za {numbers}: {_money(monthly)} netto")
-    if quantity > 1:
-        lines.append(f"Cena za jeden numer: {_money(monthly / quantity)} netto")
-    features = [f.strip() for f in product.features.splitlines() if f.strip()]
-    if features:
-        lines += ["", "W ofercie:"] + [f"• {f}" for f in features]
-    agent_name = agent.get_full_name() or agent.username
-    lines += ["", config.closing.strip(), "", "Z poważaniem,", agent_name]
-    body = "\n".join(lines).strip() + "\n"
+def promo_terms(config, product, option=0):
+    """(nazwa, miesiące, cena za sztukę w tych miesiącach) wybranej promocji; None – taryfa nie ma promocji.
 
-    if config.mode == OfferConfig.Mode.FORWARD:
-        company_line = company + (f", NIP {lead.company.nip}" if lead.company and lead.company.nip else "")
-        note = (
-            # Czarek robi to codziennie – same dane, bez formułek
-            f"Adres klienta: {client_email or '(brak – trzeba dopytać)'}\n"
-            f"Firma: {company_line}\nTelefon: {lead.phone}\nAgent: {agent_name}\n"
-            f"{'-' * 40}\n\n"
-        )
-        return f"Oferta do wysłania: {company} → {client_email or 'brak e-maila'}", note + body
-    return f"Oferta T-Mobile dla {company}", body
+    Puste pola taryfy = ustawienia z „Ustawienia i oferty” („6 miesięcy gratis”: 6 miesięcy po 0 zł).
+    Światłowód ma kilka promocji (np. 12 miesięcy po 50 zł albo 6 miesięcy po 0 zł) – `option` wybiera jedną.
+    """
+    choice = product.promo_choice(option, config.promo_label)
+    if choice is None:
+        return None
+    return choice["label"], choice["months"], choice["month_price"]
+
+
+def line_numbers(config, line):
+    """Wyliczenie jednej pozycji oferty: line = {"product", "quantity", "term", "promo", "option"}."""
+    product, quantity, term = line["product"], max(int(line.get("quantity") or 1), 1), int(line["term"])
+    option = int(line.get("option") or 0)
+    promo = bool(line.get("promo")) and product.promo_choice(option) is not None   # TV nie ma promocji
+    monthly, commission = offer_numbers(product, quantity, term, promo, config, option)
+    label, months, first, average = "", 0, None, None
+    if promo:
+        label, months, month_price = promo_terms(config, product, option)
+        if 0 < months < term:
+            first = (month_price * quantity).quantize(Decimal("0.01"))
+            average = ((first * months + monthly * (term - months)) / term).quantize(Decimal("0.01"))
+    return {"product": product, "quantity": quantity, "term": term, "promo": promo, "option": option if promo else 0,
+            "label": label, "months": months, "first": first, "monthly": monthly, "commission": commission,
+            "average": average}
+
+
+def _per_number(product):
+    """Taryfa komórkowa (dopłata za każdy kolejny numer) – w ofercie piszemy o numerach.
+    Światłowód i telewizja mają dopłatę 0: tam jest „Ilość” i „Opłata miesięczna”."""
+    return bool(product.extra_price)
 
 
 def _numbers_word(quantity):
@@ -434,28 +447,102 @@ def _term_words(term):
     return "24 miesiące" if int(term) == 24 else f"{term} miesięcy"
 
 
+def offer_total(numbers):
+    """Suma zestawu: (miesięcznie po promocjach, średnio w okresie umowy albo None, prowizja)."""
+    monthly = sum((n["monthly"] for n in numbers), Decimal("0"))
+    commission = sum((n["commission"] for n in numbers), Decimal("0"))
+    average = None
+    if any(n["average"] is not None for n in numbers):
+        average = sum((n["average"] if n["average"] is not None else n["monthly"] for n in numbers), Decimal("0"))
+    return monthly, average, commission
+
+
+def offer_title(numbers):
+    """Krótki opis zestawu do historii: „M ×3 + Światłowód L – blok” (max 120 znaków)."""
+    text = " + ".join(n["product"].name + (f" ×{n['quantity']}" if n["quantity"] > 1 else "") for n in numbers)
+    return text if len(text) <= 120 else text[:119] + "…"
+
+
+def _line_text(n):
+    product, quantity, term = n["product"], n["quantity"], n["term"]
+    per_number = _per_number(product)
+    lines = [f"OFERTA: {product.name}",
+             f"Liczba numerów: {quantity}" if per_number else f"Ilość: {quantity}",
+             f"Okres umowy: {term} miesięcy"]
+    if n["promo"] and n["label"]:
+        lines.append(f"Promocja: {n['label']}")
+    if per_number:
+        lines.append(f"Całkowite zobowiązanie miesięczne za {_numbers_word(quantity)}: {_money(n['monthly'])} netto")
+        if quantity > 1:
+            lines.append(f"Cena za jeden numer: {_money(n['monthly'] / quantity)} netto")
+    else:
+        lines.append(f"Opłata miesięczna: {_money(n['monthly'])} netto")
+    if n["first"]:   # promocja z opłatą (np. światłowód 12 miesięcy po 50 zł)
+        lines.append(f"Przez pierwsze {n['months']} miesięcy: {_money(n['first'])} netto miesięcznie, "
+                     f"od {n['months'] + 1}. miesiąca: {_money(n['monthly'])} netto")
+    if n["average"] is not None:
+        lines.append(f"Średni miesięczny koszt w okresie {term} miesięcy: {_money(n['average'])} netto")
+    features = [f.strip() for f in product.features.splitlines() if f.strip()]
+    if features:
+        lines += ["", "W ofercie:"] + [f"• {f}" for f in features]
+    return lines
+
+
+def build_offer(config, lead, agent, lines, client_email):
+    """Temat i treść oferty (jedna albo kilka usług). W trybie „forward” na górze jest notka dla osoby, która ją przekaże."""
+    numbers = [line_numbers(config, line) for line in lines]
+    company = lead.display_name
+    text = [config.greeting.strip(), ""]
+    for index, n in enumerate(numbers):
+        if index:
+            text += ["", "-" * 40, ""]
+        text += _line_text(n)
+    if len(numbers) > 1:
+        monthly, average, _ = offer_total(numbers)
+        text += ["", "=" * 40, f"RAZEM miesięcznie za wszystkie usługi: {_money(monthly)} netto"]
+        if average is not None:
+            text.append(f"Średni miesięczny koszt w okresie umowy: {_money(average)} netto")
+    agent_name = agent.get_full_name() or agent.username
+    text += ["", config.closing.strip(), "", "Z poważaniem,", agent_name]
+    body = "\n".join(text).strip() + "\n"
+
+    if config.mode == OfferConfig.Mode.FORWARD:
+        company_line = company + (f", NIP {lead.company.nip}" if lead.company and lead.company.nip else "")
+        note = (
+            # Czarek robi to codziennie – same dane, bez formułek
+            f"Adres klienta: {client_email or '(brak – trzeba dopytać)'}\n"
+            f"Firma: {company_line}\nTelefon: {lead.phone}\nAgent: {agent_name}\n"
+            f"{'-' * 40}\n\n"
+        )
+        return f"Oferta do wysłania: {company} → {client_email or 'brak e-maila'}", note + body
+    return f"Oferta T-Mobile dla {company}", body
+
+
 OFFER_MAGENTA = "#E20074"
 
 
-def offer_letter_html(config, product, quantity, term, promo):
-    """List do klienta w układzie wzornika ofert (sam fragment, style inline: działa w każdej poczcie)."""
-    monthly, _ = offer_numbers(product, quantity, term, promo, config)
+def _line_html(n):
+    product, quantity, term = n["product"], n["quantity"], n["term"]
     p = 'style="margin:0 0 14px"'
-    greeting = [escape(x) for x in config.greeting.strip().split("\n\n")] if config.greeting.strip() else []
-    parts = [f"<p {p}>{line.replace(chr(10), '<br>')}</p>" for line in greeting]
-    parts.append(
+    bold = 'style="margin:0 0 12px;font-weight:700"'
+    parts = [
         f'<div style="color:{OFFER_MAGENTA};font-size:20px;font-weight:800;margin:18px 0 12px">'
-        f"Oferta: {escape(product.name)}</div>"
-    )
-    parts.append(f"<p {p}><strong>Okres trwania umowy:</strong> {_term_words(term)}</p>")
-    if promo and config.promo_label:
-        parts.append(f'<p style="margin:0 0 12px;font-weight:800;color:{OFFER_MAGENTA}">Promocja: {escape(config.promo_label)}</p>')
-    parts.append(
-        f'<p style="margin:0 0 12px;font-weight:700">Całkowite zobowiązanie miesięczne za {_numbers_word(quantity)}: '
-        f"{_money(monthly)} netto</p>"
-    )
-    if quantity > 1:
-        parts.append(f'<p style="margin:0 0 12px;font-weight:700">Cena za jeden numer: {_money(monthly / quantity)} netto</p>')
+        f"Oferta: {escape(product.name)}</div>",
+        f"<p {p}><strong>Okres trwania umowy:</strong> {_term_words(term)}</p>",
+    ]
+    if n["promo"] and n["label"]:
+        parts.append(f'<p style="margin:0 0 12px;font-weight:800;color:{OFFER_MAGENTA}">Promocja: {escape(n["label"])}</p>')
+    if _per_number(product):
+        parts.append(f"<p {bold}>Całkowite zobowiązanie miesięczne za {_numbers_word(quantity)}: {_money(n['monthly'])} netto</p>")
+        if quantity > 1:
+            parts.append(f"<p {bold}>Cena za jeden numer: {_money(n['monthly'] / quantity)} netto</p>")
+    else:
+        parts.append(f"<p {bold}>Opłata miesięczna{f' za {quantity} szt.' if quantity > 1 else ''}: {_money(n['monthly'])} netto</p>")
+    if n["first"]:
+        parts.append(f"<p {bold}>Przez pierwsze {n['months']} miesięcy: {_money(n['first'])} netto miesięcznie, "
+                     f"od {n['months'] + 1}. miesiąca: {_money(n['monthly'])} netto</p>")
+    if n["average"] is not None:
+        parts.append(f"<p {bold}>Średni miesięczny koszt w okresie {term} miesięcy: {_money(n['average'])} netto</p>")
     items = []
     for feature in (f.strip() for f in product.features.splitlines()):
         if not feature:
@@ -465,6 +552,27 @@ def offer_letter_html(config, product, quantity, term, promo):
         items.append(f'<li style="margin:5px 0">{text}</li>')
     if items:
         parts.append(f'<ul style="margin:8px 0 18px;padding-left:22px">{"".join(items)}</ul>')
+    return parts
+
+
+def offer_letter_html(config, lines):
+    """List do klienta w układzie wzornika ofert (sam fragment, style inline: działa w każdej poczcie).
+    Kilka usług = osobna sekcja dla każdej i suma na końcu (jak „Oferta łączona” we wzorniku)."""
+    numbers = [line_numbers(config, line) for line in lines]
+    p = 'style="margin:0 0 14px"'
+    greeting = [escape(x) for x in config.greeting.strip().split("\n\n")] if config.greeting.strip() else []
+    parts = [f"<p {p}>{line.replace(chr(10), '<br>')}</p>" for line in greeting]
+    for n in numbers:
+        parts += _line_html(n)
+    if len(numbers) > 1:
+        monthly, average, _ = offer_total(numbers)
+        rows = f"Razem miesięcznie za wszystkie usługi: {_money(monthly)} netto"
+        if average is not None:
+            rows += f"<br>Średni miesięczny koszt w okresie umowy: {_money(average)} netto"
+        parts.append(
+            f'<div style="border:2px solid {OFFER_MAGENTA};border-radius:10px;padding:12px 16px;margin:6px 0 18px;'
+            f'font-weight:800;font-size:16px">{rows}</div>'
+        )
     if config.closing.strip():
         parts.append(f"<p {p}>{escape(config.closing.strip())}</p>")
     if config.contact_phone:
@@ -516,30 +624,41 @@ class OfferError(Exception):
     pass
 
 
-def create_offer(lead, agent, product, quantity, term, promo, client_email, next_contact_at,
-                 next_contact_note=None, note=""):
-    """Zapisuje rozmowę „Wysłana oferta” z terminem follow-upu, ofertę i (jeśli się da) wysyła e-mail.
+def create_offer(lead, agent, lines, client_email, next_contact_at, next_contact_note=None, note=""):
+    """Zapisuje rozmowę „Wysłana oferta” z terminem follow-upu, ofertę (jedna albo kilka usług)
+    i (jeśli się da) wysyła e-mail. lines = [{"product", "quantity", "term", "promo"}, ...].
 
     Zwraca (offer, mailto) – mailto to gotowa wiadomość do otwarcia w programie pocztowym,
     gdy system nie wysłał jej sam (brak serwera poczty).
     """
     config = OfferConfig.get()
+    if not lines:
+        raise OfferError("Wybierz co najmniej jedną taryfę.")
     if config.mode == OfferConfig.Mode.DIRECT and not client_email:
         raise OfferError("Podaj e-mail klienta: oferta idzie od razu do niego.")
-    monthly, commission = offer_numbers(product, quantity, term, promo, config)
-    subject, body = build_offer(config, lead, agent, product, quantity, term, promo, client_email)
+    numbers = [line_numbers(config, line) for line in lines]
+    monthly, _, commission = offer_total(numbers)
+    first = numbers[0]
+    title = offer_title(numbers)
+    subject, body = build_offer(config, lead, agent, lines, client_email)
     recipient = client_email if config.mode == OfferConfig.Mode.DIRECT else config.forward_email
-    letter = offer_letter_html(config, product, quantity, term, promo)
+    letter = offer_letter_html(config, lines)
+    stored = [{"product": n["product"].pk, "product_name": n["product"].name, "quantity": n["quantity"],
+               "term_months": n["term"], "promo": n["promo"], "option": n["option"], "promo_label": n["label"],
+               "monthly": str(n["monthly"])} for n in numbers]
+    default_note = " + ".join(f"{n['product'].name} ×{n['quantity']}, {n['term']} mies." for n in numbers)
     with transaction.atomic():
         if client_email and client_email != lead.email:
             Lead.objects.filter(pk=lead.pk).update(email=client_email)
         activity = register_activity(
-            lead, agent, Activity.Outcome.OFFER, note or f"Oferta {product.name} ×{quantity}, {term} mies.",
+            lead, agent, Activity.Outcome.OFFER, note or f"Oferta {default_note}",
             next_contact_at=next_contact_at, next_contact_note=next_contact_note,
         )
         offer = Offer.objects.create(
-            lead=lead, agent=agent, activity=activity, product=product, product_name=product.name,
-            quantity=quantity, term_months=term, promo=promo, monthly_total=monthly, commission=commission,
+            lead=lead, agent=agent, activity=activity, product=first["product"],
+            product_name=title if len(numbers) > 1 else first["product"].name,
+            quantity=first["quantity"], term_months=first["term"], promo=any(n["promo"] for n in numbers),
+            monthly_total=monthly, commission=commission, lines=stored,
             client_email=client_email, recipient=recipient or "", subject=subject, body=body, html=letter,
         )
     if recipient and getattr(settings, "OFFER_EMAIL_ENABLED", False):
@@ -548,7 +667,7 @@ def create_offer(lead, agent, product, quantity, term, promo, client_email, next
         top = forward_note_html(lead, agent, client_email) if config.mode == OfferConfig.Mode.FORWARD else ""
         message = EmailMultiAlternatives(subject, body, to=[recipient], reply_to=[agent.email] if agent.email else None)
         message.attach_alternative(offer_document(top + letter, subject), "text/html")
-        message.attach(offer_filename(lead), offer_document(letter, f"Oferta: {product.name}"), "text/html")
+        message.attach(offer_filename(lead), offer_document(letter, f"Oferta: {title}"), "text/html")
         try:
             message.send()
             Offer.objects.filter(pk=offer.pk).update(sent=True)

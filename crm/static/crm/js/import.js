@@ -40,7 +40,7 @@ CRM.initImport = function initImport() {
   /* Produkty do listy wyboru (nie blokuje importu, gdy się nie uda). */
   (async () => {
     try {
-      let url = "/api/products/", items = [];
+      let url = "/api/products/?page_size=500", items = [];
       while (url) {
         const r = await api(url);
         if (!r.ok) return;

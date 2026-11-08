@@ -22,5 +22,13 @@ Na serwerze docelowo używamy `https://`.
 
 ## API (dla porządku)
 - `POST /api/dialer/pair/` `{code, name}` → `{token}`
-- `GET /api/dialer/poll/` (nagłówek `X-Dialer-Token`) → `{id, phone, name}` albo 204
+- `GET /api/dialer/poll/?sms=1` (nagłówek `X-Dialer-Token`) → `{type: "call", id, phone, name}`,
+  `{type: "sms", id, phone, text, name}` albo 204 (bez `sms=1` tylko połączenia)
 - `POST /api/dialer/calls/{id}/finish/` `{answered, duration_seconds}`
+- `POST /api/dialer/sms/{id}/done/` `{ok, error}`
+
+## SMS z przypomnieniem
+Przed umówionym telefonem aplikacja sama wysyła klientowi SMS z przypomnieniem (ile wcześniej i treść ustawia
+manager w CRM: Ustawienia → „SMS z przypomnieniem”). SMS idzie z karty SIM telefonu, tak jakbyś napisał go ręcznie
+(widać go potem w „Wysłanych” w Wiadomościach), więc kosztuje tyle co zwykły SMS w abonamencie, bez żadnej bramki.
+Działa tylko, gdy telefon jest włączony i dialer pracuje. Przy pierwszym uruchomieniu nowej wersji zgódź się na „SMS-y”.

@@ -102,7 +102,11 @@ def with_transfer_info(queryset):
         lead=OuterRef("pk"), to_agent=OuterRef("owner")
     ).order_by("-assigned_at", "-id")
     return queryset.annotate(
-        transferred_from_name=Subquery(latest.values("from_agent__username")[:1])
+        transferred_from_name=Subquery(latest.values("from_agent__username")[:1]),
+        # imię i nazwisko poprzedniego agenta (gdy ma) i kiedy lead przepisano – do kart przypomnień
+        transferred_from_first=Subquery(latest.values("from_agent__first_name")[:1]),
+        transferred_from_last=Subquery(latest.values("from_agent__last_name")[:1]),
+        transferred_at=Subquery(latest.values("assigned_at")[:1]),
     )
 
 
@@ -151,12 +155,12 @@ def overdue_leads(user):
 def due_leads(user, minutes):
     """Leady agenta do zrobienia: zaległe oraz takie z terminem w ciągu `minutes` minut."""
     now = timezone.now()
-    queryset = Lead.objects.filter(
+    queryset = with_transfer_info(Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by").filter(
         owner=user,
         status__in=ACTIVE_STATUSES,
         next_contact_at__isnull=False,
         next_contact_at__lte=now + timedelta(minutes=minutes),
-    ).order_by("next_contact_at")
+    )).order_by("next_contact_at")   # „przepisany od …” na karcie przypomnienia
     overdue = [lead for lead in queryset if lead.next_contact_at < now]
     upcoming = [lead for lead in queryset if lead.next_contact_at >= now]
     return overdue, upcoming
@@ -218,7 +222,7 @@ def claim_next_lead(user, batch_id=None, companies_last=None):
                 LeadAssignment.objects.create(
                     lead_id=lead_id,
                     to_agent=user,
-                    reason="Losowanie z puli (leads/next)",
+                    reason="Losowanie z puli",
                 )
                 return Lead.objects.get(id=lead_id)
     raise NoLeadsAvailable
@@ -317,19 +321,22 @@ def add_sale_items(activity, lines):
     for line in lines:
         product, quantity = line[0], line[1]
         term = line[2] if len(line) > 2 else None
-        promo = bool(line[3]) if len(line) > 3 else False
-        total = product.monthly_total(quantity, promo)
+        option = int(line[4] or 0) if len(line) > 4 else 0
+        choice = product.promo_choice(option, config.promo_label) if len(line) > 3 and line[3] else None
+        promo = choice is not None
+        total = product.monthly_total(quantity, promo, option)
         commission = (total * config.multiplier(term)).quantize(Decimal("0.01")) if term else Decimal("0.00")
         items.append(SaleItem(
             activity=activity,
             product=product,
             product_name=product.name,
             unit=product.unit,
-            unit_price=product.promo_price if promo and product.promo_price is not None else product.price,
+            unit_price=choice["price"] if choice else product.price,
             quantity=quantity,
             total=total,
             term_months=term,
             promo=promo,
+            promo_label=choice["label"] if choice else "",
             commission=commission,
         ))
     return SaleItem.objects.bulk_create(items)

@@ -196,7 +196,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'crm.pagination.CrmPagination',
     'PAGE_SIZE': 20,
     # parowanie telefonu (6-cyfrowy kod) ma limit prób, żeby kodu nie dało się zgadnąć
     # logowanie: najwyżej 10 prób na minutę z jednego adresu (zgadywanie haseł);

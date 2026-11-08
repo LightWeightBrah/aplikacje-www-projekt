@@ -8,7 +8,7 @@ CRM.initProducts = function initProducts() {
     $("page-error").hidden = false;
     $("products-area").hidden = true;
     $("add-open").hidden = true;
-    $("tariff-export").hidden = $("tariff-import").hidden = true;
+    $("tariff-export").hidden = $("tariff-import").hidden = $("load-standard-top").hidden = $("clear-all").hidden = true;
     $("subtitle").textContent = "";
     return;
   }
@@ -56,7 +56,7 @@ CRM.initProducts = function initProducts() {
     warn.textContent = noPrice.length ? `Produkty bez ceny: ${noPrice.map((p) => p.name).join(", ")}. Sprzedaż takiego produktu liczy się jako 0 zł, więc uzupełnij cenę.` : "";
     if (!products.length) {
       $("products-table").innerHTML = `<tbody><tr><td class="muted">Katalog jest pusty. Wgraj taryfy z wzornika ofert, wgraj swój plik taryf („Wgraj plik taryf…”) albo dodaj taryfę przyciskiem „+ Dodaj taryfę”. Dopóki katalog jest pusty, sprzedaż zapisuje się bez wartości.
-        <div class="empty-actions"><button type="button" class="btn btn-primary" id="load-standard">Wgraj taryfy z wzornika (S, M100, M, L, VIP)</button></div></td></tr></tbody>`;
+        <div class="empty-actions"><button type="button" class="btn btn-primary" id="load-standard">Wgraj taryfy z wzornika (komórkowe, światłowód, TV)</button></div></td></tr></tbody>`;
       $("load-standard").addEventListener("click", loadStandard);
       return;
     }
@@ -64,7 +64,7 @@ CRM.initProducts = function initProducts() {
       products.map((p) => `<tr class="${p.is_active ? "" : "inactive"}">
         <td><strong>${esc(p.name)}</strong>${p.description ? `<small class="muted block">${esc(p.description)}</small>` : ""}</td>
         <td class="num">${Number(p.price) > 0 ? esc(CRM.money(p.price)) : '<span class="chip" style="--c:#f59e0b">brak ceny</span>'}</td>
-        <td class="num">${p.promo_price != null ? esc(CRM.money(p.promo_price)) : "–"}</td>
+        <td class="num">${p.promo_price != null ? esc(CRM.money(p.promo_price)) + (p.promo_label ? `<small class="muted block">${esc(p.promo_label)}</small>` : "") : "–"}</td>
         <td class="num">${Number(p.extra_price) > 0 ? "+ " + esc(CRM.money(p.extra_price)) : "–"}</td>
         <td>${p.is_active ? '<span class="chip" style="--c:#16a34a">Do sprzedaży</span>' : '<span class="chip" style="--c:#94a3b8">Wyłączony</span>'}</td>
         <td class="row-actions"><button type="button" class="btn-mini" data-act="edit" data-id="${p.id}">Edytuj</button>` +
@@ -79,8 +79,10 @@ CRM.initProducts = function initProducts() {
       const r = await api("/api/products/load-standard/", { method: "POST" });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { toast(errorText(data, r.status), true); e.target.disabled = false; return; }
-      toast(data.created.length ? `Dodano taryfy: ${data.created.join(", ")}.` : "Te taryfy już są w katalogu.");
+      const upd = data.updated || [];
+      toast(data.created.length || upd.length ? [data.created.length ? `Dodano taryfy: ${data.created.join(", ")}.` : "", upd.length ? `Uzupełniono informacje i promocje: ${upd.join(", ")}.` : ""].filter(Boolean).join(" ") : "Te taryfy już są w katalogu.");
       await load();
+      e.target.disabled = false;
     } catch {
       toast("Brak połączenia z serwerem. Spróbuj ponownie.", true);
       e.target.disabled = false;
@@ -97,6 +99,11 @@ CRM.initProducts = function initProducts() {
     $("prod-promo").value = p && p.promo_price != null ? priceInput(p.promo_price) : "";
     $("prod-extra").value = p && Number(p.extra_price) ? priceInput(p.extra_price) : "";
     $("prod-features").value = p ? p.features || "" : "";
+    $("prod-promo-label").value = p ? p.promo_label || "" : "";
+    $("prod-promo-months").value = p && p.promo_months != null ? p.promo_months : "";
+    $("prod-promo-month-price").value = p && Number(p.promo_month_price) ? priceInput(p.promo_month_price) : "";
+    $("prod-info").value = p ? p.info || "" : "";
+    $("prod-promos").value = p && Array.isArray(p.promos) ? p.promos.map((x) => [x.label, x.months, priceInput(x.month_price), priceInput(x.price)].join("; ")).join("\n") : "";
     $("prod-hint").textContent = p
       ? "Zmiana ceny dotyczy tylko nowych sprzedaży. Dawne sprzedaże zostają z ceną z dnia sprzedaży."
       : "Cena to wartość jednej sztuki (albo jednej umowy). Przy sprzedaży 3 sztuk system policzy 3 × cena.";
@@ -108,6 +115,24 @@ CRM.initProducts = function initProducts() {
   $("add-open").addEventListener("click", () => openDialog(null));
 
   /* Plik taryf (.xlsx): pobranie całego cennika i wgranie poprawionego / z innego serwera */
+  $("load-standard-top").addEventListener("click", loadStandard);
+  /* Czyści cały katalog: nieużywane usuwa, sprzedawane tylko wyłącza (historia sprzedaży zostaje) */
+  $("clear-all").addEventListener("click", async () => {
+    if (!products.length) { toast("Katalog jest już pusty."); return; }
+    if (!confirm(`Wyczyścić cały katalog (${products.length} taryf)?
+
+Taryfy, których nikt nie sprzedał ani nie ofertował, zostaną usunięte. Te z historią sprzedaży tylko się wyłączą, żeby wyniki się zgadzały.
+Potem wgrasz taryfy od nowa: „Dodaj brakujące z wzornika” albo „Wgraj plik taryf…”.`)) return;
+    const btn = $("clear-all"); btn.disabled = true;
+    try {
+      const r = await api("/api/products/clear/", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(errorText(d, r.status), true); return; }
+      toast(`Wyczyszczono katalog: usunięte ${d.deleted.length}` + (d.disabled.length ? `, wyłączone (były sprzedawane) ${d.disabled.length}.` : "."));
+      await load();
+    } catch { toast("Brak połączenia z serwerem. Spróbuj ponownie.", true); }
+    finally { btn.disabled = false; }
+  });
   $("tariff-export").addEventListener("click", async () => {
     const btn = $("tariff-export"); btn.disabled = true;
     try {
@@ -149,7 +174,20 @@ CRM.initProducts = function initProducts() {
     const promoRaw = $("prod-promo").value.trim(), promo = promoRaw ? parsePrice(promoRaw) : null, extra = parsePrice($("prod-extra").value);
     if (promoRaw && promo === null) { setError("Cena z promocją musi być kwotą, np. 85 albo 85,50."); return; }
     if (extra === null) { setError("Dopłata za kolejny numer musi być kwotą, np. 25."); return; }
-    const body = { name, price, unit, description: $("prod-desc").value.trim(), promo_price: promo, extra_price: extra, features: $("prod-features").value.trim() };
+    const monthsRaw = $("prod-promo-months").value.trim(), months = monthsRaw === "" ? null : Number(monthsRaw);
+    if (months !== null && !(Number.isInteger(months) && months >= 0 && months <= 60)) { setError("Miesiące promocji: liczba od 0 do 60 (albo puste)."); return; }
+    const monthPrice = parsePrice($("prod-promo-month-price").value);
+    if (monthPrice === null) { setError("Cena w miesiącach promocji musi być kwotą, np. 50 albo 0."); return; }
+    // inne promocje: „nazwa; miesiące; cena w miesiącach; cena potem” – jedna w linii
+    const promos = [];
+    for (const line of $("prod-promos").value.split("\n").map((x) => x.trim()).filter(Boolean)) {
+      const parts = line.split(";").map((x) => x.trim());
+      const mp = parsePrice(parts[2] || "0"), pp = parsePrice(parts[3] || "");
+      if (parts.length !== 4 || !parts[0] || !/^\d+$/.test(parts[1]) || mp === null || pp === null) { setError(`Inne promocje: „${line}” – wpisz np. „6 miesięcy za 0 zł; 6; 0; 45”.`); return; }
+      promos.push({ label: parts[0], months: Number(parts[1]), month_price: mp, price: pp });
+    }
+    const body = { promos, name, price, unit, description: $("prod-desc").value.trim(), promo_price: promo, extra_price: extra, features: $("prod-features").value.trim(),
+      promo_label: $("prod-promo-label").value.trim(), promo_months: months, promo_month_price: monthPrice, info: $("prod-info").value.trim() };
     $("prod-ok").disabled = true;
     try {
       const r = await api(editing ? `/api/products/${editing.id}/` : "/api/products/", {

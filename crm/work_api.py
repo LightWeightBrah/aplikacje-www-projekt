@@ -19,10 +19,12 @@ from rest_framework.views import APIView
 from .models import DialerDevice, Lead, Offer, OfferConfig, Product
 from .permissions import IsAgentOrManager, IsManager
 from .roles import is_manager, visible_to
-from .serializers import LeadSerializer
+from .serializers import LeadDetailSerializer, LeadSerializer
 from .views import PERIOD_PARAMETERS, parse_period
-from .services import base_progress
+from .services import base_progress, with_owner_tries, with_transfer_info
+from .sms import finish_sms, next_sms
 from .work import (
+    GOAL_MINUTES_PER_HOUR,
     PAIRING_MINUTES,
     OfferError,
     ContactExists,
@@ -56,12 +58,27 @@ class NextWorkView(APIView):
 
     @extend_schema(request=None, responses=OpenApiTypes.OBJECT)
     def post(self, request):
-        touch_workday(request.user)
-        lead, reason = next_work(request.user)
-        if lead is None:
-            return Response({"detail": "Na teraz nie ma nic do zrobienia: baza i pula są obdzwonione."},
-                            status=status.HTTP_404_NOT_FOUND)
-        return Response({"reason": reason, "lead": LeadSerializer(lead, context={"request": request}).data})
+        data = next_work_payload(request)
+        if "lead" not in data:
+            return Response(data, status=status.HTTP_404_NOT_FOUND)
+        return Response(data)
+
+
+def next_work_payload(request):
+    """{"reason", "lead"} następnego klienta albo {"detail"}, gdy nie ma nic do zrobienia.
+
+    Używa go „Następny klient” i zapis wyniku z ?next=1 („Zapisz i dalej” – jedno zapytanie zamiast dwóch).
+    """
+    touch_workday(request.user)
+    lead, reason = next_work(request.user)
+    if lead is None:
+        return {"detail": "Na teraz nie ma nic do zrobienia: baza i pula są obdzwonione."}
+    # Od razu pełna karta klienta (jak GET /api/leads/<id>/): ekran „Dzwonienie” pokazuje ją bez
+    # drugiego zapytania, więc po „Zapisz i dalej” następny klient wchodzi szybciej.
+    lead = with_owner_tries(with_transfer_info(
+        Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by")
+    )).get(pk=lead.pk)
+    return {"reason": reason, "lead": LeadDetailSerializer(lead, context={"request": request}).data}
 
 
 class WorkSummaryView(APIView):
@@ -158,7 +175,7 @@ class AttendanceView(APIView):
             day = date.fromisoformat(raw) if raw else timezone.localdate()
         except ValueError:
             return Response({"detail": "Podaj datę w formacie RRRR-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"date": day.isoformat(), "goal_minutes_per_hour": 15, "results": attendance(day)})
+        return Response({"date": day.isoformat(), "goal_minutes_per_hour": GOAL_MINUTES_PER_HOUR, "results": attendance(day)})
 
 
 class WorkMinutesView(APIView):
@@ -242,9 +259,23 @@ class OfferSerializer(serializers.ModelSerializer):
         exclude = ("activity", "html")
 
 
-class OfferCreateSerializer(serializers.Serializer):
-    lead = serializers.PrimaryKeyRelatedField(queryset=Lead.objects.all())
+class OfferLineSerializer(serializers.Serializer):
+    """Jedna usługa w zestawie (np. numery, światłowód, telewizja)."""
+
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
+    quantity = serializers.IntegerField(min_value=1, max_value=500, default=1)
+    term_months = serializers.ChoiceField(choices=(24, 36), default=36)
+    promo = serializers.BooleanField(default=False)
+    # która promocja taryfy (0 = pierwsza); taryfa może mieć kilka, np. światłowód 6×0 zł albo 12×50 zł
+    option = serializers.IntegerField(min_value=0, max_value=20, default=0)
+
+
+class OfferCreateSerializer(serializers.Serializer):
+    """Jedna taryfa (product, quantity, …) albo zestaw kilku usług w `lines` (wtedy pola pojedyncze są pomijane)."""
+
+    lead = serializers.PrimaryKeyRelatedField(queryset=Lead.objects.all())
+    lines = OfferLineSerializer(many=True, required=False)
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True), required=False)
     quantity = serializers.IntegerField(min_value=1, max_value=500, default=1)
     term_months = serializers.ChoiceField(choices=(24, 36), default=36)
     promo = serializers.BooleanField(default=False)
@@ -258,12 +289,26 @@ class OfferCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Termin follow-upu nie może być w przeszłości.")
         return value
 
+    def validate(self, attrs):
+        lines = attrs.get("lines") or []
+        if not lines and attrs.get("product"):
+            lines = [{"product": attrs["product"], "quantity": attrs["quantity"],
+                      "term_months": attrs["term_months"], "promo": attrs["promo"]}]
+        if not lines:
+            raise serializers.ValidationError({"product": "Wybierz taryfę."})
+        if len(lines) > 10:
+            raise serializers.ValidationError({"lines": "W jednej ofercie może być najwyżej 10 usług."})
+        attrs["lines"] = [{"product": x["product"], "quantity": x["quantity"], "term": x["term_months"],
+                           "promo": x["promo"], "option": x.get("option", 0)} for x in lines]
+        return attrs
+
 
 class OfferPreviewSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
     quantity = serializers.IntegerField(min_value=1, max_value=500, default=1)
     term_months = serializers.ChoiceField(choices=(24, 36), default=36)
     promo = serializers.BooleanField(default=False)
+    option = serializers.IntegerField(min_value=0, max_value=20, default=0)
 
 
 class OffersView(APIView):
@@ -288,8 +333,8 @@ class OffersView(APIView):
             return Response({"detail": "Ofertę możesz wysłać tylko swojemu klientowi."}, status=status.HTTP_403_FORBIDDEN)
         try:
             offer, mailto = create_offer(
-                lead, request.user, data["product"], data["quantity"], data["term_months"], data["promo"],
-                data["client_email"], data["next_contact_at"], data.get("next_contact_note"), data["note"],
+                lead, request.user, data["lines"], data["client_email"], data["next_contact_at"],
+                data.get("next_contact_note"), data["note"],
             )
         except OfferError as error:
             return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
@@ -320,7 +365,7 @@ class OfferPreviewView(APIView):
         serializer = OfferPreviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
-        monthly, commission = offer_numbers(d["product"], d["quantity"], d["term_months"], d["promo"])
+        monthly, commission = offer_numbers(d["product"], d["quantity"], d["term_months"], d["promo"], option=d["option"])
         return Response({"monthly_total": str(monthly), "commission": str(commission)})
 
 
@@ -387,15 +432,38 @@ class DialerDeviceAuthMixin:
 
 
 class DialerPollView(DialerDeviceAuthMixin, APIView):
-    """Telefon co chwilę pyta: „czy mam coś wybrać?”. 204 = nic."""
+    """Telefon co chwilę pyta: „czy mam coś wybrać?”. 204 = nic.
 
-    @extend_schema(responses=OpenApiTypes.OBJECT)
+    Aplikacja, która umie wysyłać SMS-y, dopisuje `?sms=1`: wtedy, gdy nie ma numeru do wybrania,
+    może dostać SMS z przypomnieniem (`type: "sms"`). Starsze aplikacje (bez `sms=1`) dostają
+    tylko połączenia, więc nigdy nie wezmą SMS-a za numer do wybrania."""
+
+    @extend_schema(
+        parameters=[OpenApiParameter("sms", OpenApiTypes.INT, description="1 = telefon umie wysyłać SMS-y z przypomnieniem")],
+        responses=OpenApiTypes.OBJECT,
+    )
     def get(self, request):
         call = poll_call(request.auth)
-        if call is None:
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        lead = call.lead
-        return Response({"id": call.pk, "phone": call.phone, "name": lead.display_name if lead else ""})
+        if call is not None:
+            lead = call.lead
+            return Response({"type": "call", "id": call.pk, "phone": call.phone, "name": lead.display_name if lead else ""})
+        if request.query_params.get("sms") == "1":
+            sms = next_sms(request.auth)
+            if sms is not None:
+                return Response({"type": "sms", "id": sms.pk, "phone": sms.phone, "text": sms.text,
+                                 "name": sms.lead.display_name if sms.lead else "próbny SMS"})
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DialerSmsDoneView(DialerDeviceAuthMixin, APIView):
+    """Telefon odsyła, czy SMS z przypomnieniem wyszedł: {ok: bool, error: "..."}."""
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk):
+        sms = finish_sms(request.auth, pk, bool(request.data.get("ok")), str(request.data.get("error", "")))
+        if sms is None:
+            return Response({"detail": "Nie ma takiego SMS-a."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"ok": True, "state": sms.state})
 
 
 class DialerFinishView(DialerDeviceAuthMixin, APIView):

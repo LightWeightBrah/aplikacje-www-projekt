@@ -54,8 +54,18 @@ def dialer_apk(request):
 
 
 def queue_page(request):
-    """Szkielet kolejki agenta. Dane pobiera JavaScript z API (token JWT)."""
-    return render(request, "crm/queue.html")
+    """Szkielet kolejki agenta. Dane pobiera JavaScript z API (token JWT).
+
+    Lista kanałów Magenta TV (publiczna lista T-Mobile) idzie razem ze stroną – wyszukiwarka
+    „czy jest kanał…?” działa nawet wtedy, gdy w taryfach TV nie ma wpisanej ściągi."""
+    from .tv_channels import CANAL_PLUS_SUPER_SPORT, CHANNEL_COUNTS, CHANNELS, CHANNELS_AS_OF
+
+    tv = {"as_of": CHANNELS_AS_OF, "counts": CHANNEL_COUNTS, "extra": list(CANAL_PLUS_SUPER_SPORT),
+          "packages": {plan: [{"group": line.split(":", 1)[0].strip(),
+                               "channels": [c.strip() for c in line.split(":", 1)[1].split(",") if c.strip()]}
+                              for line in lines]
+                       for plan, lines in CHANNELS.items()}}
+    return render(request, "crm/queue.html", {"tv_channels": tv})
 
 
 def dashboard(request):

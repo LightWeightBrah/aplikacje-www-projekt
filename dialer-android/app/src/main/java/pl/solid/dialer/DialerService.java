@@ -1,12 +1,16 @@
 package pl.solid.dialer;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.database.Cursor;
@@ -17,8 +21,15 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.provider.CallLog;
 import android.telecom.TelecomManager;
+import android.telephony.SmsManager;
+import android.telephony.SubscriptionManager;
 
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Praca w tle: co 2 sekundy pyta CRM, czy jest numer do wybrania. Jeśli tak – wybiera go
@@ -71,10 +82,13 @@ public class DialerService extends Service {
         int errors = 0;
         while (running) {
             try {
-                Api.Result r = Api.request("GET", base + "/api/dialer/poll/", token, null);
+                // ?sms=1 tylko ze zgodą na SMS-y: wtedy CRM może zlecić SMS z przypomnieniem
+                boolean canSms = checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
+                Api.Result r = Api.request("GET", base + "/api/dialer/poll/" + (canSms ? "?sms=1" : ""), token, null);
                 if (r.status == 200) {
                     errors = 0;
-                    handleCall(base, token, r.json);
+                    if ("sms".equals(r.json.optString("type"))) handleSms(base, token, r.json);
+                    else handleCall(base, token, r.json);
                 } else if (r.status == 204) {
                     errors = 0;
                     setState("Dialer gotowy do pracy");
@@ -124,6 +138,73 @@ public class DialerService extends Service {
             }
         }
         finish(base, token, id, false, 0);
+    }
+
+    /**
+     * SMS z przypomnieniem: wysyłany z karty SIM, z której telefon dzwoni (jak SMS napisany ręcznie,
+     * trafia też do „Wysłanych” w Wiadomościach). Czekamy na potwierdzenie z sieci (maks. 60 s)
+     * i odsyłamy do CRM, czy wyszedł.
+     */
+    private void handleSms(String base, String token, JSONObject job) throws Exception {
+        long id = job.getLong("id");
+        String phone = job.getString("phone");
+        String text = job.getString("text");
+        String name = job.optString("name", "");
+        setState("Wysyłam SMS z przypomnieniem: " + (name.isEmpty() ? phone : name));
+        String error = null;
+        try {
+            SmsManager sms = smsManager();
+            ArrayList<String> parts = sms.divideMessage(text);
+            String action = getPackageName() + ".SMS_SENT." + id;
+            CountDownLatch latch = new CountDownLatch(parts.size());
+            AtomicReference<String> failure = new AtomicReference<>();
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, Intent i) {
+                    if (getResultCode() != Activity.RESULT_OK) failure.set("błąd sieci " + getResultCode());
+                    latch.countDown();
+                }
+            };
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(receiver, new IntentFilter(action), Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(receiver, new IntentFilter(action));
+            }
+            try {
+                ArrayList<PendingIntent> sent = new ArrayList<>();
+                for (int i = 0; i < parts.size(); i++) {
+                    Intent intent = new Intent(action).setPackage(getPackageName());
+                    sent.add(PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+                }
+                sms.sendMultipartTextMessage(phone, null, parts, sent, null);
+                if (!latch.await(60, TimeUnit.SECONDS)) error = "brak potwierdzenia z sieci";
+                else error = failure.get();
+            } finally {
+                unregisterReceiver(receiver);
+            }
+        } catch (SecurityException e) {
+            error = "brak zgody na SMS-y";
+        } catch (Exception e) {
+            error = String.valueOf(e.getMessage());
+        }
+        try {
+            JSONObject body = new JSONObject();
+            body.put("ok", error == null);
+            if (error != null) body.put("error", error);
+            Api.request("POST", base + "/api/dialer/sms/" + id + "/done/", token, body);
+        } catch (Exception ignored) { /* CRM zostawi SMS jako „wysyła”, nie wyśle go drugi raz */ }
+        setState(error == null ? "SMS z przypomnieniem wysłany" : "SMS nie wyszedł: " + error);
+    }
+
+    /** SmsManager dla karty SIM używanej do dzwonienia (przy dwóch kartach: ta sama co połączenia). */
+    private SmsManager smsManager() {
+        int sub = SubscriptionManager.getDefaultVoiceSubscriptionId();
+        boolean valid = sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        if (Build.VERSION.SDK_INT >= 31) {
+            SmsManager m = getSystemService(SmsManager.class);
+            return valid ? m.createForSubscriptionId(sub) : m;
+        }
+        return valid ? SmsManager.getSmsManagerForSubscriptionId(sub) : SmsManager.getDefault();
     }
 
     /** Ostatnie połączenie wychodzące od chwili wybrania numeru: [czas rozmowy w sekundach]. */

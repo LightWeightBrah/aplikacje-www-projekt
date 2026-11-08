@@ -70,7 +70,8 @@ CRM.initTour = function initTour() {
     if (inNav) { /* menu jest zawsze widoczne */ }
     else if (el.offsetHeight > roomH) {
       // duży element (np. lista w Kalendarzu): pokazujemy jego początek tuż pod menu
-      window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - navB - 16, behavior: "instant" });
+      const sc = CRM.scroller();   // przewija się środek strony (main.content), nie okno
+      sc.scrollBy({ top: el.getBoundingClientRect().top - navB - 16, behavior: "instant" });
     } else el.scrollIntoView({ block: "center", behavior: "instant" });
     const r0 = el.getBoundingClientRect(), extra = step.also && visible(step.also);
     const r1 = extra ? extra.getBoundingClientRect() : r0;

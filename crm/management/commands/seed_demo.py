@@ -99,9 +99,9 @@ class Command(BaseCommand):
         manager = User.objects.get(username="manager1")
 
         products = []
-        for order, (name, price, promo, extra, features) in enumerate(PRODUCTS, start=1):
+        for order, (name, price, promo, extra, features, more) in enumerate(PRODUCTS, start=1):
             product, _ = Product.objects.update_or_create(
-                name=name, defaults=tariff_defaults(order, price, promo, extra, features),
+                name=name, defaults=tariff_defaults(order, price, promo, extra, features, more),
             )
             products.append(product)
         # stare ogólne produkty demo (sprzed taryf T-Mobile) usuwamy; sprzedaże pamiętają nazwę i cenę,
@@ -142,7 +142,7 @@ class Command(BaseCommand):
                 LeadAssignment.objects.create(
                     lead=lead,
                     to_agent=owner,
-                    reason="Losowanie z puli (leads/next)",
+                    reason="Losowanie z puli",
                 )
                 Lead.objects.filter(pk=lead.pk).update(claimed_at=timezone.now())
             return lead
@@ -176,11 +176,11 @@ class Command(BaseCommand):
         )
 
         lead = new_lead("Ewa Baran", owner=agent1)
-        create_offer(lead, agent1, products[2], 3, 36, True, lead.email, now + timedelta(days=1),
+        create_offer(lead, agent1, [{"product": products[2], "quantity": 3, "term": 36, "promo": True}], lead.email, now + timedelta(days=1),
                      "Zapytać, czy oferta M dla 3 numerów jest OK")
         # oferta, której follow-up właśnie mija: „Następny klient” poda ją jako pierwszą
         lead = new_lead("Karol Nowicki", owner=agent1)
-        create_offer(lead, agent1, products[3], 2, 36, False, lead.email, now + timedelta(minutes=1),
+        create_offer(lead, agent1, [{"product": products[3], "quantity": 2, "term": 36, "promo": False}], lead.email, now + timedelta(minutes=1),
                      "Klient miał przeczytać ofertę do dziś")
 
         lead = new_lead("Tomasz Pawlak", owner=agent1)

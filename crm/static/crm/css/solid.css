@@ -4,7 +4,7 @@
 :root{--bg:#f2f4f8;--card:#fff;--ink:#141a26;--muted:#5f6b7d;--line:#dfe4ec;--track:#e9edf3;--input:#fff;--brand:#2456d6;--brand-2:#173a8f;
   --brand-ink:#fff;--brand-text:#1f4fc9;--soft:#e8effd;--bar:#13254f;--ok:#15803d;--warn:#b45309;--late:#dc2626;
   --seg-offer:#16a34a;--seg-callback:#e09a0b;--seg-retry:#64748b;--seg-new:#2456d6;
-  --radius:12px;--shadow:0 1px 2px rgba(15,25,45,.05),0 4px 16px rgba(15,25,45,.06);--topnav-h:56px;--dialbar-h:44px}
+  --radius:12px;--shadow:0 1px 2px rgba(15,25,45,.05),0 4px 16px rgba(15,25,45,.06);--topnav-h:calc(56px * var(--ts, 1));--dialbar-h:calc(44px * var(--ts, 1))}
 /* tryb ciemny: neutralny grafit, jaśniejszy błękit, wyraźne obramowania kart */
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--card:#161b22;--ink:#e6eaf0;--muted:#9aa4b2;--line:#29313d;--track:#1f2630;--input:#0f141a;
   --soft:#152341;--brand:#3d72f0;--brand-2:#2a55c4;--brand-text:#86a9ff;--bar:#101a2e;--ok:#4ade80;--warn:#fbbf24;--late:#f87171;
@@ -12,14 +12,14 @@
 :root[data-theme="dark"]{--bg:#0d1117;--card:#161b22;--ink:#e6eaf0;--muted:#9aa4b2;--line:#29313d;--track:#1f2630;--input:#0f141a;
   --soft:#152341;--brand:#3d72f0;--brand-2:#2a55c4;--brand-text:#86a9ff;--bar:#101a2e;--ok:#4ade80;--warn:#fbbf24;--late:#f87171;
   --seg-offer:#22c55e;--seg-callback:#f5b123;--seg-retry:#8b97a8;--seg-new:#5b8cff;--shadow:0 1px 2px rgba(0,0,0,.45),0 6px 20px rgba(0,0,0,.35)}
-body{font-size:15px}
+html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1))}
 .btn-primary{background:var(--brand);background-image:none;box-shadow:none}
 .btn-primary:hover{filter:brightness(1.07)}
 .card{border-radius:var(--radius)}
 
 /* ---------- logo i górne menu ---------- */
 .logo{display:inline-flex;align-items:center;gap:.55rem;text-decoration:none;color:var(--ink);flex:none}
-.logo-mark{width:32px;height:32px;border-radius:9px;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:800;font-size:1.05rem}
+.logo-mark{width:calc(32px * var(--ts, 1));height:calc(32px * var(--ts, 1));border-radius:9px;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:800;font-size:1.05rem}
 .logo-text{font-weight:800;letter-spacing:.06em;font-size:1.02rem}.logo-text b{color:var(--brand);font-weight:800;margin-left:.25rem;letter-spacing:.02em}
 .logo-lg .logo-mark{width:44px;height:44px;font-size:1.4rem;border-radius:12px}.logo-lg .logo-text{font-size:1.4rem}
 .topnav{position:sticky;top:0;z-index:40;height:var(--topnav-h);display:flex;align-items:center;gap:1.2rem;padding:0 18px;background:var(--card);border-bottom:2px solid var(--brand);box-shadow:0 1px 6px rgba(0,0,0,.04)}
@@ -38,11 +38,11 @@ body{font-size:15px}
 .topnav .gsearch input{width:100%;height:38px;border-radius:10px;background:var(--bg);border:1px solid var(--line);padding:0 2.4rem 0 2.2rem;color:var(--ink);font:inherit;font-size:.92rem}
 .topnav .gsearch input:focus{outline:2px solid color-mix(in srgb,var(--brand) 40%,transparent);border-color:var(--brand);background:var(--card)}
 .topnav .user-menu{position:relative;border:0;padding:0;flex:none}
-.topnav .user-chip{color:var(--ink);padding:.3rem .5rem}
+.topnav .user-chip{color:var(--ink);padding:.25rem .5rem;line-height:1.2;max-height:calc(var(--topnav-h) - 8px)}.topnav .user-chip .who{max-width:14em}
 .topnav .user-chip:hover,.topnav .user-chip[aria-expanded=true]{background:var(--track)}
 .topnav .user-chip small,.topnav .user-chip .chev{color:var(--muted)}
-.topnav .avatar{width:34px;height:34px;background:var(--brand);color:#fff;font-size:.9rem}
-.topnav .popover{bottom:auto;top:calc(100% + 8px);left:auto;right:0;width:290px}
+.topnav .avatar{width:calc(34px * var(--ts, 1));height:calc(34px * var(--ts, 1));background:var(--brand);color:#fff;font-size:.9rem}
+.topnav .popover{bottom:auto;top:calc(100% + 8px);left:auto;right:0;width:calc(300px * var(--ts, 1));max-width:calc(100vw - 16px)}
 .content{max-width:none;padding:22px 26px 40px}
 .content>.page-head,.content>.card,.content>section,.content>div:not(.work){max-width:1500px;margin-left:auto;margin-right:auto}
 @media(max-width:1100px){.topnav{gap:.6rem;padding:0 10px}.logo-text{display:none}.mainnav>a,.nav-more-btn{padding:.45rem .5rem;font-size:.88rem}.topnav .user-chip .who{display:none}}
@@ -64,7 +64,7 @@ body{font-size:15px}
 .work-page.content{padding:12px 14px calc(var(--dialbar-h) + 10px)}
 .work{display:grid;grid-template-columns:310px minmax(0,1fr) 300px;gap:12px;align-items:start}
 .work.no-side{grid-template-columns:310px minmax(0,1fr)}
-.w-col{position:sticky;top:calc(var(--topnav-h) + 12px);max-height:calc(100vh - var(--topnav-h) - var(--dialbar-h) - 24px);overflow:auto;scrollbar-width:thin}
+.w-col{position:sticky;top:0;max-height:calc(100vh - var(--topnav-h) - var(--dialbar-h) - 24px);overflow:auto;scrollbar-width:thin}
 .w-panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 .w-left{display:flex;flex-direction:column;gap:10px;padding:0}
 .w-left>.w-panel{padding:12px}
@@ -185,6 +185,8 @@ body{font-size:15px}
 .w-sum span{font-size:.82rem;color:var(--muted)}.w-sum b{font-size:1.25rem}.w-sum .comm b{color:var(--ok)}
 .w-check{display:flex;align-items:center;gap:.5rem;font-size:.92rem;cursor:pointer}
 .w-check input{width:1.1rem;height:1.1rem;accent-color:var(--brand)}
+.w-check.off{opacity:.45;cursor:not-allowed}.w-check.off input{cursor:not-allowed}
+.w-plan-head{display:flex;flex-wrap:wrap;gap:.6rem;margin-bottom:.7rem}.w-toggle[hidden]{display:none}
 .w-toggle{display:inline-flex;background:var(--track);border-radius:10px;padding:3px}
 .w-toggle button{border:0;background:none;padding:.4rem .9rem;border-radius:8px;font:inherit;font-weight:600;font-size:.9rem;color:var(--muted);cursor:pointer}
 .w-toggle button[aria-pressed=true]{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.14)}
@@ -283,6 +285,25 @@ body{font-size:15px}
 .cal-ev b{margin-right:.3rem}
 .cal-ev.late{--c:var(--late)}
 .cal-more{font-size:.74rem;color:var(--muted);background:none;border:0;cursor:pointer;text-align:left;padding:0 .2rem;font:inherit}
+/* klikalny dzień i panel dnia */
+.cal-day{cursor:pointer;transition:background .12s}.cal-day:hover{background:color-mix(in srgb,var(--brand) 6%,var(--card))}
+.cal-day:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.cal-day.picked{box-shadow:inset 0 0 0 2px var(--brand);background:color-mix(in srgb,var(--brand) 9%,var(--card))}
+.cal-ev{pointer-events:none}
+.cal-dialog{width:min(720px,94vw);max-height:88vh}
+.cal-dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}.cal-dhead h2{margin:0}.cal-dhead p{margin:.2rem 0 0}
+.cal-list{display:grid;gap:.5rem;margin:.8rem 0;overflow:auto;max-height:60vh}
+.cal-item{display:grid;grid-template-columns:4.2rem 1fr auto;gap:.8rem;align-items:center;border:1px solid var(--line);border-left:4px solid var(--c);border-radius:10px;padding:.55rem .75rem}
+.cal-item-time{font-weight:800;font-size:1.1rem}.cal-item-time small{display:block;font-size:.7rem;font-weight:700;color:var(--late)}
+.cal-item-title{font-size:.98rem}.cal-item-kind{font-size:.8rem;color:var(--muted);margin-top:.1rem}
+.cal-item-note{font-size:.85rem;margin-top:.25rem}
+.cal-item-actions{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}
+.cal-item-actions .btn{padding:.35rem .75rem;font-size:.85rem}
+@media(max-width:560px){.cal-item{grid-template-columns:3.6rem 1fr}.cal-item-actions{grid-column:1/-1;justify-content:flex-start}}
+.cb-results{display:grid;gap:.3rem;margin:-.2rem 0 .6rem}
+.cb-row{text-align:left;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:.45rem .7rem;font:inherit;font-size:.9rem;cursor:pointer}
+.cb-row:hover{border-color:var(--brand)}
+.cb-picked{display:flex;justify-content:space-between;align-items:center;gap:.6rem;border:1px solid var(--brand);border-radius:8px;padding:.45rem .7rem;margin:-.2rem 0 .7rem;background:color-mix(in srgb,var(--brand) 10%,transparent)}
 .cal-legend{display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;margin-top:.8rem;font-size:.84rem;color:var(--muted)}
 .cal-legend i{display:inline-block;width:.8rem;height:.8rem;border-radius:3px;background:var(--c);margin-right:.35rem;vertical-align:-1px}
 @media(max-width:760px){.cal-day{min-height:4.5rem}.cal-ev span{display:none}}
@@ -427,6 +448,10 @@ button.avatar{border:0;padding:0;cursor:zoom-in;font:inherit;font-weight:700}
 .w-badge.spolka{color:#0e7490;background:#cffafe;border-color:#67e8f9}
 :root[data-theme="dark"] .w-badge.spolka{color:#a5f3fc;background:rgba(8,145,178,.28);border-color:rgba(103,232,249,.55)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .w-badge.spolka{color:#a5f3fc;background:rgba(8,145,178,.28);border-color:rgba(103,232,249,.55)}}
+/* „Przepisany od …”: jasny tekst jak przy „Spółka” (ciemnoniebieski na ciemnym tle był słabo widoczny) */
+.w-badge.moved{color:#1d4ed8;background:#dbeafe;border-color:#93c5fd}
+:root[data-theme="dark"] .w-badge.moved{color:#bfdbfe;background:rgba(37,99,235,.32);border-color:rgba(147,197,253,.6)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .w-badge.moved{color:#bfdbfe;background:rgba(37,99,235,.32);border-color:rgba(147,197,253,.6)}}
 .w-edit-actions{display:flex;align-items:center;gap:.6rem;margin-top:.8rem}
 .w-facts .w-field{margin-bottom:.6rem}
 .phrases button[aria-pressed=true],.w-chip[data-refuse][aria-pressed=true]{background:var(--brand);color:#fff;border-color:var(--brand)}
@@ -451,6 +476,49 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 /* nowy kontakt / zadzwoń na numer */
 .w-quick{display:flex;gap:.4rem;margin-top:.6rem}
 .w-quick .btn-mini{flex:1;justify-content:center;padding:.45rem .5rem;font-size:.82rem}
+.w-pinfo-open{display:flex;align-items:center;gap:.6rem;width:100%;margin-top:.4rem;padding:.5rem .7rem;font-size:.86rem;font-weight:600;text-align:left}
+.w-pinfo-open span{display:flex;flex-direction:column;line-height:1.25}.w-pinfo-open small{font-weight:400;font-size:.74rem;color:var(--muted)}
+/* ikonka „i” w kółku (rysowana, wygląda tak samo na każdym komputerze) */
+.w-info-ico{flex:none;width:1.25em;height:1.25em;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;color:var(--brand-text)}
+/* zestaw kilku usług w ofercie / sprzedaży */
+.w-basket{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.7rem}
+.w-bitem{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;background:var(--track);overflow:hidden}
+.w-bitem button{border:0;background:none;color:var(--ink);font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer}
+.w-bitem button.x{padding:.35rem .6rem;color:var(--muted);border-left:1px solid var(--line)}
+.w-bitem button.x:hover{color:#ef4444}
+.w-bitem.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 18%,transparent)}.w-bitem.on button:first-child{font-weight:700}
+.w-badd{border:1px dashed var(--brand);background:none;color:var(--brand);border-radius:99px;padding:.35rem .8rem;font:inherit;font-size:.85rem;font-weight:600;cursor:pointer}
+.w-badd:hover{background:color-mix(in srgb,var(--brand) 12%,transparent)}
+.w-blines{margin:.4rem 0 0;padding-left:1.1rem;font-size:.85rem}.w-blines li{margin:.1rem 0}
+/* „co zawiera” i ściąga dla agenta (np. kanały TV) */
+.w-pinfo-btn{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;margin:.9rem 0 1rem;border:1px solid color-mix(in srgb,var(--brand) 55%,var(--line));border-radius:10px;padding:.55rem .8rem;background:color-mix(in srgb,var(--brand) 8%,transparent);color:var(--ink);font:inherit;font-size:.88rem;cursor:pointer}
+.w-pinfo-btn:hover{background:color-mix(in srgb,var(--brand) 16%,transparent)}.w-pinfo-btn>span:not(.w-pinfo-go){flex:1}
+.w-pinfo-go{color:var(--brand-text);font-weight:700;white-space:nowrap}
+/* wybór promocji i rodzaju budynku (światłowód) */
+.w-promos{flex-wrap:wrap}.w-promo-none{color:var(--muted);font-size:.86rem;padding:.35rem 0}
+#f-promo-row{margin-bottom:.8rem}
+.w-home{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}.w-home>span{font-size:.82rem;color:var(--muted);font-weight:600}
+.w-fiber-note{margin:.3rem 0 0;font-size:.8rem;color:var(--muted)}
+.w-chip.plan em{display:block;font-style:normal;font-size:.74rem;font-weight:600;color:var(--brand-text);margin-top:.1rem}
+.w-pcard ul,.w-chans ul{margin:.3rem 0 .5rem;padding-left:1.1rem;font-size:.86rem;line-height:1.45}.w-pcard li,.w-chans li{margin:.15rem 0}
+.w-pcard li.hit{background:color-mix(in srgb,#fde047 22%,transparent);border-radius:4px;padding:0 .3rem}
+.w-chrow{list-style:none;margin-left:-1.1rem!important}.w-chrow b{display:block;margin:.3rem 0 .2rem}
+.w-pinfo-sum{list-style:none;margin-left:-1.1rem!important;font-weight:600}
+.w-ch{display:inline-block;margin:0 .25rem .25rem 0;padding:.1rem .5rem;border:1px solid var(--line);border-radius:99px;background:var(--track);font-size:.82rem;line-height:1.4}
+.w-ch.hit{background:#fde047;color:#111;border-color:#eab308;font-weight:700}
+.w-chans{border:2px solid var(--ok);border-radius:12px;padding:.6rem .9rem;background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.w-chans li{margin:.35rem 0}
+.w-chans.no{border-color:var(--late);background:color-mix(in srgb,var(--late) 10%,transparent);font-size:.9rem}
+.w-pk{display:inline-block;margin:0 .25rem .2rem 0;padding:.1rem .5rem;border-radius:6px;font-size:.8rem;font-weight:700}
+.w-pk.yes{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ink)}.w-pk.no{background:var(--track);color:var(--muted);text-decoration:line-through}
+.w-pinfo-price{font-weight:700;font-size:.9rem;margin:.4rem 0 .2rem}
+.w-pinfo-promos{margin:.1rem 0 .3rem;padding-left:1.1rem;font-size:.84rem}
+.w-pinfo-h{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-top:.45rem;font-weight:700}
+.w-pdialog{width:min(880px,94vw);max-height:90vh}
+.w-pdhead{display:flex;justify-content:space-between;align-items:center;gap:1rem}.w-pdhead h2{margin:0}
+.w-pdialog #pinfo-find{width:100%;margin:.7rem 0}
+.w-plist{display:grid;gap:.7rem;margin-top:.7rem;overflow:auto;max-height:64vh}
+.w-pcard{border:1px solid var(--line);border-radius:12px;padding:.6rem .9rem}.w-pcard h3{margin:0 0 .2rem;font-size:1rem}
 .dialbar #db-dial{margin-left:.4rem}
 /* skróty klawiszowe wyłączone w „Moje ustawienia”: chowamy podpowiedzi */
 .no-keys .w-out kbd,.no-keys .w-next kbd,.no-keys .w-kbd,.no-keys .gs-key,.no-keys .w-out-title small{display:none}
@@ -481,12 +549,10 @@ body:has(.undo-bar) .toast{bottom:calc(var(--dialbar-h, 0px) + 96px)}
 .att-low{color:#ef4444}
 
 /* Wczytywanie strony: treść pokazuje się dopiero z danymi (bez „doładowywania” na oczach) */
-main.content{transition:opacity .15s ease-out}
 html.crm-loading main.content{opacity:0;transition:none}
 html.crm-loading-slow body::after{content:"Wczytuję…";position:fixed;left:0;right:0;top:40%;text-align:center;color:var(--muted);font-size:.95rem;pointer-events:none}
 html[data-role]:not([data-role="manager"]) .topnav [data-manager-only]{display:none}
 html[data-noteam] .topnav [data-team-only]{display:none}
-@media(prefers-reduced-motion:reduce){main.content{transition:none}}
 
 /* Stałe informacje o kliencie – w karcie klienta, nad wynikiem rozmowy; wspólne dla całego zespołu */
 .w-info{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}
@@ -521,3 +587,78 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 .view-prefs{border:1px solid var(--line);border-radius:12px;padding:.7rem .9rem .8rem;margin:0;display:flex;flex-direction:column;gap:.6rem}
 .view-prefs legend{font-weight:700;font-size:.9rem;padding:0 .35rem}
 .view-prefs>small{margin-top:-.2rem}
+
+/* „Zapisz i dalej” / „Następny klient”: karta lekko przygasa na ułamek sekundy, aż wejdzie następny klient */
+#lead-pane { transition: opacity .12s; }
+#lead-pane.w-busy { opacity: .55; pointer-events: none; }
+.w-psec{margin:.3rem 0 -.2rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.w-psec:not(:first-child){margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--line)}
+.w-term-hint{display:block;margin-top:.25rem;font-size:.75rem;color:var(--warn)}
+.w-pmode{margin-top:.7rem}.w-pmode button{font-size:.95rem;padding-left:1.1rem;padding-right:1.1rem}
+/* Ustawienia → SMS z przypomnieniem */
+#sms-card .sms-times{margin:.8rem 0 .4rem}
+#sms-card .rule-input{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}#sms-card .rule-input input{width:6.5rem}#sms-card .rule-input select{width:auto}
+.sms-kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem;margin:1rem 0 .6rem}
+.sms-kind{display:flex;flex-direction:column;gap:.5rem;padding:.9rem 1rem;border:1px solid var(--line);border-radius:12px}
+.sms-kind textarea{min-height:8.5rem;resize:vertical}
+.sms-kind.is-off textarea,.sms-kind.is-off .sms-preview{opacity:.5}
+.sms-test{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.sms-test h3{margin:0 0 .2rem}
+.sms-test-row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-top:.5rem}.sms-test-row input{width:13rem}.sms-test-row select{width:auto}
+.ok-text{color:var(--ok,#2fa36b)}
+.sms-preview{margin-top:.9rem;padding:.7rem .9rem;border-radius:12px;background:var(--surface-2,rgba(127,127,127,.08))}
+.sms-preview p{margin:.35rem 0;white-space:pre-wrap}
+/* Układ jak w aplikacji (Gmail, CRM2): górny i dolny pasek stoją na całą szerokość okna, a przewija się
+   tylko środek strony (main.content) – suwak zaczyna się pod górnym paskiem i kończy nad dolnym, więc
+   nie zabiera paskom tła po prawej. Suwak środka jest zawsze (na krótkich stronach pusty), dzięki czemu
+   szerokość treści jest na każdej zakładce taka sama (miejsce na suwak, strzałki tylko przy przewijaniu). Odstępy pasków jak dawniej (18 / 16 px).
+   Kliknięta zakładka od razu się podświetla, a pod paskiem biegnie cienki pasek wczytywania (html.nav-going). */
+html:has(>body>.topnav),html:has(>body>.topnav)>body{height:100%;overflow:hidden}
+html:has(>body>.topnav)>body{display:flex;flex-direction:column}
+body>.topnav{position:relative;flex:none}
+body>main.content{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;overscroll-behavior:contain;scrollbar-color:var(--line) var(--bg);outline:none}
+/* suwak (ze strzałkami) widać tylko, gdy strona się przewija; miejsce na niego jest zawsze, więc nic nie skacze.
+   „Dzwonienie” przewija kolumny, nie stronę: bez miejsca na suwak, więc kolumny mają równe odstępy od obu brzegów */
+body>main.work-page.content{scrollbar-gutter:auto}
+/* Prawa kolumna („Dziś”, „Terminy”, „Solid info”) ma własny cienki suwak, gdy się nie mieści. Miejsce na niego
+   jest zawsze i leży w marginesie strony (margines kolumny −10 px), więc bloki stoją 14 px od prawej krawędzi,
+   tak jak lewa kolumna od lewej – z suwakiem i bez */
+.w-side{scrollbar-gutter:stable;margin-right:-10px}
+/* Na każdej zakładce profil u góry i przyciski dolnego paska kończą się 14 px od prawej krawędzi
+   (w „Dzwonieniu” w tej samej linii co bloki prawej kolumny). Profil ma w środku odstęp .5rem
+   (tło widać dopiero po najechaniu), więc pasek ma 14 px − .5rem */
+.topnav{padding-right:calc(14px - .5rem)}
+.dialbar{padding-right:14px}
+/* „Dzwonienie”: dolny pasek (dialer) stoi pod środkiem, więc suwak kończy się nad nim */
+body:has(.dialbar)>main.content{margin-bottom:var(--dialbar-h)}
+.work-page.content{padding-bottom:10px}
+/* przyklejone elementy liczą odstęp od wnętrza środka (bez jego marginesu 40 px na dole): pasek
+   „Zapisz ustawienia” zostaje 12 px nad dołem okna, jak wcześniej */
+body>main.content .rules-bar{bottom:-28px}
+html.nav-going .topnav::before{content:"";position:absolute;left:0;bottom:-2px;height:2px;width:35%;background:linear-gradient(90deg,transparent,var(--brand-text),transparent);animation:nav-going 1s ease-in-out infinite;pointer-events:none;z-index:1}
+@keyframes nav-going{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
+@media(prefers-reduced-motion:reduce){html.nav-going .topnav::before{animation:none;width:100%;opacity:.6}}
+
+/* Kalendarz: kolory wpisów jak w Dzwonieniu (oferta / zainteresowany = zielony, oddzwonienie = bursztyn).
+   Pasek z lewej, ramka „Follow-up oferty” i podświetlenie po najechaniu mają kolor segmentu;
+   zaległe (czerwone) i ponowne próby (fiolet) zostają po swojemu */
+.plan-item{--seg:var(--brand)}
+.plan-item.seg-offer{--seg:var(--seg-offer)}
+.plan-item.seg-callback{--seg:var(--seg-callback)}
+.plan-item.seg-offer:not(.is-passed):not(.is-retry),.plan-item.seg-callback:not(.is-passed):not(.is-retry){--accent:var(--seg)}
+.plan-topic{border-left-color:var(--seg);background:color-mix(in srgb,var(--seg) 10%,transparent)}
+.plan-topic svg,.plan-topic em{color:color-mix(in srgb,var(--seg) 75%,var(--ink))}
+.plan-item.seg-offer .plan-sub.next,.plan-item.seg-callback .plan-sub.next{color:color-mix(in srgb,var(--seg) 75%,var(--ink))}
+.plan-item.seg-offer:not(.is-passed):not(.is-retry)[data-href]:hover,.plan-item.seg-callback:not(.is-passed):not(.is-retry)[data-href]:hover{background:color-mix(in srgb,var(--seg) 12%,var(--card));border-color:var(--seg);box-shadow:inset 4px 0 0 var(--accent),0 0 0 1px var(--seg),0 10px 28px color-mix(in srgb,var(--seg) 25%,transparent)}
+/* strzałka na zielonym / bursztynowym kółku: ciemna, bo biała i niebieska na jasnym kolorze są słabo widoczne */
+.plan-item.seg-offer:hover .plan-go,.plan-item.seg-callback:hover .plan-go,
+.plan-item.seg-offer .plan-go:focus-visible,.plan-item.seg-callback .plan-go:focus-visible{background:var(--seg);color:#0b1410}
+.plan-item.seg-offer:hover .plan-go svg,.plan-item.seg-callback:hover .plan-go svg{stroke-width:2.8}
+
+/* Okno „Produkty i kanały TV”: jeden suwak. Wygląd jak wcześniej (okno dopasowane do treści, zakładki
+   o naturalnej szerokości), ale samo okno się nie przewija: gdy lista jest długa, okno dochodzi do 90 % wysokości
+   ekranu i przewija się tylko lista (nagłówek, zakładki i pole szukania zostają na miejscu) */
+.w-pdialog[open]{display:flex;flex-direction:column;overflow:hidden}
+.w-pdialog[open]>*{flex:none}
+.w-pdialog[open]>.w-toggle{align-self:flex-start}
+.w-pdialog[open]>#pinfo-list{flex:0 1 auto;min-height:0;max-height:none;align-content:start}
+/* suwak listy w kolorach suwaka strony (szary uchwyt, ciemne tło) */
+.w-pdialog #pinfo-list,.dialog{scrollbar-color:var(--line) transparent}

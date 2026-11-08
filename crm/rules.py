@@ -22,7 +22,15 @@ FIELD_LIMITS = {
     "work_end_hour": (1, 24, "godz.", None),
     "claim_timeout_hours": (1, 720, "godz.", "LEAD_CLAIM_TIMEOUT_HOURS"),
     "unreachable_cooldown_days": (1, 365, "dni", "LEAD_UNREACHABLE_COOLDOWN_DAYS"),
+    "sms_reminder_minutes": (10, 10080, "min", None),   # od 10 minut do 7 dni przed terminem
+    "sms_min_gap_minutes": (1, 1440, "min", None),
 }
+SMS_MAX_PER_DAY = 5   # twardy limit na jeden numer w ciągu doby, niezależnie od ustawień
+# Rodzaje SMS-ów z przypomnieniem: pola włącz/treść w TeamRules
+SMS_KINDS = ("offer", "talked", "stranger")
+SMS_TEXT_MAX = 320   # ok. 5 SMS-ów z polskimi znakami (wysyła telefon agenta, w abonamencie)
+# Pola, które można wstawić do treści SMS-a (crm.sms.render_sms)
+SMS_PLACEHOLDERS = ("imie", "kiedy", "Kiedy", "godzina", "data")
 
 # Ponowne próby po nieodebranym umówionym terminie: ile kroków i jaki zakres jednego kroku (min)
 CALLBACK_STEPS_MAX = 8
@@ -41,6 +49,9 @@ def default_values():
             values[name] = TeamRules._meta.get_field(name).default
     values["callback_retry_steps"] = list(getattr(settings, "CALLBACK_RETRY_STEPS", DEFAULT_CALLBACK_STEPS))
     values["work_days"] = getattr(settings, "WORK_DAYS", DEFAULT_WORK_DAYS)
+    for kind in SMS_KINDS:
+        for name in (f"sms_{kind}_enabled", f"sms_{kind}_text"):
+            values[name] = TeamRules._meta.get_field(name).default
     return values
 
 

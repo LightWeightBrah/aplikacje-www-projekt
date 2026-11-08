@@ -4,7 +4,7 @@ const CRM = (() => {
   const HOME_URL = "/crm/";
   const STATUS = {
     new: ["Nowy", "#6366f1"], callback: ["Do oddzwonienia", "#f59e0b"],
-    interested: ["Zainteresowany", "#10b981"], offer: ["Oferta wysłana", "#0ea5e9"],
+    interested: ["Zainteresowany", "#10b981"], offer: ["Oferta wysłana", "#22c55e"],
     won: ["Sprzedany", "#16a34a"], lost: ["Bez sprzedaży", "#94a3b8"],
     do_not_call: ["Nie dzwonić", "#ef4444"], unreachable: ["Nieosiągalny", "#a855f7"],
   };
@@ -55,7 +55,7 @@ const CRM = (() => {
   function settle() {
     if (revealed) return;
     clearTimeout(settleTimer);
-    settleTimer = setTimeout(() => { if (pending === 0) reveal(); }, 80);  // dajemy chwilę na zapytania „jedno po drugim”
+    settleTimer = setTimeout(() => { if (pending === 0) reveal(); }, 40);  // dajemy chwilę na zapytania „jedno po drugim”
   }
   if (!revealed) {
     document.addEventListener("DOMContentLoaded", settle);
@@ -69,8 +69,23 @@ const CRM = (() => {
     try { return await apiCall(path, options, retry); } finally { pending--; settle(); }
   }
 
+  /* Zakładki otwierają się od razu: gdy kursor stoi na linku w menu, Chrome przygotowuje tę stronę
+     w tle (reguły „speculationrules” w app_base.html). Taka strona może tylko CZYTAĆ dane – zapisy
+     (POST/PATCH/DELETE) i „otwarcie Dzwonienia” (?open=1, liczy się do czasu pracy) czekają,
+     aż agent naprawdę kliknie. Gdy nie kliknie, nic się nie zapisuje. */
+  const shown = document.prerendering
+    ? new Promise((done) => document.addEventListener("prerenderingchange", done, { once: true }))
+    : null;
+
   /* Zapytanie do API z tokenem; przy 401 próbuje odświeżyć token raz. */
   async function apiCall(path, options = {}, retry = true) {
+    if (shown && document.prerendering) {
+      if ((options.method || "GET").toUpperCase() !== "GET") await shown;
+      else if (/[?&]open=1/.test(path)) {
+        shown.then(() => apiCall(path, options, retry)).catch(() => {});   // ruch agenta – dopiero po kliknięciu
+        path = path.replace(/([?&])open=1&?/, "$1").replace(/[?&]$/, "");
+      }
+    }
     const headers = { ...(options.headers || {}) };
     const access = store.get("crm_access");
     if (access) headers.Authorization = "Bearer " + access;
@@ -185,6 +200,17 @@ const CRM = (() => {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggle(false); });
     document.querySelectorAll("[data-theme-choice]").forEach((b) =>
       b.addEventListener("click", () => { setTheme(b.dataset.themeChoice); paint(); }));
+    // wielkość tekstu: każdy agent ustawia sobie sam (zapamiętane na tym komputerze), 1 = standardowa
+    const textSize = () => parseFloat(getComputedStyle(root).getPropertyValue("--ts")) || 1;
+    const paintText = () => document.querySelectorAll("[data-text-size]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(Math.abs(Number(b.dataset.textSize) - textSize()) < 0.01)));
+    document.querySelectorAll("[data-text-size]").forEach((b) => b.addEventListener("click", () => {
+      const z = Number(b.dataset.textSize);
+      if (z !== 1) { root.style.setProperty("--ts", z); store.set("crm_text_size", String(z)); }
+      else { root.style.removeProperty("--ts"); store.del("crm_text_size"); }
+      paintText();
+    }));
+    paintText();
     $("logout-btn").addEventListener("click", async () => {
       // wylogowanie = godzina wyjścia z pracy (manager widzi ją w „Zespół” → Obecność)
       try { await api("/api/work/logout/", { method: "POST" }, false); } catch { /* i tak wylogowujemy */ }
@@ -307,6 +333,20 @@ const CRM = (() => {
       } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     });
   }
+
+  /* Przewija się środek strony (main.content), a nie okno – górny i dolny pasek stoją na całą szerokość.
+     scrollTop(): na górę strony; scroller(): element, który się przewija. */
+  const scroller = () => document.querySelector("body > main.content") || document.scrollingElement;
+  function scrollTop() { const el = scroller(); if (el) el.scrollTo({ top: 0 }); window.scrollTo({ top: 0 }); }
+  /* PageUp/PageDown/spacja/strzałki/Home/End przewijają środek także wtedy, gdy nic nie jest kliknięte
+     (bez tego przeglądarka próbowałaby przewinąć okno, które stoi w miejscu) */
+  document.addEventListener("keydown", (e) => {
+    if (!["PageDown", "PageUp", "Home", "End", "ArrowDown", "ArrowUp", " "].includes(e.key)) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && a !== document.documentElement) return;
+    const el = document.querySelector("body > main.content");
+    if (el) { el.tabIndex = -1; el.focus({ preventScroll: true }); }
+  }, true);
 
   function initShell() {
     const user = currentUser();
@@ -612,5 +652,5 @@ const CRM = (() => {
     return m ? `${h} h ${m} min` : `${h} h`;
   }
 
-  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser, talk };
+  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser, talk, scroller, scrollTop };
 })();

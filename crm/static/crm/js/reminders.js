@@ -244,9 +244,14 @@ CRM.initReminders = function initReminders() {
     const st = statusInfo(l.status);
     if (st) el.dataset.color = st[1];
     el.setAttribute("role", "alert");
+    // Lead przepisany od innego agenta: wyraźny pasek, żeby było widać, że to nie „mój” zaległy kontakt
+    const moved = l.transferred_from
+      ? `<div class="rem-transfer"><span aria-hidden="true">↪</span> Przepisany od <b>${esc(l.transferred_from)}</b>${l.transferred_at ? `<small>${esc(dm(l.transferred_at))}, ${esc(hhmm(l.transferred_at))}</small>` : ""}</div>` : "";
+    if (moved) el.classList.add("moved");
     el.innerHTML = `
       <div class="rem-bar"><span class="rem-icon"></span><span class="rem-kind"></span>
         <button type="button" class="rem-x" aria-label="Zamknij">&times;</button></div>
+      ${moved}
       <div class="rem-body">
         <div class="rem-name">${esc(CRM.leadTitle(l))}</div>
         ${st ? `<div class="rem-tags"><span class="chip rem-chip" style="--c:${st[1]}">${esc(st[0])}</span></div>` : ""}
@@ -266,7 +271,7 @@ CRM.initReminders = function initReminders() {
     paintCard(el, now);
     return el;
   }
-  function summaryCard(count, late) {
+  function summaryCard(count, late, moved) {
     const el = document.createElement("div");
     el.className = "reminder" + (late ? " late" : "");
     el.dataset.lead = "";
@@ -277,6 +282,7 @@ CRM.initReminders = function initReminders() {
       <div class="rem-body">
         <div class="rem-name">${count} ${count === 1 ? "kontakt" : "kontaktów"}</div>
         <div class="rem-company">${late ? `Zaległe: ${late}` : "Wszystkie w najbliższych minutach"}</div>
+        ${moved ? `<div class="rem-transfer in-body"><span aria-hidden="true">↪</span> Przepisane: <b>${moved}</b></div>` : ""}
         <div class="rem-actions"><a class="btn btn-primary" href="/crm/plan/">Plan dnia</a></div>
       </div>`;
     el.querySelector(".rem-x").addEventListener("click", () => closeCard(el));
@@ -288,15 +294,20 @@ CRM.initReminders = function initReminders() {
     beep();
     if (fresh.length > MAX_CARDS) {   // dużo naraz (np. po zalogowaniu): jedna zbiorcza karta
       const late = fresh.filter((l) => dueMs(l) < now && l.status !== "new").length;
-      box.appendChild(summaryCard(fresh.length, late));
-      browserNotify("Masz oddzwonienia do zrobienia",
-        late ? `Zaległe: ${late}, razem: ${fresh.length}.` : `Do zrobienia: ${fresh.length}.`, "/crm/plan/");
+      // ile z nich przepisano od innych agentów i od kogo („3 od Jan Kowalski”)
+      const from = {};
+      fresh.filter((l) => l.transferred_from).forEach((l) => { from[l.transferred_from] = (from[l.transferred_from] || 0) + 1; });
+      const moved = Object.entries(from).map(([n, c]) => `${c} od ${esc(n)}`).join(", ");
+      box.appendChild(summaryCard(fresh.length, late, moved));
+      browserNotify(moved ? "Dostałeś przepisane leady" : "Masz oddzwonienia do zrobienia",
+        (late ? `Zaległe: ${late}, razem: ${fresh.length}.` : `Do zrobienia: ${fresh.length}.`) + (moved ? ` Przepisane: ${moved.replace(/&[^;]+;/g, "")}.` : ""), "/crm/plan/");
       return;
     }
     fresh.forEach((l) => {
       box.appendChild(leadCard(l, now));
       const late = dueMs(l) < now;
-      browserNotify(l.status === "new" ? (late ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie",
+      const kind = l.status === "new" ? (late ? "Czas na ponowną próbę" : "Zaraz ponowna próba") : late ? "Zaległe oddzwonienie" : "Zaraz oddzwonienie";
+      browserNotify(l.transferred_from ? `Przepisany od ${l.transferred_from} · ${kind}` : kind,
         who(l) + " – " + relText(l.next_contact_at, now), "/crm/queue/?lead=" + l.id, "leadcrm-" + keyOf(l));
     });
   }
@@ -315,11 +326,11 @@ CRM.initReminders = function initReminders() {
     const active = cache.filter((l) => dueMs(l) <= now + c.lead * 1000);   // zaległe + w oknie „przed terminem”
     paintCount(active.length);   // licznik zostaje także przy wyłączonych przypomnieniach
 
-    if (!c.enabled) { box.querySelectorAll(".reminder").forEach(closeCard); return; }
+    if (!c.enabled) { box.querySelectorAll(".reminder:not(.sample)").forEach(closeCard); return; }
 
     const byId = new Map(active.map((l) => [String(l.id), l]));   // załatwione leady znikają z kart
     box.querySelectorAll(".reminder[data-lead]").forEach((el) => {
-      if (!el.dataset.lead) return;
+      if (!el.dataset.lead || el.classList.contains("sample")) return;   // przykład z ustawień zamyka sam agent (×)
       const l = byId.get(el.dataset.lead);
       if (!l || el.dataset.iso !== l.next_contact_at) closeCard(el);   // załatwiony albo termin zmieniony
     });
@@ -363,10 +374,10 @@ CRM.initReminders = function initReminders() {
     el.classList.add("sample");
     el.querySelectorAll(".rem-actions a").forEach((a) => { a.removeAttribute("href"); a.addEventListener("click", () => closeCard(el)); });
     el.querySelector(".rem-kind").textContent = "Przykład: zaraz oddzwonienie";
+    box.querySelectorAll(".reminder.sample").forEach(closeCard);   // drugi klik nie dokłada kolejnej karty
     box.prepend(el);
     if (cfg().sound) beep();
     const tick = setInterval(() => { if (!el.isConnected) { clearInterval(tick); return; } paintCard(el, Date.now()); el.querySelector(".rem-kind").textContent = "Przykład: zaraz oddzwonienie"; }, 1000);
-    setTimeout(() => closeCard(el), 15000);
   }
 
   /* ---------- okno ustawień ---------- */
