@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *.sqlite3
 .env
+.env.*
+*.env
+# klucze Google pobrane z Google Cloud (Download JSON) – nigdy do repo
+client_secret*.json
+*credentials*.json
 .idea/
 .vscode/
 .claude/

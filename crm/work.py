@@ -30,6 +30,7 @@ from .models import (
     Lead,
     Offer,
     OfferConfig,
+    RecordingConfig,
     SaleItem,
 )
 from .services import (
@@ -772,6 +773,9 @@ def dialer_status(user):
         "paired": device is not None,
         "online": online,
         "device_name": device.name if device else "",
+        # nagrywanie rozmów: włączone przez managera i czy telefon agenta umie nagrywać (None = stara aplikacja)
+        "recording": RecordingConfig.get().active,
+        "can_record": device.can_record if device else None,
         "call": None if call is None else {
             "id": call.pk, "lead": call.lead_id, "phone": call.phone, "state": call.state,
             "answered": call.answered, "duration_seconds": call.duration_seconds,

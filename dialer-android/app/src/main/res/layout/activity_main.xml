@@ -109,6 +109,55 @@
                 android:text="Jak to działa: klikasz „Zadzwoń” w CRM na komputerze, telefon sam wybiera numer. Po rozmowie CRM dostaje informację, czy klient odebrał i ile trwała rozmowa. Aplikacja może być w tle – ważne, żeby było widać powiadomienie „Dialer gotowy do pracy”."
                 android:textColor="#1D1B24" />
 
+            <LinearLayout
+                android:id="@+id/rec_box"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:background="#FFFFFF"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Nagrywanie rozmów"
+                    android:textColor="#1D1B24"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/rec_state"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="#1D1B24" />
+
+                <Button
+                    android:id="@+id/rec_enable"
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:layout_marginTop="12dp"
+                    android:backgroundTint="#2456D6"
+                    android:text="Włącz nagrywanie rozmów"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:id="@+id/rec_help"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textColor="#6C6878" />
+
+                <Button
+                    android:id="@+id/rec_appinfo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Otwórz informacje o aplikacji" />
+            </LinearLayout>
+
             <Button
                 android:id="@+id/unpair"
                 android:layout_width="wrap_content"

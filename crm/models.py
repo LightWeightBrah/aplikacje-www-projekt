@@ -638,6 +638,10 @@ class DialerDevice(models.Model):
     token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(null=True, blank=True)
+    # Czy na telefonie jest włączone nagrywanie rozmów (usługa ułatwień dostępu dialera + zgoda na mikrofon);
+    # None = starsza aplikacja, która tego nie zgłasza
+    can_record = models.BooleanField(null=True, blank=True)
+    app_version = models.CharField(max_length=20, blank=True)
 
     class Meta:
         verbose_name = "Telefon z dialerem"
@@ -679,6 +683,67 @@ class CallRequest(models.Model):
         verbose_name = "Połączenie z dialera"
         verbose_name_plural = "Połączenia z dialera"
         ordering = ["-created_at"]
+
+
+class RecordingConfig(models.Model):
+    """Nagrywanie rozmów (jeden wiersz, zmienia manager). Domyślnie wyłączone.
+
+    Nagrania nagrywa aplikacja dialera na telefonie agenta, a CRM odkłada je na Dysk Google
+    konta połączonego przez managera (zakres drive.file: CRM widzi tylko pliki, które sam wgrał)."""
+
+    enabled = models.BooleanField("nagrywanie włączone", default=False)
+    retention_days = models.PositiveIntegerField("po ilu dniach usuwać nagrania", default=90)
+    google_refresh_token = models.TextField(blank=True)
+    google_email = models.CharField("połączone konto Google", max_length=254, blank=True)
+    folder_id = models.CharField(max_length=128, blank=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Ustawienia nagrywania"
+        verbose_name_plural = "Ustawienia nagrywania"
+
+    def __str__(self):
+        return "Ustawienia nagrywania"
+
+    @classmethod
+    def get(cls):
+        return cls.objects.first() or cls.objects.create()
+
+    @property
+    def drive_connected(self):
+        return bool(self.google_refresh_token)
+
+    @property
+    def active(self):
+        """Telefony nagrywają tylko, gdy manager włączył nagrywanie i podłączył Dysk Google."""
+        return self.enabled and self.drive_connected
+
+
+class CallRecording(models.Model):
+    """Nagranie jednej rozmowy z dialera, plik leży na Dysku Google."""
+
+    call = models.OneToOneField(CallRequest, on_delete=models.CASCADE, related_name="recording")
+    lead = models.ForeignKey(Lead, on_delete=models.SET_NULL, null=True, blank=True, related_name="recordings")
+    agent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="recordings")
+    phone = models.CharField(max_length=30)
+    started_at = models.DateTimeField("początek rozmowy")
+    duration_seconds = models.PositiveIntegerField(default=0)
+    size_bytes = models.PositiveIntegerField(default=0)
+    content_type = models.CharField(max_length=60, default="audio/ogg")
+    drive_file_id = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Nagranie rozmowy"
+        verbose_name_plural = "Nagrania rozmów"
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"Nagranie {self.phone} {self.started_at:%d.%m.%Y %H:%M}"
 
 
 class SmsReminder(models.Model):

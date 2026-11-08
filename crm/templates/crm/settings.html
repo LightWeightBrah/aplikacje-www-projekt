@@ -85,6 +85,36 @@
         </form>
     </section>
 
+    <section class="card" id="rec-card">
+        <h2>Nagrywanie rozmów</h2>
+        <p class="card-desc">Opcjonalne, domyślnie wyłączone – bez tego CRM działa normalnie. Po włączeniu aplikacja dialera nagrywa rozmowy z CRM na telefonie agenta, a CRM odkłada nagrania na Dysk Google (folder „Solid CRM – nagrania”, w nim osobny folder każdego agenta, a w nim miesiące). Słuchać może tylko manager: Zespół → kliknij leada → „Nagrania rozmów”.</p>
+        <p class="form-error" id="rec-error" hidden></p>
+        <div class="rec-steps">
+            <div class="rec-step">
+                <h3>1. Dysk Google</h3>
+                <p class="small" id="rec-drive-state">Ładowanie…</p>
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="rec-connect" hidden>Połącz z Dyskiem Google</button>
+                    <button type="button" class="btn btn-secondary" id="rec-disconnect" hidden>Odłącz Dysk Google</button>
+                </div>
+            </div>
+            <div class="rec-step">
+                <h3>2. Włącz nagrywanie</h3>
+                <label class="check"><input type="checkbox" id="rec-enabled"> <span><strong>Nagrywaj rozmowy z dialera</strong><small class="muted" id="rec-enabled-hint">Telefony zaczną nagrywać, gdy Dysk Google będzie połączony.</small></span></label>
+                <div class="field"><label for="rec-days">Usuwaj nagrania starsze niż</label>
+                    <div class="rule-input"><input id="rec-days" type="number" class="select" min="7" max="3650" step="1" inputmode="numeric"> <span class="muted">dni</span></div>
+                    <small class="muted">CRM sam usuwa stare nagrania z Dysku.</small></div>
+                <div class="actions"><button type="button" class="btn btn-primary" id="rec-save">Zapisz nagrywanie</button><span class="muted small" id="rec-msg" aria-live="polite"></span></div>
+            </div>
+            <div class="rec-step">
+                <h3>3. Telefony agentów</h3>
+                <p class="small muted">Na każdym telefonie raz: w aplikacji Solid Dialer (wersja 1.2) kliknąć „Włącz nagrywanie rozmów” i postępować według wskazówek.</p>
+                <ul class="rec-phones" id="rec-phones"></ul>
+            </div>
+        </div>
+        <p class="muted small" id="rec-meta"></p>
+    </section>
+
     <section class="card" id="ann-card">
         <h2>Solid info – informacje dla zespołu</h2>
         <p class="card-desc">Widzą je wszyscy agenci w prawym panelu przy dzwonieniu: aktualne promocje, argumenty, cele dnia.</p>
@@ -112,7 +142,8 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=113"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=113"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=113"></script>
-<script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();</script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=118"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=118"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=118"></script>
+<script src="{% static 'crm/js/recordings.js' %}?v=118"></script>
+<script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();CRM.initRecordings();</script>{% endblock %}

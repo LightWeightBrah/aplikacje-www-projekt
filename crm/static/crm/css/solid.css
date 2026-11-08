@@ -604,6 +604,19 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 .sms-test{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.sms-test h3{margin:0 0 .2rem}
 .sms-test-row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-top:.5rem}.sms-test-row input{width:13rem}.sms-test-row select{width:auto}
 .ok-text{color:var(--ok,#2fa36b)}
+/* Nagrywanie rozmów: karta w Ustawieniach i odsłuch w szufladzie leada */
+.rec-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin:1rem 0 .6rem}
+.rec-step{display:flex;flex-direction:column;gap:.6rem;padding:.9rem 1rem;border:1px solid var(--line);border-radius:12px}
+.rec-step h3{margin:0}.rec-step .actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+#rec-card .rule-input{display:flex;align-items:center;gap:.5rem}#rec-card .rule-input input{width:6.5rem}
+.rec-phones{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.4rem;font-size:.92rem}
+.rec-ok{color:var(--ok)}.rec-bad{color:var(--late)}
+.btn.btn-sm{padding:.3rem .7rem;font-size:.85rem;min-height:0}
+.rec-list li{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
+.rec-list time{margin-left:auto}
+.rec-player{flex-basis:100%}.rec-player audio{width:100%;height:2.4rem}
+.privacy-card{max-width:46rem;width:100%;text-align:left}.privacy-card h2{font-size:1.05rem;margin:1.2rem 0 .3rem}
+.privacy-card p{line-height:1.55;margin:.35rem 0}
 .sms-preview{margin-top:.9rem;padding:.7rem .9rem;border-radius:12px;background:var(--surface-2,rgba(127,127,127,.08))}
 .sms-preview p{margin:.35rem 0;white-space:pre-wrap}
 /* Układ jak w aplikacji (Gmail, CRM2): górny i dolny pasek stoją na całą szerokość okna, a przewija się

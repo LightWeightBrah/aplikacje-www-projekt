@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- SMS z przypomnieniem przed umówionym telefonem, z karty SIM telefonu (jak zwykły SMS) -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- nagrywanie rozmów (opcjonalne, włącza manager w CRM i agent w aplikacji) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- praca w tle (stałe powiadomienie „Dialer gotowy do pracy”) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -41,6 +43,20 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Wybieranie numerów zleconych z firmowego CRM i odsyłanie czasu rozmowy" />
+        </service>
+
+        <!-- Usługa ułatwień dostępu: tylko po to, żeby Android pozwolił nagrywać w trakcie rozmowy (nic nie czyta z ekranu) -->
+        <service
+            android:name=".RecorderService"
+            android:exported="true"
+            android:label="@string/recorder_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/recorder_service" />
         </service>
     </application>
 </manifest>

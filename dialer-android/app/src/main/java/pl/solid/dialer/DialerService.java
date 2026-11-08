@@ -26,6 +26,7 @@ import android.telephony.SubscriptionManager;
 
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -84,7 +85,10 @@ public class DialerService extends Service {
             try {
                 // ?sms=1 tylko ze zgodą na SMS-y: wtedy CRM może zlecić SMS z przypomnieniem
                 boolean canSms = checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
-                Api.Result r = Api.request("GET", base + "/api/dialer/poll/" + (canSms ? "?sms=1" : ""), token, null);
+                // rec=1/0: czy da się tu nagrywać rozmowy (CRM pokazuje to managerowi), v = wersja aplikacji
+                String query = "?rec=" + (CallRecorder.ready(this) ? "1" : "0") + "&v=" + BuildConfig.VERSION_NAME
+                        + (canSms ? "&sms=1" : "");
+                Api.Result r = Api.request("GET", base + "/api/dialer/poll/" + query, token, null);
                 if (r.status == 200) {
                     errors = 0;
                     if ("sms".equals(r.json.optString("type"))) handleSms(base, token, r.json);
@@ -92,6 +96,8 @@ public class DialerService extends Service {
                 } else if (r.status == 204) {
                     errors = 0;
                     setState("Dialer gotowy do pracy");
+                    // nagrania, których nie udało się wysłać (np. brak internetu), próbujemy co minutę
+                    if (System.currentTimeMillis() - lastUploadTry > 60000) uploadPending(base, token);
                 } else if (r.status == 401) {
                     setState("Telefon odłączony od CRM – sparuj go ponownie");
                     running = false;
@@ -124,20 +130,76 @@ public class DialerService extends Service {
         }
         TelecomManager tm = (TelecomManager) getSystemService(TELECOM_SERVICE);
         tm.placeCall(Uri.fromParts("tel", phone, null), new Bundle());
+        // Nagrywanie (gdy manager włączył je w CRM, a na telefonie jest włączone): od wybrania numeru do końca rozmowy
+        boolean recording = false;
+        if (job.optBoolean("record", false) && CallRecorder.ready(this)) {
+            Thread.sleep(800);   // system zaczyna połączenie
+            recording = CallRecorder.start(getApplicationContext(), id);
+            if (recording) setState("Dzwonię (nagrywam): " + (name.isEmpty() ? phone : name));
+        }
 
         // Rozmowa kończy się wpisem w rejestrze połączeń: czekamy na niego (maks. 30 min)
         long deadline = placedAt + 30 * 60 * 1000L;
-        while (running && System.currentTimeMillis() < deadline) {
-            Thread.sleep(2000);
-            long[] entry = findCall(placedAt);
-            if (entry != null) {
-                long seconds = entry[0];
-                finish(base, token, id, seconds > 0, seconds);
-                setState(seconds > 0 ? "Rozmowa: " + (seconds / 60) + " min " + (seconds % 60) + " s" : "Nie odebrał");
+        try {
+            while (running && System.currentTimeMillis() < deadline) {
+                Thread.sleep(2000);
+                long[] entry = findCall(placedAt);
+                if (entry != null) {
+                    long seconds = entry[0];
+                    if (recording) {
+                        File part = CallRecorder.stop();
+                        recording = false;
+                        if (seconds > 0) CallRecorder.finish(part, id, seconds);
+                        else if (part != null) part.delete();   // nie odebrał – nagranie sygnału nikomu niepotrzebne
+                    }
+                    finish(base, token, id, seconds > 0, seconds);
+                    setState(seconds > 0 ? "Rozmowa: " + (seconds / 60) + " min " + (seconds % 60) + " s" : "Nie odebrał");
+                    if (seconds > 0) uploadPending(base, token);
+                    return;
+                }
+            }
+            finish(base, token, id, false, 0);
+        } finally {
+            if (recording) {
+                File part = CallRecorder.stop();
+                if (part != null) part.delete();
+            }
+        }
+    }
+
+    private long lastUploadTry = 0;
+
+    /**
+     * Wysyła do CRM gotowe nagrania z pamięci telefonu (recordings/{id}_{sekundy}.ogg). Plik znika po przyjęciu
+     * albo gdy CRM go nie chce (np. nagrywanie wyłączone); przy braku sieci lub błędzie Dysku czeka na kolejną próbę.
+     * Nagrania starsze niż 7 dni usuwamy bez wysyłania.
+     */
+    private void uploadPending(String base, String token) {
+        lastUploadTry = System.currentTimeMillis();
+        File[] files = CallRecorder.dir(this).listFiles();
+        if (files == null) return;
+        long now = System.currentTimeMillis();
+        for (File f : files) {
+            String n = f.getName();
+            if (n.endsWith(".part")) {
+                if (now - f.lastModified() > 2 * 3600 * 1000L) f.delete();   // porzucone (np. telefon się wyłączył)
+                continue;
+            }
+            if (now - f.lastModified() > 7L * 24 * 3600 * 1000L) { f.delete(); continue; }
+            int dot = n.indexOf('.'), us = n.indexOf('_');
+            if (us < 1 || dot < us) { f.delete(); continue; }
+            String callId = n.substring(0, us), seconds = n.substring(us + 1, dot);
+            try {
+                setState("Wysyłam nagranie rozmowy do CRM…");
+                int status = Api.upload(base + "/api/dialer/calls/" + callId + "/recording/?duration=" + seconds,
+                        token, f, CallRecorder.contentType(f));
+                if (status < 300 || (status >= 400 && status < 500 && status != 408 && status != 429)) f.delete();
+                setState(status < 300 ? "Nagranie zapisane w CRM" : "Dialer gotowy do pracy");
+            } catch (Exception e) {
+                setState("Nagranie czeka na internet – wyślę je później");
                 return;
             }
         }
-        finish(base, token, id, false, 0);
     }
 
     /**

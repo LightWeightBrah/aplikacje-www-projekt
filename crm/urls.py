@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import device_api, rules_api, users_api, views, work_api
+from . import device_api, recordings_api, rules_api, users_api, views, work_api
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -49,5 +49,12 @@ urlpatterns = [
     path("dialer/poll/", work_api.DialerPollView.as_view(), name="dialer-poll"),
     path("dialer/calls/<int:pk>/finish/", work_api.DialerFinishView.as_view(), name="dialer-finish"),
     path("dialer/sms/<int:pk>/done/", work_api.DialerSmsDoneView.as_view(), name="dialer-sms-done"),
+    path("dialer/calls/<int:pk>/recording/", recordings_api.DialerRecordingView.as_view(), name="dialer-recording"),
+    # nagrywanie rozmów (opcjonalne, manager)
+    path("recordings/", recordings_api.RecordingListView.as_view(), name="recordings"),
+    path("recordings/<int:pk>/audio/", recordings_api.RecordingAudioView.as_view(), name="recording-audio"),
+    path("recordings/settings/", recordings_api.RecordingSettingsView.as_view(), name="recording-settings"),
+    path("recordings/google/connect/", recordings_api.GoogleConnectView.as_view(), name="recording-google-connect"),
+    path("recordings/google/disconnect/", recordings_api.GoogleDisconnectView.as_view(), name="recording-google-disconnect"),
     *router.urls,
 ]

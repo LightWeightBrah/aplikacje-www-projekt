@@ -40,6 +40,27 @@ final class Api {
         return s;
     }
 
+    /** Wysyła plik nagrania jako surową treść zapytania (POST). Zwraca kod HTTP. */
+    static int upload(String url, String token, java.io.File file, String contentType) throws IOException {
+        HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
+        con.setRequestMethod("POST");
+        con.setConnectTimeout(15000);
+        con.setReadTimeout(120000);   // CRM w tym czasie wgrywa plik na Dysk Google
+        con.setDoOutput(true);
+        con.setFixedLengthStreamingMode(file.length());
+        con.setRequestProperty("Content-Type", contentType);
+        con.setRequestProperty("Accept", "application/json");
+        con.setRequestProperty("X-Dialer-Token", token);
+        try (OutputStream out = con.getOutputStream(); java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            byte[] chunk = new byte[16384];
+            int n;
+            while ((n = in.read(chunk)) > 0) out.write(chunk, 0, n);
+        }
+        int status = con.getResponseCode();
+        con.disconnect();
+        return status;
+    }
+
     static Result request(String method, String url, String token, JSONObject body) throws IOException {
         HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
         con.setRequestMethod(method);

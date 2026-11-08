@@ -8,6 +8,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.net.Uri;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -26,6 +28,8 @@ public class MainActivity extends Activity {
     private TextView status, info;
     private Button pairBtn, toggleBtn, unpairBtn;
     private LinearLayout pairBox, readyBox;
+    private TextView recState, recHelp;
+    private Button recEnable, recAppInfo;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -49,9 +53,63 @@ public class MainActivity extends Activity {
             Api.prefs(this).edit().remove("token").apply();
             refresh();
         });
+        recState = findViewById(R.id.rec_state);
+        recHelp = findViewById(R.id.rec_help);
+        recEnable = findViewById(R.id.rec_enable);
+        recAppInfo = findViewById(R.id.rec_appinfo);
+        recEnable.setOnClickListener(v -> enableRecording());
+        recAppInfo.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", getPackageName(), null))));
         askPermissions();
         refresh();
         ui.postDelayed(this::tickStatus, 1000);
+    }
+
+    /**
+     * Nagrywanie rozmów: najpierw zgoda na mikrofon, potem ekran ułatwień dostępu, gdzie agent włącza
+     * „Solid Dialer – nagrywanie rozmów”. Na Androidzie 13+ aplikacja spoza Sklepu Play ma ten przełącznik
+     * zablokowany, dopóki w „Informacjach o aplikacji” (⋮) nie wybierze się „Zezwól na ustawienia z ograniczeniami”.
+     */
+    private void enableRecording() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
+            return;
+        }
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == 2 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        }
+        refresh();
+    }
+
+    private void refreshRecording() {
+        boolean mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        boolean service = RecorderService.enabled(this);
+        if (mic && service) {
+            recState.setText("✓ Włączone na tym telefonie. Rozmowy są nagrywane tylko wtedy, gdy manager włączył nagrywanie w CRM.");
+            recEnable.setVisibility(View.GONE);
+            recAppInfo.setVisibility(View.GONE);
+            recHelp.setText("Jeśli głos klienta w nagraniach jest cichy, rozmawiaj na głośniku albo na słuchawkach.");
+            return;
+        }
+        recEnable.setVisibility(View.VISIBLE);
+        recAppInfo.setVisibility(service ? View.GONE : View.VISIBLE);
+        recState.setText(mic ? "Jeszcze jeden krok: włącz usługę „Solid Dialer – nagrywanie rozmów”."
+                : "Wyłączone. Potrzebne tylko wtedy, gdy manager włączył nagrywanie rozmów w CRM.");
+        recEnable.setText(mic ? "Otwórz ułatwienia dostępu" : "Włącz nagrywanie rozmów");
+        recHelp.setText("Jak włączyć (raz):\n"
+                + "1. Kliknij przycisk wyżej i zgódź się na mikrofon.\n"
+                + "2. Na liście ułatwień dostępu wejdź w „Zainstalowane aplikacje” (albo „Pobrane usługi”) → "
+                + "„Solid Dialer – nagrywanie rozmów” → włącz.\n"
+                + "3. Jeśli przełącznik jest szary albo telefon pisze „Ustawienie z ograniczeniami”: kliknij "
+                + "„Otwórz informacje o aplikacji”, w prawym górnym rogu ⋮ → „Zezwól na ustawienia z ograniczeniami”, "
+                + "i wróć do kroku 2.\n"
+                + "Usługa nic nie czyta z ekranu – Android wymaga jej tylko, żeby można było nagrywać rozmowę.");
     }
 
     private void tickStatus() {
@@ -67,7 +125,9 @@ public class MainActivity extends Activity {
         if (paired) {
             status.setText(DialerService.running ? DialerService.lastState : "Dialer zatrzymany");
             toggleBtn.setText(DialerService.running ? "Zatrzymaj dialer" : "Uruchom dialer");
-            info.setText("Połączono z: " + Api.server(this) + "\nKonto: " + Api.prefs(this).getString("user", ""));
+            info.setText("Połączono z: " + Api.server(this) + "\nKonto: " + Api.prefs(this).getString("user", "")
+                    + "\nWersja aplikacji: " + BuildConfig.VERSION_NAME);
+            refreshRecording();
         }
     }
 

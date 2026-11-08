@@ -24,6 +24,11 @@ def login_page(request):
     return render(request, "crm/login.html", {"show_demo": not settings.IS_SERVER})
 
 
+def privacy_page(request):
+    """Polityka prywatności (publiczna, bez logowania) – Google wymaga jej adresu do połączenia Dysku."""
+    return render(request, "crm/privacy.html")
+
+
 def activate_page(request):
     """Ekran „To urządzenie nie ma dostępu” z polem na kod aktywacji (crm/device_lock.py)."""
     from django.conf import settings

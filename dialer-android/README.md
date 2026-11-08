@@ -26,9 +26,17 @@ Na serwerze docelowo używamy `https://`.
   `{type: "sms", id, phone, text, name}` albo 204 (bez `sms=1` tylko połączenia)
 - `POST /api/dialer/calls/{id}/finish/` `{answered, duration_seconds}`
 - `POST /api/dialer/sms/{id}/done/` `{ok, error}`
+- `POST /api/dialer/calls/{id}/recording/?duration=SEK` – surowy plik nagrania (`audio/ogg` albo `audio/mp4`)
+- poll dostaje `?rec=1|0&v=WERSJA` (czy da się nagrywać, wersja aplikacji), a zadanie `call` ma pole `record`
 
 ## SMS z przypomnieniem
 Przed umówionym telefonem aplikacja sama wysyła klientowi SMS z przypomnieniem (ile wcześniej i treść ustawia
 manager w CRM: Ustawienia → „SMS z przypomnieniem”). SMS idzie z karty SIM telefonu, tak jakbyś napisał go ręcznie
 (widać go potem w „Wysłanych” w Wiadomościach), więc kosztuje tyle co zwykły SMS w abonamencie, bez żadnej bramki.
 Działa tylko, gdy telefon jest włączony i dialer pracuje. Przy pierwszym uruchomieniu nowej wersji zgódź się na „SMS-y”.
+
+## Nagrywanie rozmów (1.2, opcjonalne)
+Gdy manager włączy nagrywanie w CRM (i połączy Dysk Google), aplikacja nagrywa rozmowy wybrane z CRM, a po rozmowie
+wysyła nagranie do CRM. Na telefonie raz: „Włącz nagrywanie rozmów” → zgoda na mikrofon → w ułatwieniach dostępu włączyć
+„Solid Dialer – nagrywanie rozmów” (Android 13+: najpierw w informacjach o aplikacji ⋮ → „Zezwól na ustawienia z ograniczeniami”).
+Pełny opis i podłączenie Dysku Google: `docs/NAGRYWANIE.md`.

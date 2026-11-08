@@ -261,7 +261,9 @@ CRM.initManager = function initManager() {
       </div>
       ${closed ? `<p class="hint">Zamkniętego leada nie można przepisać.</p>` : ""}
       <h3>Historia kontaktów</h3><ul class="history">${acts}</ul>
+      <div id="d-recordings" hidden></div>
       <h3>Historia opiekunów</h3><ul class="history">${moves}</ul>`;
+    if (CRM.drawRecordings) CRM.drawRecordings(l.id, $("d-recordings"));
     const btn = $("d-assign");
     if (btn) btn.addEventListener("click", async () => {
       const v = $("d-agent").value;

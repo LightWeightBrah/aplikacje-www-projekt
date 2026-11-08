@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from .models import DialerDevice, Lead, Offer, OfferConfig, Product
+from .models import DialerDevice, Lead, Offer, OfferConfig, Product, RecordingConfig
 from .permissions import IsAgentOrManager, IsManager
 from .roles import is_manager, visible_to
 from .serializers import LeadDetailSerializer, LeadSerializer
@@ -439,14 +439,23 @@ class DialerPollView(DialerDeviceAuthMixin, APIView):
     tylko połączenia, więc nigdy nie wezmą SMS-a za numer do wybrania."""
 
     @extend_schema(
-        parameters=[OpenApiParameter("sms", OpenApiTypes.INT, description="1 = telefon umie wysyłać SMS-y z przypomnieniem")],
+        parameters=[OpenApiParameter("sms", OpenApiTypes.INT, description="1 = telefon umie wysyłać SMS-y z przypomnieniem"),
+                    OpenApiParameter("rec", OpenApiTypes.INT, description="1 = na telefonie włączone nagrywanie rozmów, 0 = wyłączone"),
+                    OpenApiParameter("v", OpenApiTypes.STR, description="wersja aplikacji dialera")],
         responses=OpenApiTypes.OBJECT,
     )
     def get(self, request):
-        call = poll_call(request.auth)
+        device = request.auth
+        # nowsze aplikacje (1.2+) mówią, czy na telefonie da się nagrywać rozmowy (rec=1/0) i swoją wersję (v=)
+        rec, version = request.query_params.get("rec"), request.query_params.get("v", "")[:20]
+        if rec in ("0", "1") and (device.can_record != (rec == "1") or device.app_version != version):
+            device.can_record, device.app_version = rec == "1", version
+            DialerDevice.objects.filter(pk=device.pk).update(can_record=device.can_record, app_version=version)
+        call = poll_call(device)
         if call is not None:
             lead = call.lead
-            return Response({"type": "call", "id": call.pk, "phone": call.phone, "name": lead.display_name if lead else ""})
+            return Response({"type": "call", "id": call.pk, "phone": call.phone, "name": lead.display_name if lead else "",
+                             "record": RecordingConfig.get().active})
         if request.query_params.get("sms") == "1":
             sms = next_sms(request.auth)
             if sms is not None:

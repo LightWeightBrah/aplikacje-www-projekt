@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import web_views
+from . import recordings_api, web_views
 
 app_name = "crm"
 
@@ -20,4 +20,6 @@ urlpatterns = [
     path("sw.js", web_views.service_worker, name="sw"),
     path("dialer.apk", web_views.dialer_apk, name="dialer-apk"),
     path("activate/", web_views.activate_page, name="activate"),
+    path("privacy/", web_views.privacy_page, name="privacy"),
+    path("recordings/google/callback/", recordings_api.google_callback, name="recording-google-callback"),
 ]

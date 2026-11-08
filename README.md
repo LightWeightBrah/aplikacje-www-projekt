@@ -41,6 +41,7 @@ Solid CRM jest dla zespołu, który dzwoni do firm (np. z baz CEIDG i KRS) i spr
 | `AgentProfile` | ustawienia konta: podgląd rankingu, ukrycie managera w rankingu, wymuszona zmiana hasła, zdjęcie |
 | `TeamRules` | zasady pracy zespołu (limity prób, kroki ponownych prób, dni i godziny pracy, losowanie firm) |
 | `DialerDevice`, `DialerPairing`, `CallRequest` | sparowane telefony, kody parowania i połączenia z dialera (czy odebrał, ile trwało) |
+| `RecordingConfig`, `CallRecording` | opcjonalne nagrywanie rozmów: ustawienia i połączony Dysk Google; nagrania (plik leży na Dysku Google) |
 | `WorkDay` | obecność: przyjście, ostatni ruch, wyjście, przerwy |
 | `Announcement` | „Solid info”: informacje managera dla zespołu (promocje, argumenty, cele) |
 | `AccessDevice`, `ActivationCode` | aktywowane urządzenia z dostępem do CRM i jednorazowe kody aktywacji |
@@ -220,6 +221,10 @@ Solid Dialer (telefon agenta):
 | `GET /api/dialer/poll/` | telefon pyta, czy ma coś wybrać (204 = nic) |
 | `POST /api/dialer/calls/{id}/finish/` | telefon odsyła wynik z rejestru połączeń: `answered` i `duration_seconds` |
 | `GET /api/dialer/status/`, `DELETE` | stan telefonu i ostatniego połączenia; odłączenie telefonów |
+| `POST /api/dialer/calls/{id}/recording/` | telefon wysyła nagranie rozmowy (gdy nagrywanie jest włączone; opis: `docs/NAGRYWANIE.md`) |
+| `GET/PATCH /api/recordings/settings/` | manager: nagrywanie wł./wył., po ilu dniach usuwać, stan Dysku Google i telefonów |
+| `POST /api/recordings/google/connect/`, `.../disconnect/` | manager: łączenie i odłączanie Dysku Google |
+| `GET /api/recordings/?lead=`, `GET /api/recordings/{id}/audio/` | manager: nagrania leada i odsłuch |
 
 Tylko manager (agent dostaje 403):
 

@@ -240,3 +240,10 @@ if _os.environ.get("EMAIL_HOST"):
     }
 DEFAULT_FROM_EMAIL = _os.environ.get("DEFAULT_FROM_EMAIL", _os.environ.get("EMAIL_HOST_USER") or "crm@localhost")
 OFFER_EMAIL_ENABLED = bool(_os.environ.get("EMAIL_HOST"))
+
+# Nagrywanie rozmów na Dysk Google (opcjonalne, domyślnie wyłączone). Dane klienta OAuth z Google Cloud
+# (instrukcja: docs/NAGRYWANIE.md) trzymamy w .env. Bez nich CRM działa normalnie, tylko nie nagrywa.
+GOOGLE_CLIENT_ID = _os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = _os.environ.get("GOOGLE_CLIENT_SECRET", "")
+# Największe nagranie przyjmowane z telefonu (MB); ok. 0,12 MB na minutę, więc 40 MB to ponad 5 godzin
+RECORDING_MAX_MB = int(_os.environ.get("RECORDING_MAX_MB", "40"))
