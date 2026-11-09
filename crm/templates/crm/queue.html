@@ -33,6 +33,7 @@
     <button type="button" id="db-dial">☎ Zadzwoń na numer</button>
     <span class="db-dot" id="db-dot"></span><span class="db-state" id="db-state">Telefon: sprawdzam…</span>
     <span class="db-timer" id="db-timer" hidden>00:00</span>
+    <button type="button" id="db-hangup" class="db-hangup" hidden title="Kończy połączenie na telefonie (np. gdy odebrała poczta głosowa)">✕ Rozłącz</button>
     <button type="button" id="db-setup">Połącz telefon</button>
     <span class="db-min" id="db-min"></span>
 </footer>
@@ -88,5 +89,5 @@
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
 {% block scripts %}{{ tv_channels|json_script:"tv-channels" }}
-<script src="{% static 'crm/js/when.js' %}?v=141"></script>
-<script src="{% static 'crm/js/queue.js' %}?v=141"></script>{% endblock %}
+<script src="{% static 'crm/js/when.js' %}?v=143"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=143"></script>{% endblock %}

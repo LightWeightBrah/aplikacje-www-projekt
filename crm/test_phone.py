@@ -189,3 +189,25 @@ class AvailableCardTests(PhoneTestBase):
         self.assertIsNotNone(cards[0]["last_call_at"])
         # SMS o nowej firmie jest dalej w zakładce SMS
         self.assertIn(fresh.pk, [s["lead"] for s in self.api(self.agent1).get("/api/phone/sms/").data["results"]])
+
+
+class PauseAndHangupTests(PhoneTestBase):
+    def test_paused_phone_gets_no_calls_but_stays_paired(self):
+        api = self.api(self.agent1)
+        self.assertTrue(api.patch("/api/dialer/status/", {"paused": True}, format="json").data["paused"])
+        self.assertEqual(api.post("/api/dialer/call/", {"lead": self.lead.pk}, format="json").status_code, 400)
+        st = api.get("/api/dialer/status/").data
+        self.assertEqual((st["paired"], st["online"], st["paused"]), (True, False, True))
+        self.assertFalse(api.get("/api/phone/live/").data["paired"])   # linki tel: zwykłe
+        api.patch("/api/dialer/status/", {"paused": False}, format="json")
+        self.assertEqual(api.post("/api/dialer/call/", {"lead": self.lead.pk}, format="json").status_code, 201)
+
+    def test_hangup_reaches_the_phone(self):
+        api = self.api(self.agent1)
+        self.assertEqual(api.post("/api/dialer/hangup/").status_code, 400)   # nic nie dzwoni
+        call_id = api.post("/api/dialer/call/", {"lead": self.lead.pk}, format="json").data["id"]
+        self.client.get("/api/dialer/poll/", HTTP_X_DIALER_TOKEN=self.device.token)   # telefon wybiera
+        ask = lambda: self.client.get(f"/api/dialer/calls/{call_id}/hangup/", HTTP_X_DIALER_TOKEN=self.device.token).json()
+        self.assertEqual(ask(), {"hangup": False})
+        self.assertEqual(api.post("/api/dialer/hangup/").status_code, 200)
+        self.assertEqual(ask(), {"hangup": True})

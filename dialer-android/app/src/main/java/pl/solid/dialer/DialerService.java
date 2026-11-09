@@ -147,8 +147,11 @@ public class DialerService extends Service {
         // Rozmowa kończy się wpisem w rejestrze połączeń: czekamy na niego (maks. 4 h – długa rozmowa też się liczy)
         long deadline = placedAt + 4 * 60 * 60 * 1000L;
         try {
+            boolean endAsked = false;
             while (running && System.currentTimeMillis() < deadline) {
                 Thread.sleep(2000);
+                // agent kliknął w CRM „Rozłącz” (np. poczta głosowa)
+                if (!endAsked && hangupAsked(base, token, id)) { endAsked = true; endCall(); }
                 long[] entry = findCall(placedAt);
                 if (entry != null) {
                     long seconds = entry[0];
@@ -170,6 +173,31 @@ public class DialerService extends Service {
                 File part = CallRecorder.stop();
                 if (part != null) part.delete();
             }
+        }
+    }
+
+    private boolean hangupAsked(String base, String token, long id) {
+        try {
+            Api.Result r = Api.request("GET", base + "/api/dialer/calls/" + id + "/hangup/", token, null);
+            return r.status == 200 && r.json != null && r.json.optBoolean("hangup", false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Kończy trwające połączenie (Android 9+, zgoda „odbieranie i kończenie połączeń”). */
+    @SuppressWarnings("deprecation")
+    private void endCall() {
+        if (Build.VERSION.SDK_INT < 28 || checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
+            setState("Rozłącz z CRM: brak zgody – otwórz aplikację");
+            return;
+        }
+        try {
+            TelecomManager tm = (TelecomManager) getSystemService(TELECOM_SERVICE);
+            boolean ok = tm.endCall();
+            setState(ok ? "Rozłączono z CRM" : "Telefon nie pozwolił rozłączyć – rozłącz ręcznie");
+        } catch (Exception e) {
+            setState("Telefon nie pozwolił rozłączyć – rozłącz ręcznie");
         }
     }
 

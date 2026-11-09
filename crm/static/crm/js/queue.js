@@ -300,9 +300,10 @@
   function renderDialbar() {
     $("db-dot").className = "db-dot" + (dialer.online ? " on" : "");
     const call = dialer.call;
-    let state = dialer.online ? "Telefon połączony – gotowy do pracy" : dialer.paired ? "Telefon nie odpowiada (otwórz Solid Dialer)" : "Bez telefonu: „Zadzwoń” otworzy wybieranie numeru";
+    let state = dialer.online ? "Telefon połączony – gotowy do pracy" : dialer.paused ? "Dzwonienie przez telefon wyłączone (menu konta → Telefon)" : dialer.paired ? "Telefon nie odpowiada (otwórz Solid Dialer)" : "Bez telefonu: „Zadzwoń” otworzy wybieranie numeru";
     if (call && call.state === "pending") state = `Czekam na telefon: ${call.phone}`;
-    if (call && call.state === "dialing") state = `Dzwonię: ${call.phone}`;
+    if (call && call.state === "dialing") state = call.hangup ? `Rozłączam: ${call.phone}…` : `Dzwonię: ${call.phone}`;
+    if (call && call.state === "done" && call.hangup) state = `Rozłączono: ${call.phone}`;
     $("db-state").textContent = state;
     // „Moje ustawienia”: kropkę i napis o stanie telefonu można schować (połączony, bez telefonu, nie odpowiada);
     // „Dzwonię…” / „Czekam na telefon” zostają, a przycisk „Połącz telefon” jest zawsze
@@ -312,6 +313,9 @@
     $("db-setup").textContent = dialer.paired ? "Telefon" : "Połącz telefon";
     const dialing = call && (call.state === "dialing" || call.state === "pending");
     $("db-timer").hidden = !dialing;
+    // „Rozłącz” (np. poczta głosowa): telefon z dialerem 1.4+ kończy połączenie
+    const hb = $("db-hangup"); if (hb) { hb.hidden = !(call && call.state === "dialing"); hb.disabled = !!call && !!call.hangup; }
+    const ch = $("hangup-btn"); if (ch) ch.hidden = !(call && call.state === "dialing" && current && call.lead === current.id);
     if (dialing && !callTimer) { callStart = Date.now(); callTimer = setInterval(tick, 1000); tick(); }
     if (!dialing && callTimer) { clearInterval(callTimer); callTimer = null; }
     const t = summary && summary.today;
@@ -331,13 +335,24 @@
       if (!c || c.state === "done" || c.state === "cancelled" || n > 600) {
         clearInterval(dialerPoll);
         if (c && c.state === "done") {
-          setCallState(c.answered ? `Rozmowa zakończona: <b>${Math.floor((c.duration_seconds || 0) / 60)} min ${(c.duration_seconds || 0) % 60} s</b>. Wybierz wynik.` : "Klient <b>nie odebrał</b>. Wybierz „1 Nie odebrał”.");
+          const talk = `${Math.floor((c.duration_seconds || 0) / 60)} min ${(c.duration_seconds || 0) % 60} s`;
+          setCallState(c.hangup ? `<b class="w-ended">✕ Rozłączono</b> (z CRM${c.answered ? `, połączenie trwało ${talk}` : ""}). Wybierz wynik – przy poczcie głosowej „1 Nie odebrał”.`
+            : c.answered ? `Rozmowa zakończona: <b>${talk}</b>. Wybierz wynik.` : "Klient <b>nie odebrał</b>. Wybierz „1 Nie odebrał”.");
+          if (c.hangup) toast("Rozłączono połączenie.");
           if (!c.answered && current && !form && c.lead === current.id) pick("no_answer");
           loadSummary();
         }
       }
     }, 2000);
   }
+  async function hangUp() {
+    const r = await jsonReq("/api/dialer/hangup/", "POST", {});
+    if (r.error) { toast(r.error, true); return; }
+    if (dialer.call) dialer.call.hangup = true;
+    renderDialbar();
+    setCallState("Rozłączam… (telefon zakończy połączenie za 1–2 sekundy)");
+  }
+  document.addEventListener("crm:dialer", loadDialer);
   const setCallState = (html) => { const el = $("call-state"); if (el) el.innerHTML = html; };
   /* Samo dzwonienie po „Zapisz i dalej”: odliczanie nad numerem (ile sekund – „Moje ustawienia”, domyślnie 4),
      „Wstrzymaj” albo Esc przerywa. Tylko z telefonem połączonym z CRM (bez niego „tel:” otwierałby okno systemu bez pytania). */
@@ -374,7 +389,7 @@
     stopAutoDial();
     if (!current) return;
     if (tourDemo) { setCallState("W samouczku nie dzwonimy naprawdę. Normalnie telefon sam wybierze numer."); return; }
-    if (dialer.online || dialer.paired) {
+    if ((dialer.online || dialer.paired) && !dialer.paused) {
       const r = await jsonReq("/api/dialer/call/", "POST", { lead: current.id });
       if (r.error) { toast(r.error, true); return; }
       dialer = { ...dialer, ...r.data }; renderDialbar();
@@ -506,17 +521,18 @@
         <div class="w-call">
           <a class="w-phone" href="tel:${esc(tel)}">${esc(d.phone)}</a>
           <button type="button" class="w-call-btn" id="call-btn"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg><span>Zadzwoń</span> <kbd class="w-kbd">Z</kbd></button>
+          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz</button>
           ${CRM.copyButton(d.phone)}
           ${d.phone_alt ? `<span class="w-alt">drugi numer: <a href="tel:${esc(d.phone_alt.replace(/[^\d+]/g, ""))}">${esc(d.phone_alt)}</a></span>` : ""}
           <span class="w-call-state" id="call-state"></span>
         </div>
-        <div class="w-netbox" id="net-box">${networkHtml(d)}${contractHtml(d)}</div>
         <div class="w-facts" id="facts">${factsHtml(d)}</div>
         ${metaHtml(d)}
         <div class="w-info" id="client-panel">
           <div class="w-info-head"><label for="cl-comment">Stałe informacje o kliencie</label><small class="w-info-by" id="cl-by">${clientByHtml(d)}</small><small class="w-status" id="cl-status"></small></div>
           <textarea id="cl-comment" rows="2" maxlength="2000" placeholder="np. 3 numery w Play, umowa do marca, decyduje właściciel – widzą to wszyscy agenci">${esc(d.client_comment || "")}</textarea>
         </div>
+        <div class="w-netbox" id="net-box">${networkHtml(d)}${contractHtml(d)}</div>
       </div>
       ${closed ? reopenHtml(d) : `<div class="w-panel" id="out-panel">
         <div class="w-out-title"><h2>Jak poszła rozmowa?</h2><small>klawisze 1–8</small></div>
@@ -619,10 +635,10 @@
   function networkHtml(d) {
     const cur = (d.operators || "").split(",").filter(Boolean)[0] || "";
     const closed = CLOSED.includes(d.status);
-    return `<div class="w-net"><span class="w-nb-l">Sieć</span>
-      <div class="w-ops" role="radiogroup" aria-label="W jakiej sieci jest teraz klient">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip${c === "tmobile" ? " tm" : ""}" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}"${closed ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>
+    return `<div class="w-net"><span>W jakiej sieci jest teraz klient? <small class="muted">(zapisuje się od razu, kliknij ponownie, żeby wyczyścić)</small></span>
+      <div class="w-net-row"><div class="w-ops" role="radiogroup" aria-label="W jakiej sieci jest teraz klient">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip${c === "tmobile" ? " tm" : ""}" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}"${closed ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>
       <button type="button" class="w-link" data-uke title="Kopiuje numer i otwiera stronę UKE: wklej numer (prawy przycisk myszy → Wklej) i kliknij „Znajdź”">Sprawdź w UKE ↗</button>
-      ${cur === "tmobile" && !closed ? `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>` : ""}</div>`;
+      ${cur === "tmobile" && !closed ? `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>` : ""}</div></div>`;
   }
   function wireNetwork() {
     document.querySelectorAll("#net-box [data-op]").forEach((b) => b.addEventListener("click", async () => {
@@ -638,7 +654,7 @@
   }
   /* „Już w T-Mobile – pomiń firmę”: jeden klik zamiast szukania „8 Pomiń firmę” i powodu */
   function paintTmHint() {
-    const box = document.querySelector("#net-box .w-net"); if (!box || !current) return;
+    const box = document.querySelector("#net-box .w-net-row"); if (!box || !current) return;
     const old = box.querySelector(".w-tm-hint"); if (old) old.remove();
     if ((current.operators || "").split(",")[0] === "tmobile" && !CLOSED.includes(current.status)) {
       box.insertAdjacentHTML("beforeend", `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>`);
@@ -693,7 +709,7 @@
     for (let y = year; y <= year + 4; y++) years.push(y);
     if (cy && !years.includes(cy)) years.unshift(cy);
     const closed = CLOSED.includes(d.status);
-    return `<div class="w-contract"><span class="w-nb-l">Umowa do</span>
+    return `<div class="w-contract"><span>Do kiedy klient ma umowę? <small class="muted">(zapisuje się od razu)</small></span>
       <div class="w-ct-row"${closed ? ' inert' : ""}>
         <select id="ct-month" class="select" aria-label="Miesiąc końca umowy"><option value="">miesiąc…</option>${MONTHS.map((n, i) => `<option value="${i + 1}"${cm === i + 1 ? " selected" : ""}>${n}</option>`).join("")}</select>
         <select id="ct-year" class="select" aria-label="Rok końca umowy"><option value="">rok…</option>${years.map((y) => `<option value="${y}"${cy === y ? " selected" : ""}>${y}</option>`).join("")}</select>
@@ -1542,6 +1558,7 @@
       return;
     }
     if (t.closest("#call-btn")) { callNow(); return; }
+    if (t.closest("#hangup-btn, #db-hangup")) { hangUp(); return; }
     const out = t.closest("[data-out]"); if (out) { pick(out.dataset.out); return; }
     if (t.closest("#save-next")) { save(true); return; }
     if (t.closest("#save-only")) { save(false); return; }
@@ -1560,7 +1577,7 @@
   /* numer w karcie: przy połączonym telefonie dzwoni przez Solid Dialer (nie przez program do dzwonienia na komputerze) */
   document.addEventListener("click", (e) => {
     const ph = e.target.closest("#lead-pane .w-phone, #lead-pane .w-alt a");
-    if (!ph || !current || !dialer.paired) return;
+    if (!ph || !current || !dialer.paired || dialer.paused) return;
     e.preventDefault();
     if (ph.classList.contains("w-phone")) callNow(); else if (CRM.dialViaPhone) CRM.dialViaPhone(ph.textContent.trim());
   }, true);
@@ -1643,7 +1660,7 @@
     const phone = $("dl-phone").value.trim();
     if ((phone.replace(/\D/g, "")).length < 9) { $("dl-error").textContent = "Numer musi mieć co najmniej 9 cyfr."; $("dl-error").hidden = false; return; }
     $("dial-dialog").close();
-    if (dialer.online || dialer.paired) {
+    if ((dialer.online || dialer.paired) && !dialer.paused) {
       const r = await jsonReq("/api/dialer/call/", "POST", { phone });
       if (r.error) { toast(r.error, true); return; }
       dialer = { ...dialer, ...r.data }; renderDialbar(); pollDialerSoon();

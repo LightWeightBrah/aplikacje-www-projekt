@@ -12,8 +12,8 @@
     <script>try{var z=parseFloat(localStorage.getItem("crm_text_size"));if(z>=0.8&&z<=1.5&&z!==1)document.documentElement.style.setProperty("--ts",z)}catch(e){}</script>
     {# zanim cokolwiek się narysuje: rola (menu bez mignięcia) i ukrycie treści do czasu wczytania danych (app.js zdejmuje klasę; awaryjnie po 4 s) #}
     <script>(function(d){d.classList.add("crm-loading");setTimeout(function(){d.classList.remove("crm-loading","crm-loading-slow")},4000);try{var u=JSON.parse(localStorage.getItem("crm_user")||"null");if(u){d.dataset.role=u.role;if(u.role!=="manager"&&u.can_view_team===false)d.dataset.noteam="1"}}catch(e){}})(document.documentElement)</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=141">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=141">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=143">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=143">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -195,6 +195,7 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
         <h2>Telefon do dzwonienia</h2>
         <p class="muted small" id="dialer-intro">Połącz swój telefon z aplikacją Solid Dialer: wtedy przycisk „Zadzwoń” w CRM sam wybierze numer na telefonie, a CRM policzy minuty rozmów.</p>
         <div class="dialer-state" id="dialer-state">Sprawdzam…</div>
+        <button type="button" class="btn btn-secondary dialer-pause-btn" id="dialer-pause" hidden title="Np. gdy jesteś w domu, a telefon z dialerem został w pracy. Parowanie zostaje.">Wyłącz dzwonienie przez telefon</button>
         <div class="dialer-code" id="dialer-code" hidden></div>
         <ol class="small dialer-steps">
             <li>Na telefonie otwórz <b>{{ request.scheme }}://{{ request.get_host }}/crm/dialer.apk</b> i zainstaluj <b>Solid Dialer</b>. Telefon zapyta o zgodę na instalację spoza Sklepu Play – zezwól.</li>
@@ -245,12 +246,12 @@ całą kartę (sprawdzone u Juliana 09.11.2026 – po wyłączeniu wstępnego wc
    {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
   "eagerness": "moderate"}]}
 </script>
-<script src="{% static 'crm/js/app.js' %}?v=141"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=141"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=141"></script>
-<script src="{% static 'crm/js/search.js' %}?v=141"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=141"></script>
-<script src="{% static 'crm/js/live.js' %}?v=141"></script>
+<script src="{% static 'crm/js/app.js' %}?v=143"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=143"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=143"></script>
+<script src="{% static 'crm/js/search.js' %}?v=143"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=143"></script>
+<script src="{% static 'crm/js/live.js' %}?v=143"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();CRM.initPhone();</script>
 {% block scripts %}{% endblock %}
 </body>

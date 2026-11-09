@@ -397,6 +397,10 @@ const CRM = (() => {
       const st = $("dialer-state");
       if (!d) { st.textContent = "Nie udało się sprawdzić stanu telefonu."; return; }
       st.className = "dialer-state " + (d.online ? "on" : d.paired ? "off" : "none");
+      const pb = $("dialer-pause");
+      pb.hidden = !d.paired; pb.dataset.paused = d.paused ? "1" : "0";
+      pb.textContent = d.paused ? "Włącz dzwonienie przez telefon" : "Wyłącz dzwonienie przez telefon";
+      if (d.paused) { st.textContent = "Dzwonienie przez telefon jest wyłączone (parowanie zostaje). „Zadzwoń” otworzy zwykłe wybieranie numeru na tym komputerze. SMS-y z przypomnieniem dalej idą z telefonu."; $("dialer-unpair").hidden = false; return; }
       st.textContent = d.online ? `Telefon połączony${d.device_name ? ": " + d.device_name : ""}. Przycisk „Zadzwoń” wybierze numer na telefonie.`
         : d.paired ? "Telefon jest sparowany, ale teraz nie odpowiada. Otwórz aplikację Solid Dialer na telefonie."
           : "Telefon nie jest połączony. „Zadzwoń” otworzy zwykłe wybieranie numeru (np. na komputerze z telefonem).";
@@ -414,6 +418,13 @@ const CRM = (() => {
       box.hidden = false;
       box.innerHTML = `<span>Adres CRM: <b>${esc(location.origin)}</b></span><span>Kod parowania (ważny ${d.valid_minutes} min):</span><strong>${esc(d.code.slice(0, 3))} ${esc(d.code.slice(3))}</strong>`;
       const poll = setInterval(async () => { if (!dlg.open) { clearInterval(poll); return; } await paint(); if ($("dialer-state").classList.contains("on")) { clearInterval(poll); box.hidden = true; } }, 3000);
+    });
+    $("dialer-pause").addEventListener("click", async () => {
+      const paused = $("dialer-pause").dataset.paused !== "1";
+      await api("/api/dialer/status/", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused }) });
+      await paint();
+      document.dispatchEvent(new CustomEvent("crm:dialer"));   // „Dzwonienie” od razu odświeża pasek na dole
+      if (CRM.refreshPhone) CRM.refreshPhone();
     });
     $("dialer-unpair").addEventListener("click", async () => {
       if (!confirm("Odłączyć telefon od CRM? Trzeba będzie sparować go ponownie.")) return;

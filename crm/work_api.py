@@ -501,6 +501,10 @@ class DialerCallView(APIView):
         phone = str(request.data.get("phone") or (lead.phone if lead else "")).strip()
         if not phone:
             return Response({"detail": "Brak numeru do wybrania."}, status=status.HTTP_400_BAD_REQUEST)
+        from .work import dialer_paused
+        if dialer_paused(request.user):
+            return Response({"detail": "Dzwonienie przez telefon jest wyłączone. Włączysz je w menu konta → Telefon (dialer)."},
+                            status=status.HTTP_400_BAD_REQUEST)
         touch_workday(request.user, work=True)   # telefon = praca
         call = request_call(request.user, phone, lead)
         return Response({"id": call.pk, "state": call.state, **dialer_status(request.user)}, status=status.HTTP_201_CREATED)
@@ -519,6 +523,36 @@ class DialerStatusView(APIView):
     def delete(self, request):
         DialerDevice.objects.filter(user=request.user).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def patch(self, request):
+        """{paused: true} = wyłącz dzwonienie przez telefon (parowanie zostaje), false = włącz z powrotem."""
+        from .models import AgentProfile
+        AgentProfile.objects.update_or_create(user=request.user, defaults={"dialer_paused": bool(request.data.get("paused"))})
+        return Response(dialer_status(request.user))
+
+
+class DialerHangupView(APIView):
+    """CRM: „Rozłącz” – telefon kończy właśnie trwające połączenie (np. odebrała poczta głosowa)."""
+
+    permission_classes = [IsAgentOrManager]
+
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        from .work import request_hangup
+        if not request_hangup(request.user):
+            return Response({"detail": "Teraz nic nie dzwoni."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"ok": True})
+
+
+class DialerCallHangupView(DialerDeviceAuthMixin, APIView):
+    """Telefon w trakcie połączenia pyta co 2 s: czy agent kliknął w CRM „Rozłącz”?"""
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request, pk):
+        from .models import CallRequest
+        call = CallRequest.objects.filter(pk=pk, user=request.user).only("hangup").first()
+        return Response({"hangup": bool(call and call.hangup)})
 
 
 # ------------------------------------------------------------------ informacje dla zespołu

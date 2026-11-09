@@ -50,6 +50,8 @@ urlpatterns = [
     path("dialer/pair/", work_api.DialerPairView.as_view(), name="dialer-pair"),
     path("dialer/poll/", work_api.DialerPollView.as_view(), name="dialer-poll"),
     path("dialer/calls/<int:pk>/finish/", work_api.DialerFinishView.as_view(), name="dialer-finish"),
+    path("dialer/calls/<int:pk>/hangup/", work_api.DialerCallHangupView.as_view(), name="dialer-call-hangup"),
+    path("dialer/hangup/", work_api.DialerHangupView.as_view(), name="dialer-hangup"),
     path("dialer/sms/<int:pk>/done/", work_api.DialerSmsDoneView.as_view(), name="dialer-sms-done"),
     path("dialer/calls/<int:pk>/recording/", recordings_api.DialerRecordingView.as_view(), name="dialer-recording"),
     # telefon zgłasza, co się na nim dzieje (dzwoni klient, rejestr połączeń, SMS-y) – crm/phone.py

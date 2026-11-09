@@ -474,6 +474,9 @@ class AgentProfile(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(60)],
         help_text="Własny cel tej osoby; puste = cel zespołu ustawiony przez managera (domyślnie 15).",
     )
+    # „Wyłącz dzwonienie przez telefon” (np. agent jest w domu, a telefon z dialerem został w pracy):
+    # parowanie zostaje, ale CRM nie wysyła numerów do wybrania (SMS-y z przypomnieniem dalej idą)
+    dialer_paused = models.BooleanField("dzwonienie przez telefon wyłączone", default=False)
     # „Wyślij na mój telefon”: prywatny numer agenta (SMS idzie z telefonu z dialerem)
     private_phone = models.CharField("mój prywatny numer", max_length=30, blank=True)
     avatar = models.TextField(
@@ -725,6 +728,8 @@ class CallRequest(models.Model):
     direction = models.CharField(max_length=3, choices=Direction.choices, default=Direction.OUT)
     # True = z rejestru połączeń telefonu (CRM tego połączenia nie zlecał)
     from_phone = models.BooleanField(default=False)
+    # agent kliknął w CRM „Rozłącz” (np. poczta głosowa) – dialer 1.4+ kończy połączenie
+    hangup = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)

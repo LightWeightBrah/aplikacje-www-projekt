@@ -70,7 +70,9 @@ class PhoneLiveView(APIView):
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
-        return Response({"paired": has_phone(request.user), **live(request.user)})
+        from .work import dialer_paused
+        # „paired” = linki tel: idą przez telefon z dialerem; przy wyłączonym dzwonieniu – zwykłe wybieranie
+        return Response({"paired": has_phone(request.user) and not dialer_paused(request.user), **live(request.user)})
 
 
 class PhoneSmsView(APIView):

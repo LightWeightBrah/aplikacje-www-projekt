@@ -729,7 +729,7 @@ def create_offer(lead, agent, lines, client_email, next_contact_at, next_contact
 
 PAIRING_MINUTES = 10
 DEVICE_ONLINE_SECONDS = 40
-LATEST_DIALER = "1.3"   # wersja w downloads/solid-dialer.apk (dialer-android/app/build.gradle)
+LATEST_DIALER = "1.4"   # wersja w downloads/solid-dialer.apk (dialer-android/app/build.gradle)
 CALL_PICKUP_SECONDS = 120
 
 
@@ -756,16 +756,35 @@ def pair_device(code, name=""):
         )
 
 
+def request_hangup(user):
+    """„Rozłącz” w CRM: telefon kończy połączenie, które właśnie wybrał na prośbę CRM. False = nic nie trwa."""
+    call = (CallRequest.objects.filter(user=user, from_phone=False, state=CallRequest.State.DIALING,
+                                       created_at__gte=timezone.now() - timedelta(hours=4))
+            .order_by("-created_at").first())
+    if call is None:
+        return False
+    CallRequest.objects.filter(pk=call.pk).update(hangup=True)
+    return True
+
+
 def request_call(user, phone, lead=None):
     """CRM prosi telefon o wybranie numeru (poprzednie niewybrane prośby są anulowane)."""
     CallRequest.objects.filter(user=user, state=CallRequest.State.PENDING).update(state=CallRequest.State.CANCELLED)
     return CallRequest.objects.create(user=user, lead=lead, phone=phone)
 
 
+def dialer_paused(user):
+    """Agent wyłączył dzwonienie przez telefon (parowanie zostaje)."""
+    from .models import AgentProfile
+    return AgentProfile.objects.filter(user=user, dialer_paused=True).exists()
+
+
 def poll_call(device):
     """Telefon pyta, czy ma coś wybrać; prośba przechodzi w stan „dzwoni”."""
     now = timezone.now()
     DialerDevice.objects.filter(pk=device.pk).update(last_seen=now)
+    if dialer_paused(device.user):
+        return None
     with transaction.atomic():
         call = (
             CallRequest.objects.select_for_update()
@@ -833,12 +852,15 @@ def dialer_status(user):
     """Czy telefon agenta jest połączony i co się dzieje z ostatnim połączeniem."""
     now = timezone.now()
     device = DialerDevice.objects.filter(user=user).order_by("-last_seen").first()
-    online = bool(device and device.last_seen and (now - device.last_seen).total_seconds() <= DEVICE_ONLINE_SECONDS)
+    paused = device is not None and dialer_paused(user)
+    # wyłączone dzwonienie = CRM zachowuje się jak bez telefonu („Zadzwoń” nie trafia na telefon w pracy)
+    online = not paused and bool(device and device.last_seen and (now - device.last_seen).total_seconds() <= DEVICE_ONLINE_SECONDS)
     # tylko połączenia zlecone z CRM („Zadzwoń”); przychodzące i z rejestru telefonu pokazuje osobno pasek „Dzwoni…”
     call = (CallRequest.objects.filter(user=user, created_at__gte=now - timedelta(minutes=15), from_phone=False)
             .order_by("-created_at").first())
     return {
         "paired": device is not None,
+        "paused": paused,
         "online": online,
         "device_name": device.name if device else "",
         "app_version": device.app_version if device else "",
@@ -848,7 +870,7 @@ def dialer_status(user):
         "can_record": device.can_record if device else None,
         "call": None if call is None else {
             "id": call.pk, "lead": call.lead_id, "phone": call.phone, "state": call.state,
-            "answered": call.answered, "duration_seconds": call.duration_seconds,
+            "answered": call.answered, "duration_seconds": call.duration_seconds, "hangup": call.hangup,
         },
     }
 
