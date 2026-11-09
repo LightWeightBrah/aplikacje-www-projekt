@@ -523,7 +523,7 @@
         <div class="w-call">
           <a class="w-phone" href="tel:${esc(tel)}">${esc(d.phone)}</a>
           <button type="button" class="w-call-btn" id="call-btn"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg><span>Zadzwoń</span> <kbd class="w-kbd">Z</kbd></button>
-          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz <kbd class="w-kbd" data-hangup-kbd>R</kbd></button>
+          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz <kbd class="w-kbd" data-hangup-kbd>X</kbd></button>
           ${CRM.copyButton(d.phone)}
           ${d.phone_alt ? `<span class="w-alt">drugi numer: <a href="tel:${esc(d.phone_alt.replace(/[^\d+]/g, ""))}">${esc(d.phone_alt)}</a></span>` : ""}
           <span class="w-call-state" id="call-state"></span>
@@ -676,11 +676,7 @@
     const t = document.querySelector("#net-box [data-tm-skip]");
     if (t && !t.dataset.wired) {
       t.dataset.wired = "1";
-      t.addEventListener("click", () => {
-        pick("skipped");
-        const chip = [...document.querySelectorAll("[data-skip]")].find((b) => /t-?mobile/i.test(b.dataset.skip));
-        if (chip) chip.click();
-      });
+      t.addEventListener("click", () => { if (!form || form.outcome !== "skipped") pick("skipped"); });
     }
   }
   /* ---------- koniec umowy u obecnego operatora: miesiąc i rok (zapis od razu) ----------
@@ -1254,6 +1250,11 @@
     $("save-next").disabled = $("save-only").disabled = false;
     $("save-hint").textContent = keysOn() ? SAVE_HINT[o] || "" : "";
     wireStep();
+    // „Pomiń firmę” przy kliencie zaznaczonym jako T-Mobile: powód „Już jest w T-Mobile” od razu wybrany (można zmienić)
+    if (o === "skipped" && (current.operators || "").split(",")[0] === "tmobile") {
+      const chip = [...document.querySelectorAll("[data-skip]")].find((b) => /t-?mobile/i.test(b.dataset.skip));
+      if (chip) chip.click();
+    }
     const focusEl = $("f-when") && o === "callback" ? $("f-when") : null;
     if (focusEl) { focusEl.focus(); focusEl.select(); } else $("save-next").focus({ preventScroll: true });
     $("out-panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1599,7 +1600,7 @@
     const k = e.key.toLowerCase();
     if (k === "n") { e.preventDefault(); nextClient(); return; }
     if (k === "z" && current) { e.preventDefault(); callNow(); return; }
-    if (k === "r" && showPart("hangupBtn") && showPart("hangupKey") && dialer.call && dialer.call.state === "dialing" && !dialer.call.hangup) { e.preventDefault(); hangUp(); return; }
+    if (k === "x" && showPart("hangupBtn") && showPart("hangupKey") && dialer.call && dialer.call.state === "dialing" && !dialer.call.hangup) { e.preventDefault(); hangUp(); return; }
     if (e.key === "Enter" && form) { e.preventDefault(); save(true); return; }
     const o = OUTCOMES.find((x) => String(x.n) === e.key);
     if (o && current) { e.preventDefault(); pick(o.key); }
