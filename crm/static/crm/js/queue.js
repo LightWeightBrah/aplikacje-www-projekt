@@ -174,7 +174,7 @@
       const r = await api("/api/phone/sms/"); if (!r.ok) return;
       smsList = (await r.json()).results || [];
       if (tab === "sms") renderSms();
-      if (smsList.some((s) => !s.seen && s.kind !== "available")) {
+      if (smsList.some((s) => !s.seen && s.kind === "client")) {
         await jsonReq("/api/phone/sms/", "POST", { all: true });
         paintSmsBadge(0);
       }

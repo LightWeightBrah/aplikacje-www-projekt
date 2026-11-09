@@ -361,7 +361,7 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 :root[data-theme="dark"] .w-item.active{background:color-mix(in srgb,var(--brand) 18%,var(--card))}
 /* wybrany kafelek (taryfa, sieć, powód…) zostaje wypełniony także w ciemnym motywie */
 :root[data-theme="dark"] .w-chip[aria-pressed=true],:root[data-theme="dark"] .w-chip[aria-checked=true]{background:var(--brand)}
-:root[data-theme="dark"] .w-call,:root[data-theme="dark"] .w-step,:root[data-theme="dark"] .w-stat,:root[data-theme="dark"] .w-day li button{background:#11161d}
+:root[data-theme="dark"] .w-call,:root[data-theme="dark"] .w-netbox,:root[data-theme="dark"] .w-info textarea,:root[data-theme="dark"] .w-step,:root[data-theme="dark"] .w-stat,:root[data-theme="dark"] .w-day li button{background:#11161d}
 :root[data-theme="dark"] .w-sum,:root[data-theme="dark"] .w-preview{background:var(--track)}
 :root[data-theme="dark"] .w-reason{background:color-mix(in srgb,var(--c) 16%,var(--card))}
 :root[data-theme="dark"] .w-badge{background:color-mix(in srgb,var(--c,var(--muted)) 22%,transparent)}
@@ -373,7 +373,7 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 @media(prefers-color-scheme:dark){
   :root:not([data-theme]) .w-out{background:var(--track);border-color:#323b48}
   :root:not([data-theme]) .w-item,:root:not([data-theme]) .w-seg,:root:not([data-theme]) .w-chip{background:var(--track)}
-  :root:not([data-theme]) .w-call,:root:not([data-theme]) .w-step,:root:not([data-theme]) .w-stat{background:#11161d}
+  :root:not([data-theme]) .w-call,:root:not([data-theme]) .w-netbox,:root:not([data-theme]) .w-info textarea,:root:not([data-theme]) .w-step,:root:not([data-theme]) .w-stat{background:#11161d}
   :root:not([data-theme]) .topnav{background:#111721}
 }
 

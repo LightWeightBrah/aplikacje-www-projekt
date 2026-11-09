@@ -121,7 +121,9 @@ CRM.initPlan = function initPlan() {
     if (!html && movedUp) html = `<p class="muted">Dzisiejsze terminy, które już minęły, są wyżej w „Zaległe”. Na resztę dnia nic więcej nie jest umówione.</p>`;
     paint("plan-list", html || `<p class="muted">Na ten dzień nie masz zaplanowanych kontaktów. Nowych klientów weźmiesz w <a href="/crm/queue/">kolejce</a>.</p>`);
 
-    $("day-title").textContent = (isToday ? "Dziś" : longDay(d.date)) + ` · zaplanowane: ${sched.length}`;
+    // terminy, które już minęły, są w „Zaległe” – tu liczymy tylko to, co jeszcze zostało na ten dzień
+    const leftToday = isToday ? nowList.length + later.length : sched.length;
+    $("day-title").textContent = (isToday ? "Dziś" : longDay(d.date)) + ` · zaplanowane: ${leftToday}`;
     $("subtitle").textContent = longDay(d.date) +
       (isToday && overdue.length ? ` · zaległych: ${overdue.length}` : "") +
       (isToday && (retries.length || sched.some(passed)) ? ` · do ponowienia: ${retries.length + sched.filter((l) => passed(l) && isRetry(l)).length}` : "");

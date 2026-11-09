@@ -239,7 +239,8 @@ def live(user):
                            "phone": call.lead.phone, "at": call.started_at, "status": call.lead.status})
     return {
         "ringing": ringing, "available": available, "missed": missed,
-        "sms_unseen": IncomingSms.objects.filter(user=user, seen=False).exclude(kind=IncomingSms.Kind.AVAILABLE).count(),
+        # czerwona liczba przy „SMS” tylko za SMS-y od klientów – wiadomości od sieci są mniej ważne
+        "sms_unseen": IncomingSms.objects.filter(user=user, seen=False, kind=IncomingSms.Kind.CLIENT).count(),
     }
 
 
