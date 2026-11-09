@@ -24,7 +24,7 @@ CRM.initReminders = function initReminders() {
     // karty z telefonu (live.js): kto dzwoni, „klient już dostępny”, „klient dzwonił – nieodebrane”
     phoneRing: "pref-ring", phoneAvailable: "pref-available", phoneMissed: "pref-missed",
     // przycisk „Rozłącz” w trakcie połączenia i klawisz R (oba można wyłączyć)
-    hangupBtn: "pref-hangup", hangupKey: "pref-hangup-key" };
+    hangupBtn: "pref-hangup", hangupKey: "pref-hangup-key", hangupToast: "pref-hangup-toast" };
   const baseTitle = document.title;
   const box = $("reminders");
   box.addEventListener("click", (e) => {

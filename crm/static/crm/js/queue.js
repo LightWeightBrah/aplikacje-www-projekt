@@ -340,7 +340,7 @@
           const talk = `${Math.floor((c.duration_seconds || 0) / 60)} min ${(c.duration_seconds || 0) % 60} s`;
           setCallState(c.hangup ? `<b class="w-ended">✕ Rozłączono</b> (z CRM${c.answered ? `, połączenie trwało ${talk}` : ""}). Wybierz wynik – przy poczcie głosowej „1 Nie odebrał”.`
             : c.answered ? `Rozmowa zakończona: <b>${talk}</b>. Wybierz wynik.` : "Klient <b>nie odebrał</b>. Wybierz „1 Nie odebrał”.");
-          if (c.hangup) toast("Rozłączono połączenie.");
+          if (c.hangup && showPart("hangupToast")) toast("Rozłączono połączenie.");
           if (!c.answered && current && !form && c.lead === current.id) pick("no_answer");
           loadSummary();
         }
