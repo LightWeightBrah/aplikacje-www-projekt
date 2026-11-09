@@ -23,11 +23,11 @@
   const SEG_ORDER = ["offer", "callback", "retry", "new"];
   const OUTCOMES = [
     { key: "no_answer", n: 1, label: "Nie odebrał", hint: "ponowna próba sama", color: "#475569" },
-    { key: "callback", n: 2, label: "Oddzwonić", hint: "umów termin", color: "#d97706" },
-    { key: "interested", n: 3, label: "Zainteresowany", hint: "oferta później", color: "#0d9488" },
-    { key: "offer", n: 4, label: "Wyślij ofertę", hint: "oferta + follow-up", color: "#0f766e" },
-    { key: "sold", n: 5, label: "Sprzedane", hint: "zapisz umowę", color: "#15803d" },
-    { key: "refused", n: 6, label: "Odmowa", hint: "zamyka klienta", color: "#dc2626" },
+    { key: "refused", n: 2, label: "Odmowa", hint: "zamyka klienta", color: "#dc2626" },
+    { key: "callback", n: 3, label: "Oddzwonić", hint: "umów termin", color: "#d97706" },
+    { key: "interested", n: 4, label: "Zainteresowany", hint: "oferta później", color: "#0d9488" },
+    { key: "offer", n: 5, label: "Wyślij ofertę", hint: "oferta + follow-up", color: "#0f766e" },
+    { key: "sold", n: 6, label: "Sprzedane", hint: "zapisz umowę", color: "#15803d" },
     { key: "wrong_number", n: 7, label: "Zły numer", hint: "nie dzwonić", color: "#78716c" },
     { key: "skipped", n: 8, label: "Pomiń firmę", hint: "bez dzwonienia", color: "#57534e" },
   ];
@@ -128,6 +128,7 @@
   function renderList() {
     const box = $("lead-list");
     if (tab === "hist") { renderHistory(); return; }
+    if (tab === "sms") { renderSms(); return; }
     const list = leads.filter((l) => segFilter === "all" || segOf(l) === segFilter).sort(cmp);
     $("lead-count").textContent = leads.length ? `(${leads.length})` : "";
     if (!list.length) {
@@ -146,6 +147,44 @@
       <span class="wi-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}${a.call_seconds ? ` · ${Math.round(a.call_seconds / 60)} min` : ""}</span>
       ${a.note ? `<span class="wi-sub">${esc(a.note)}</span>` : ""}</button>`).join("");
   }
+  /* ---------- SMS-y od klientów (telefon z Solid Dialer 1.3+): podgląd na komputerze ---------- */
+  let smsList = null;
+  const SMS_KIND = { client: "SMS od klienta", available: "Numer już dostępny", info: "Wiadomość od sieci" };
+  /* „Od klientów” (domyślnie) chowa automatyczne wiadomości od sieci („numer już dostępny” itp.) – wybór pamięta przeglądarka */
+  let smsAll = false;
+  try { smsAll = localStorage.getItem("crm_sms_all") === "1"; } catch { /* brak dostępu */ }
+  function renderSms() {
+    const box = $("lead-list");
+    if (smsList === null) { box.innerHTML = `<p class="w-empty">Wczytuję…</p>`; return; }
+    const shown = smsAll ? smsList : smsList.filter((s) => s.kind === "client");
+    const hidden = smsList.length - shown.length;
+    const head = `<div class="w-sms-filter" role="group" aria-label="Które SMS-y"><button type="button" data-sms-all="0" aria-pressed="${!smsAll}">Od klientów</button><button type="button" data-sms-all="1" aria-pressed="${smsAll}">Wszystkie${hidden ? ` (+${hidden} od sieci)` : ""}</button></div>`;
+    if (!shown.length) {
+      box.innerHTML = head + `<p class="w-empty">${smsList.length ? "Brak SMS-ów od klientów. Wiadomości od sieci (np. „numer już dostępny”) zobaczysz w „Wszystkie”." : "Brak SMS-ów od klientów. Tu pojawią się SMS-y, które klienci wyślą na Twój telefon z Solid Dialer (np. e-mail), i wiadomości od sieci, że numer klienta jest już dostępny. Prywatnych SMS-ów CRM nie zapisuje."}</p>`;
+      return;
+    }
+    box.innerHTML = head + shown.map((s) => `<div class="w-item sms ${s.kind}${s.seen ? "" : " unseen"}" style="--c:${s.kind === "available" ? "#22c55e" : s.kind === "client" ? "var(--brand)" : "#64748b"}">
+      <button type="button" class="w-sms-open" data-id="${s.lead}"><span class="wi-top"><strong>${esc(s.name)}</strong><span class="wi-when">${esc(dayShort(s.received_at))} ${hhmm(s.received_at)}</span></span>
+      <span class="wi-out">${SMS_KIND[s.kind] || "SMS"}</span>
+      <span class="wi-sub w-sms-text">${esc(s.text)}</span></button>
+      ${s.email ? `<button type="button" class="btn-mini" data-sms-mail="${s.lead}" data-mail="${esc(s.email)}">Zapisz e-mail ${esc(s.email)} w karcie</button>` : ""}</div>`).join("");
+  }
+  async function loadSms() {
+    try {
+      const r = await api("/api/phone/sms/"); if (!r.ok) return;
+      smsList = (await r.json()).results || [];
+      if (tab === "sms") renderSms();
+      if (smsList.some((s) => !s.seen && s.kind !== "available")) {
+        await jsonReq("/api/phone/sms/", "POST", { all: true });
+        paintSmsBadge(0);
+      }
+    } catch { /* bez SMS-ów */ }
+  }
+  function paintSmsBadge(n) { const b = $("sms-badge"); if (b) { b.textContent = n ? String(n) : ""; b.hidden = !n; } }
+  document.addEventListener("crm:phone", (e) => {
+    const n = e.detail.sms_unseen || 0;
+    if (tab === "sms" && n) loadSms(); else paintSmsBadge(n);
+  });
   async function loadHistory() {
     try {
       const r = await api(`/api/activities/?agent=${me.id}&ordering=-created_at`);
@@ -335,11 +374,12 @@
     stopAutoDial();
     if (!current) return;
     if (tourDemo) { setCallState("W samouczku nie dzwonimy naprawdę. Normalnie telefon sam wybierze numer."); return; }
-    if (dialer.online) {
+    if (dialer.online || dialer.paired) {
       const r = await jsonReq("/api/dialer/call/", "POST", { lead: current.id });
       if (r.error) { toast(r.error, true); return; }
       dialer = { ...dialer, ...r.data }; renderDialbar();
-      setCallState("Telefon wybiera numer… Po rozmowie wybierz wynik.");
+      setCallState(dialer.online ? "Telefon wybiera numer… Po rozmowie wybierz wynik."
+        : "Telefon nie odpowiada – otwórz Solid Dialer na telefonie. Numer wybierze się sam, gdy telefon się połączy (do 2 minut).");
       pollDialerSoon();
     } else {
       location.href = "tel:" + current.phone.replace(/[^\d+]/g, "");
@@ -389,6 +429,7 @@
     const item = document.querySelector(`#lead-list [data-id="${id}"]`); if (item) item.scrollIntoView({ block: "nearest" });
     return true;
   }
+  CRM.queueCurrentId = () => (current ? current.id : null);
   CRM.openLead = async (id) => { if (!leads.some((l) => l.id === id)) await loadLeads(); const ok = await openLead(id); CRM.scrollTop(); return ok; };
 
   const lastOffer = (d) => (d.activities || []).find((a) => a.outcome === "offer" && a.offer);
@@ -414,7 +455,7 @@
     else { head = "Klient zamknięty"; desc = esc((CRM.STATUS[d.status] || [d.status])[0]); }
     const topic = d.next_contact_note ? `<div class="wr-d"><em>Sprawa:</em> ${esc(d.next_contact_note)}</div>` : "";
     const note = lastNote(d);
-    const noteHtml = note ? `<div class="wr-d"><em>Ostatni komentarz (${note.agent === me.id ? "Ty" : esc(note.agent_name || "")}, ${esc(when(note.created_at))}):</em> ${esc(note.note)}</div>` : "";
+    const noteHtml = note ? `<div class="wr-d"><em>Ostatni komentarz (${note.agent === me.id ? "Ty" : note.agent ? esc(note.agent_name || "") : "telefon"}, ${esc(when(note.created_at))}):</em> ${esc(note.note)}</div>` : "";
     return `<div class="w-reason${late ? " late" : ""}" style="--c:${SEG[s] ? SEG[s].color : "var(--muted)"}"><span class="wr-ic">${SEG[s] ? SEG[s].icon : "•"}</span>
       <div><div class="wr-t">${head}${lateTxt}</div><div class="wr-d">${desc}</div>${topic}${noteHtml}</div></div>`;
   }
@@ -455,8 +496,6 @@
     const sentOffer = d.status !== "offer" && lastOffer(d);   // przy statusie „Oferta wysłana” mówi to już pierwsza plakietka
     if (sentOffer) badges.push(`<span class="w-badge" style="--c:#22c55e" title="Szczegóły oferty są w pasku na górze i w historii kontaktów">Oferta wysłana ${esc(when(sentOffer.created_at))}</span>`);
     if (d.knows_caller) badges.push(`<span class="w-badge" style="--c:var(--ok)">Wie, skąd dzwonimy</span>`);
-    if (d.operators) badges.push(`<span class="w-badge">Sieć: ${esc(d.operators.split(",").map((c) => (CRM.OPERATORS.find((o) => o[0] === c) || [c, c])[1]).join(", "))}</span>`);
-    const ct = contractBadge(d); if (ct) badges.push(ct);
     if (d.transferred_from) badges.push(`<span class="w-badge moved">↪ Przepisany od ${esc(d.transferred_from)}</span>`);
     if (d.missed_calls > 0) badges.push(`<span class="w-badge" style="--c:var(--late)">Nie odebrał w terminie ×${d.missed_calls}</span>`);
     const closed = CLOSED.includes(d.status);
@@ -471,6 +510,7 @@
           ${d.phone_alt ? `<span class="w-alt">drugi numer: <a href="tel:${esc(d.phone_alt.replace(/[^\d+]/g, ""))}">${esc(d.phone_alt)}</a></span>` : ""}
           <span class="w-call-state" id="call-state"></span>
         </div>
+        <div class="w-netbox" id="net-box">${networkHtml(d)}${contractHtml(d)}</div>
         <div class="w-facts" id="facts">${factsHtml(d)}</div>
         ${metaHtml(d)}
         <div class="w-info" id="client-panel">
@@ -478,7 +518,7 @@
           <textarea id="cl-comment" rows="2" maxlength="2000" placeholder="np. 3 numery w Play, umowa do marca, decyduje właściciel – widzą to wszyscy agenci">${esc(d.client_comment || "")}</textarea>
         </div>
       </div>
-      ${closed ? "" : `<div class="w-panel" id="out-panel">
+      ${closed ? reopenHtml(d) : `<div class="w-panel" id="out-panel">
         <div class="w-out-title"><h2>Jak poszła rozmowa?</h2><small>klawisze 1–8</small></div>
         <div class="w-outs" role="radiogroup">${OUTCOMES.map((o) => `<button type="button" class="w-out" role="radio" aria-checked="false" data-out="${o.key}" style="--c:${o.color}"><kbd>${o.n}</kbd><b>${o.label}</b><small>${o.hint}</small></button>`).join("")}</div>
         <div id="step"></div>
@@ -494,14 +534,29 @@
       </div>`}
       <div class="w-panel"><div class="w-sec-title"><h2>Historia kontaktów (${d.activities.length})</h2></div><ul class="w-hist" id="hist">${histHtml(d)}</ul></div>`;
     if (!closed) { paintPhrases(null); $("act-note").addEventListener("keydown", (e) => e.stopPropagation()); $("act-note").addEventListener("input", syncChips); }
+    const rb = $("reopen-btn"); if (rb) rb.addEventListener("click", reopenLead);
     wireClient();
+    if (!closed) { wireNetwork(); wireContract(); }
     if (dialer.call && dialer.call.lead === d.id && dialer.call.state === "done") setCallState(dialer.call.answered ? `Ostatnia rozmowa: <b>${Math.round((dialer.call.duration_seconds || 0) / 60)} min</b>` : "Ostatnio: nie odebrał");
     renderDialbar();
+  }
+  /* Zamknięty klient (pominięty, odmowa, zły numer): po pomyłce można go przywrócić także po 10 sekundach */
+  function reopenHtml(d) {
+    if (d.status === "won") return "";
+    return `<div class="w-panel w-reopen"><div><b>Ten klient jest zamknięty.</b> Pomyłka (np. „Pomiń firmę” zamiast oferty)? Przywróć go – wróci tam, gdzie był, i znów wybierzesz wynik rozmowy.</div>
+      <button type="button" class="btn btn-primary" id="reopen-btn">↺ Przywróć do dzwonienia</button></div>`;
+  }
+  async function reopenLead() {
+    if (!current) return;
+    const r = await jsonReq(`/api/my-leads/${current.id}/reopen/`, "POST", {});
+    if (r.error) { toast(r.error, true); return; }
+    toast("Klient przywrócony – wybierz wynik rozmowy.");
+    await loadLeads(); await openLead(current.id); loadSummary();
   }
   function histHtml(d) {
     if (!d.activities.length) return `<li><span></span><span class="muted">To pierwszy kontakt z tym klientem.</span></li>`;
     return d.activities.map((a) => {
-      const who = a.agent === me.id ? "Ty" : esc(a.agent_name || "–");
+      const who = a.agent === me.id ? "Ty" : a.agent ? esc(a.agent_name || "–") : "telefon";
       let extra = "";
       if (a.offer) extra += `<div class="h-extra">Oferta <b>${esc(a.offer.product_name)} × ${a.offer.quantity}</b>, ${a.offer.term_months} mies., ${money(a.offer.monthly_total)}/mies.${a.offer.recipient ? ` → ${esc(a.offer.recipient)}` : ""}${a.offer.sent ? " (wysłana)" : ""}</div>`;
       if (a.sale_items && a.sale_items.length) extra += `<div class="h-extra">${a.sale_items.map((i) => `${esc(i.product_name)} × ${i.quantity}${i.term_months ? `, ${i.term_months} mies.` : ""}: <b>${money(i.total)}</b>${Number(i.commission) ? ` (prowizja ${money(i.commission)})` : ""}`).join("<br>")}</div>`;
@@ -525,6 +580,10 @@
     };
     CRM.saveLeadPatch = save;
     const ta = $("cl-comment"); let timer = null, last = ta.value;
+    // pole rośnie razem z tekstem (bez suwaka w środku), żeby całą notatkę było widać od razu
+    const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; };
+    grow(); requestAnimationFrame(grow);
+    ta.addEventListener("input", grow);
     const flush = async () => {
       clearTimeout(timer); if (ta.value.trim() === last.trim()) return; last = ta.value;
       if (await save({ client_comment: ta.value.trim() })) {
@@ -559,18 +618,52 @@
   /* ---------- sieć klienta: jeden wybór (zwykle klient jest w jednej sieci), pytamy tylko po rozmowie ---------- */
   function networkHtml(d) {
     const cur = (d.operators || "").split(",").filter(Boolean)[0] || "";
-    return `<div class="w-field w-net"><span>W jakiej sieci jest teraz klient? <small class="muted">(zapisuje się od razu, kliknij ponownie, żeby wyczyścić)</small></span>
-      <div class="w-ops" role="radiogroup">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}">${esc(l)}</button>`).join("")}</div></div>`;
+    const closed = CLOSED.includes(d.status);
+    return `<div class="w-net"><span class="w-nb-l">Sieć</span>
+      <div class="w-ops" role="radiogroup" aria-label="W jakiej sieci jest teraz klient">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip${c === "tmobile" ? " tm" : ""}" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}"${closed ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>
+      <button type="button" class="w-link" data-uke title="Kopiuje numer i otwiera stronę UKE: wklej numer (prawy przycisk myszy → Wklej) i kliknij „Znajdź”">Sprawdź w UKE ↗</button>
+      ${cur === "tmobile" && !closed ? `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>` : ""}</div>`;
   }
   function wireNetwork() {
-    document.querySelectorAll("#step [data-op]").forEach((b) => b.addEventListener("click", async () => {
+    document.querySelectorAll("#net-box [data-op]").forEach((b) => b.addEventListener("click", async () => {
       const on = b.getAttribute("aria-pressed") !== "true";
       const prev = current.operators || "";
-      document.querySelectorAll("#step [data-op]").forEach((x) => { const v = on && x === b; x.setAttribute("aria-pressed", String(v)); x.setAttribute("aria-checked", String(v)); });
+      document.querySelectorAll("#net-box [data-op]").forEach((x) => { const v = on && x === b; x.setAttribute("aria-pressed", String(v)); x.setAttribute("aria-checked", String(v)); });
       const value = on ? b.dataset.op : "";
       const ok = CRM.saveLeadPatch ? await CRM.saveLeadPatch({ operators: value }) : false;
       if (!ok) { current.operators = prev; toast("Nie udało się zapisać sieci.", true); }
+      paintTmHint();
     }));
+    wireNetExtras();
+  }
+  /* „Już w T-Mobile – pomiń firmę”: jeden klik zamiast szukania „8 Pomiń firmę” i powodu */
+  function paintTmHint() {
+    const box = document.querySelector("#net-box .w-net"); if (!box || !current) return;
+    const old = box.querySelector(".w-tm-hint"); if (old) old.remove();
+    if ((current.operators || "").split(",")[0] === "tmobile" && !CLOSED.includes(current.status)) {
+      box.insertAdjacentHTML("beforeend", `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>`);
+      wireNetExtras();
+    }
+  }
+  function wireNetExtras() {
+    const u = document.querySelector("#net-box [data-uke]");
+    if (u && !u.dataset.wired) {
+      u.dataset.wired = "1";
+      u.addEventListener("click", async () => {
+        const digits = (current.phone || "").replace(/\D/g, "").replace(/^48(?=\d{9}$)/, "");
+        try { await navigator.clipboard.writeText(digits); toast(`Skopiowano numer ${digits} – wklej go na stronie UKE i kliknij „Znajdź”.`); } catch { toast(`Numer do wklejenia: ${digits}`); }
+        window.open("https://bip.uke.gov.pl/numeracja/dostawca-uslug", "_blank", "noopener");
+      });
+    }
+    const t = document.querySelector("#net-box [data-tm-skip]");
+    if (t && !t.dataset.wired) {
+      t.dataset.wired = "1";
+      t.addEventListener("click", () => {
+        pick("skipped");
+        const chip = [...document.querySelectorAll("[data-skip]")].find((b) => /t-?mobile/i.test(b.dataset.skip));
+        if (chip) chip.click();
+      });
+    }
   }
   /* ---------- koniec umowy u obecnego operatora: miesiąc i rok (zapis od razu) ----------
      Numer można przenieść najwcześniej 12 miesięcy przed końcem umowy (models.porting_from).
@@ -583,12 +676,6 @@
     return new Date(Math.floor(idx / 12), idx % 12, 1);
   }
   const monthYear = (iso) => { const [y, m] = iso.split("-"); return `${m}.${y}`; };
-  function contractBadge(d) {
-    if (d.contract_open_ended) return `<span class="w-badge" style="--c:var(--ok)">Umowa bez terminu – można przenosić</span>`;
-    if (!d.contract_end) return "";
-    const from = portingFrom(d.contract_end), now = from <= new Date();
-    return `<span class="w-badge"${now ? ' style="--c:var(--ok)"' : ""}>Umowa do ${esc(monthYear(d.contract_end))}${now ? " – można przenosić" : ` · przenosić od ${String(from.getMonth() + 1).padStart(2, "0")}.${from.getFullYear()}`}</span>`;
-  }
   function contractInfo(d) {
     const sel = { m: $("ct-month") ? $("ct-month").value : "", y: $("ct-year") ? $("ct-year").value : "" };
     if (d.contract_open_ended) return "Umowa bez terminu: numery można przenieść od razu.";
@@ -605,14 +692,15 @@
     const year = new Date().getFullYear(), years = [];
     for (let y = year; y <= year + 4; y++) years.push(y);
     if (cy && !years.includes(cy)) years.unshift(cy);
-    return `<div class="w-field w-contract"><span>Do kiedy klient ma umowę? <small class="muted">(zapisuje się od razu)</small></span>
-      <div class="w-ct-row">
+    const closed = CLOSED.includes(d.status);
+    return `<div class="w-contract"><span class="w-nb-l">Umowa do</span>
+      <div class="w-ct-row"${closed ? ' inert' : ""}>
         <select id="ct-month" class="select" aria-label="Miesiąc końca umowy"><option value="">miesiąc…</option>${MONTHS.map((n, i) => `<option value="${i + 1}"${cm === i + 1 ? " selected" : ""}>${n}</option>`).join("")}</select>
         <select id="ct-year" class="select" aria-label="Rok końca umowy"><option value="">rok…</option>${years.map((y) => `<option value="${y}"${cy === y ? " selected" : ""}>${y}</option>`).join("")}</select>
         <button type="button" class="w-chip" id="ct-open" aria-pressed="${!!d.contract_open_ended}">Bez terminu</button>
         <button type="button" class="w-link" id="ct-clear"${d.contract_end || d.contract_open_ended ? "" : " hidden"}>wyczyść</button>
       </div>
-      <p class="w-info" id="ct-info">${contractInfo(d)}</p></div>`;
+      <p class="w-ct-info" id="ct-info">${contractInfo(d)}</p></div>`;
   }
   let contractSaving = null;   // zapis daty trwa: „Zapisz” poczeka, żeby serwer znał już koniec umowy
   function wireContract() {
@@ -709,8 +797,8 @@
   // na kafelku krótko jak przy komórkowych: „M”, „L”, „VIP” (pełna nazwa idzie do oferty)
   const chipName = (p) => baseOf(p).replace(/^(magenta\s+)?(światłowód|swiatlowod)(\s+biznes)?\s+|^magenta\s+tv\s+/i, "").trim() || baseOf(p);
   const planOf = (sel) => plans.find((x) => x.id === sel.product);
-  /* Promocje taryfy: najpierw główna (np. światłowód „12 miesięcy za 50 zł”, pusta nazwa = „6 miesięcy gratis”
-     z „Ustawienia i oferty”), potem inne do wyboru (np. „6 miesięcy za 0 zł”). Każda: miesiące, cena w nich, cena potem. */
+  /* Promocje taryfy: najpierw główna (np. światłowód „12 miesięcy za 10 zł”, pusta nazwa = „6 miesięcy gratis”
+     z „Ustawienia i oferty”), potem inne do wyboru. Każda: miesiące, cena w nich, cena potem. */
   function promosOf(p) {
     if (!p) return [];
     const out = [];
@@ -724,9 +812,12 @@
   }
   const hasPromo = (p) => promosOf(p).length > 0;
   const promoOf = (p, option) => { const l = promosOf(p); return l[option] || l[0] || { label: "", months: 0, price: 0, after: p ? Number(p.price) : 0 }; };
-  const linePromo = (sel) => !!sel.promo && hasPromo(planOf(sel));
+  /* Promocja „bez haczyka”: potem płaci się tyle samo co bez niej (światłowód: 12 mies. po 10 zł, potem cena
+     standardowa) – zawsze włączona, przycisku „Bez promocji” nie ma */
+  const freePromo = (p) => { const l = p ? promosOf(p) : []; return l.length > 0 && l.every((x) => x.after === Number(p.price) && x.price < Number(p.price)); };
+  const linePromo = (sel) => (!!sel.promo || freePromo(planOf(sel))) && hasPromo(planOf(sel));
   const lineOption = (sel) => { const l = promosOf(planOf(sel)); return linePromo(sel) && sel.option < l.length ? sel.option || 0 : 0; };
-  const chipPrice = (sel, p) => sel.promo && hasPromo(p) ? promoOf(p, sel.option).after : Number(p.price);
+  const chipPrice = (sel, p) => (sel.promo || freePromo(p)) && hasPromo(p) ? promoOf(p, sel.option).after : Number(p.price);
   // światłowód i np. JUMP są wg materiałów na 24 miesiące: CRM sam ustawia 24, 36 da się kliknąć, ale widać podpowiedź
   const only24 = (p) => !!p && (kindOf(p) === "fiber" || /umowa na 24 miesiące/i.test(p.features || ""));
   const speedOf = (p) => { const m = (p.features || "").match(/(\d+)\s*Mb\/s/i); return m ? m[1] + " Mb/s" : ""; };
@@ -749,7 +840,7 @@
     const list = promosOf(planOf(sel));
     if (!list.length) return `<span class="w-promo-none">Ta taryfa nie ma promocji</span>`;
     const on = linePromo(sel), opt = lineOption(sel);
-    return `<button type="button" data-promo="-1" aria-pressed="${!on}">Bez promocji</button>`
+    return (freePromo(planOf(sel)) ? "" : `<button type="button" data-promo="-1" aria-pressed="${!on}">Bez promocji</button>`)
       + list.map((x, i) => `<button type="button" data-promo="${i}" aria-pressed="${on && opt === i}">${esc(x.label || "Promocja")}</button>`).join("");
   }
   function syncKind(sel) {   // grupa i rodzaj budynku wynikają z wybranej taryfy
@@ -770,7 +861,7 @@
       <div class="w-field" id="f-promo-row"><span>Promocja</span><div class="w-toggle w-promos" id="f-promos">${promoButtons(sel)}</div></div>
       <div class="w-row">
         <div class="w-field"><span id="f-qty-label">Liczba numerów</span><div class="w-qty"><button type="button" data-qty="-1" aria-label="Mniej">−</button><input id="f-qty" type="number" min="1" max="500" value="${sel.quantity}" inputmode="numeric"><button type="button" data-qty="1" aria-label="Więcej">+</button></div></div>
-        <div class="w-field"><span>Okres umowy</span><div class="w-toggle" id="f-term"><button type="button" data-term="36" aria-pressed="${sel.term === 36}">36 mies.</button><button type="button" data-term="24" aria-pressed="${sel.term === 24}">24 mies.</button></div><small class="w-term-hint" id="f-term-hint" hidden>W materiałach: umowa na 24 miesiące</small></div>
+        <div class="w-field"><span>Okres umowy</span><div class="w-toggle" id="f-term"><button type="button" data-term="36" aria-pressed="${sel.term === 36}">36 mies.</button><button type="button" data-term="24" aria-pressed="${sel.term === 24}">24 mies.</button></div><small class="w-term-hint" id="f-term-hint" hidden>Ta usługa: tylko umowa na 24 miesiące</small></div>
       </div>`;
   }
   function planPicker() {
@@ -822,8 +913,11 @@
       <div class="comm"><span>Twoja prowizja przy sprzedaży (ok.)</span><br><b>${money(c.commission)}</b></div>` : `<span>Wybierz taryfę.</span>`;
     }
     document.querySelectorAll("#f-plans [data-plan]").forEach((b) => { const p = plans.find((x) => x.id === Number(b.dataset.plan)); b.setAttribute("aria-pressed", String(Number(b.dataset.plan) === form.plan.product)); b.querySelector("small").textContent = money(chipPrice(form.plan, p)); });
-    document.querySelectorAll("#f-term [data-term]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.term) === form.plan.term)));
-    const th = $("f-term-hint"); if (th) th.hidden = !(c && only24(c.p));
+    // światłowód i JUMP: tylko 24 miesiące – przycisk „36 mies.” zostaje (układ się nie zmienia), ale jest wyłączony
+    const lock24 = !!(c && only24(c.p));
+    if (lock24 && form.plan.term !== 24) { form.plan.term = 24; paintSum(); return; }
+    document.querySelectorAll("#f-term [data-term]").forEach((b) => { b.setAttribute("aria-pressed", String(Number(b.dataset.term) === form.plan.term)); b.disabled = lock24 && b.dataset.term === "36"; });
+    const th = $("f-term-hint"); if (th) th.hidden = !lock24;
     if (c) {
       const ql = $("f-qty-label"); if (ql) ql.textContent = c.perNumber ? "Liczba numerów" : "Ilość";
       // promocje zależą od taryfy (TV nie ma żadnej, światłowód ma kilka)
@@ -1102,9 +1196,9 @@
     }
     if (o === "interested") {
       return `<div class="w-step"><h3>Zainteresowany – kiedy wrócić do klienta?</h3>
-        <p class="w-info">Klient trafia do grupy <b>Oferty</b> (najważniejsi). Gdy dostaniesz e-mail, wybierz przy nim „4 Wyślij ofertę”.</p>
+        <p class="w-info">Klient jest zainteresowany, ale <b>nie dostał jeszcze oferty</b> (np. nie podał e-maila). Trafia do grupy <b>Oferty</b> (najważniejsi). Gdy będziesz mieć e-mail, wybierz przy nim „5 Wyślij ofertę”.</p>
         ${whenField("interested", "Termin", nextWorkday(10), true)}
-        <label class="w-field grow">Czego brakuje do oferty<input id="f-topic" maxlength="255" value="${esc(d.next_contact_note || "Wysłać ofertę – dopytać o e-mail")}"></label>
+        <label class="w-field grow">Co zrobić przy następnym telefonie<input id="f-topic" maxlength="255" value="${esc(d.next_contact_note || "Dopytać o e-mail, żeby wysłać ofertę")}"></label>
         <label class="w-field grow">E-mail klienta (jeśli podał)<input id="f-email" type="email" maxlength="254" value="${esc(d.email || "")}" placeholder="np. biuro@firma.pl"></label></div>`;
     }
     if (o === "offer") {
@@ -1135,7 +1229,8 @@
     const basket = ["offer", "sold"].includes(o) && plans.length ? defaultBasket() : null;
     form = { outcome: o, basket, plan: basket ? basket[0] : null, skip: "" };
     document.querySelectorAll("[data-out]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.out === o)));
-    $("step").innerHTML = stepHtml(o) + (TALKED.includes(o) ? `<div class="w-step w-step-net">${networkHtml(current)}${contractHtml(current)}</div>` : "");
+    $("step").innerHTML = stepHtml(o);
+    if ($("ct-info")) $("ct-info").innerHTML = contractInfo(current);   // „Odmowa” + późniejszy koniec umowy = samo oddzwonienie
     paintPhrases(o);
     $("act-error").hidden = true;
     $("save-next").disabled = $("save-only").disabled = false;
@@ -1185,8 +1280,6 @@
       e.stopPropagation(); if (e.key === "Enter" && i.id !== "f-qty") { e.preventDefault(); save(true); } if (e.key === "Escape") resetForm();
     }));
     if (form.plan) wirePlan();
-    wireNetwork();
-    wireContract();
     const pv = $("f-show-preview");
     if (pv) pv.addEventListener("click", () => { const box = $("f-mail-preview"); box.hidden = !box.hidden; box.textContent = offerPreviewText(); });
     document.querySelectorAll("[data-refuse]").forEach((b) => b.addEventListener("click", () => toggleNote(b.dataset.refuse)));
@@ -1435,6 +1528,19 @@
     const item = t.closest("#lead-list [data-id], #side [data-id]"); if (item) { openLead(Number(item.dataset.id)); return; }
     if (t.closest("#tab-todo")) { tab = "todo"; paintTabs(); renderList(); return; }
     if (t.closest("#tab-hist")) { tab = "hist"; paintTabs(); loadHistory(); renderHistory(); return; }
+    if (t.closest("#tab-sms")) { tab = "sms"; paintTabs(); renderSms(); loadSms(); return; }
+    const sf = t.closest("[data-sms-all]");
+    if (sf) { smsAll = sf.dataset.smsAll === "1"; try { localStorage.setItem("crm_sms_all", smsAll ? "1" : "0"); } catch { /* brak dostępu */ } renderSms(); return; }
+    const mail = t.closest("[data-sms-mail]");
+    if (mail) {
+      const r = await jsonReq(`/api/leads/${mail.dataset.smsMail}/`, "PATCH", { email: mail.dataset.mail });
+      if (r.error) { toast(r.error, true); return; }
+      toast(`E-mail ${mail.dataset.mail} zapisany w karcie klienta.`);
+      smsList.filter((s) => s.lead === Number(mail.dataset.smsMail)).forEach((s) => { s.email = ""; s.lead_email = mail.dataset.mail; });
+      renderSms();
+      if (current && current.id === Number(mail.dataset.smsMail)) { current.email = mail.dataset.mail; renderCard(); }
+      return;
+    }
     if (t.closest("#call-btn")) { callNow(); return; }
     const out = t.closest("[data-out]"); if (out) { pick(out.dataset.out); return; }
     if (t.closest("#save-next")) { save(true); return; }
@@ -1450,7 +1556,14 @@
       toast(ok ? "NIP skopiowany. W wyszukiwarce kliknij pole prawym przyciskiem myszy i wybierz „Wklej”." : "Otworzyłem wyszukiwarkę firm – przepisz NIP.");
     }
   });
-  const paintTabs = () => { $("tab-todo").setAttribute("aria-selected", String(tab === "todo")); $("tab-hist").setAttribute("aria-selected", String(tab === "hist")); };
+  const paintTabs = () => { ["todo", "hist", "sms"].forEach((k) => $("tab-" + k).setAttribute("aria-selected", String(tab === k))); };
+  /* numer w karcie: przy połączonym telefonie dzwoni przez Solid Dialer (nie przez program do dzwonienia na komputerze) */
+  document.addEventListener("click", (e) => {
+    const ph = e.target.closest("#lead-pane .w-phone, #lead-pane .w-alt a");
+    if (!ph || !current || !dialer.paired) return;
+    e.preventDefault();
+    if (ph.classList.contains("w-phone")) callNow(); else if (CRM.dialViaPhone) CRM.dialViaPhone(ph.textContent.trim());
+  }, true);
 
   /* ---------- klawisze (tylko pojedyncze, bez kombinacji) ---------- */
   const keysOn = () => !CRM.keysEnabled || CRM.keysEnabled();
@@ -1530,11 +1643,11 @@
     const phone = $("dl-phone").value.trim();
     if ((phone.replace(/\D/g, "")).length < 9) { $("dl-error").textContent = "Numer musi mieć co najmniej 9 cyfr."; $("dl-error").hidden = false; return; }
     $("dial-dialog").close();
-    if (dialer.online) {
+    if (dialer.online || dialer.paired) {
       const r = await jsonReq("/api/dialer/call/", "POST", { phone });
       if (r.error) { toast(r.error, true); return; }
       dialer = { ...dialer, ...r.data }; renderDialbar(); pollDialerSoon();
-      toast(`Telefon wybiera numer ${phone}.`);
+      toast(dialer.online ? `Telefon wybiera numer ${phone}.` : "Telefon nie odpowiada – otwórz Solid Dialer. Numer wybierze się, gdy telefon się połączy.");
     } else {
       location.href = "tel:" + phone.replace(/[^\d+]/g, "");
     }

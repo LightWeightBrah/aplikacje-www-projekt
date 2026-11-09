@@ -400,6 +400,10 @@ const CRM = (() => {
       st.textContent = d.online ? `Telefon połączony${d.device_name ? ": " + d.device_name : ""}. Przycisk „Zadzwoń” wybierze numer na telefonie.`
         : d.paired ? "Telefon jest sparowany, ale teraz nie odpowiada. Otwórz aplikację Solid Dialer na telefonie."
           : "Telefon nie jest połączony. „Zadzwoń” otworzy zwykłe wybieranie numeru (np. na komputerze z telefonem).";
+      // stara aplikacja: nowa wersja pokazuje w CRM, kto dzwoni, SMS-y od klientów i liczy rozmowy przychodzące
+      if (d.paired && d.app_version && d.latest_version && d.app_version !== d.latest_version) {
+        st.textContent += ` Na telefonie jest Solid Dialer ${d.app_version} – zainstaluj nową wersję ${d.latest_version} z adresu w kroku 1 (parowanie zostaje).`;
+      }
       $("dialer-unpair").hidden = !d.paired;
     };
     open.addEventListener("click", () => { $("user-popover").hidden = true; $("dialer-code").hidden = true; dlg.showModal(); paint(); });

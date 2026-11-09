@@ -234,8 +234,9 @@ def work_span(user, day):
     start, end = day_bounds(day)
     marks = list(Activity.objects.filter(agent=user, created_at__gte=start, created_at__lt=end)
                  .values_list("created_at", flat=True))
+    # połączenie z rejestru telefonu (klient dzwonił) to praca tylko wtedy, gdy agent odebrał
     marks += list(CallRequest.objects.filter(user=user, created_at__gte=start, created_at__lt=end)
-                  .values_list("created_at", flat=True))
+                  .filter(Q(from_phone=False) | Q(answered=True)).values_list("created_at", flat=True))
     wd = WorkDay.objects.filter(user=user, date=day).first()
     if wd:
         marks += [t for t in (wd.first_work, wd.last_work) if t]
@@ -370,7 +371,7 @@ def team_minutes_report(users, date_from, date_to):
     pairs |= {(uid, local(t)) for uid, t in Activity.objects.filter(agent__in=ids, created_at__gte=since, created_at__lt=until)
               .values_list("agent", "created_at")}
     pairs |= {(uid, local(t)) for uid, t in CallRequest.objects.filter(user__in=ids, created_at__gte=since, created_at__lt=until)
-              .values_list("user", "created_at")}
+              .filter(Q(from_phone=False) | Q(answered=True)).values_list("user", "created_at")}
     by_user = {u.pk: u for u in users}
     days, per_user = {}, {uid: {"minutes": 0.0, "goal": 0, "worked_minutes": 0} for uid in ids}
     single = date_from == date_to
@@ -728,6 +729,7 @@ def create_offer(lead, agent, lines, client_email, next_contact_at, next_contact
 
 PAIRING_MINUTES = 10
 DEVICE_ONLINE_SECONDS = 40
+LATEST_DIALER = "1.3"   # wersja w downloads/solid-dialer.apk (dialer-android/app/build.gradle)
 CALL_PICKUP_SECONDS = 120
 
 
@@ -792,8 +794,26 @@ def finish_call(device, call_id, answered, duration_seconds):
         lead_id=call.lead_id, agent=device.user, call_seconds__isnull=True, created_at__gte=call.created_at
     ).exclude(outcome__in=NON_CALL_OUTCOMES).order_by("created_at").first()
     if act and call.lead_id:
-        Activity.objects.filter(pk=act.pk).update(call_seconds=call.duration_seconds)
+        if not _voicemail(call, act):
+            Activity.objects.filter(pk=act.pk).update(call_seconds=call.duration_seconds)
     return call
+
+
+VOICEMAIL_MAX_SECONDS = 60   # dłuższe połączenie z wynikiem „Nie odebrał” to raczej pomyłka w wyniku niż poczta głosowa
+
+
+def _voicemail(call, activity):
+    """„Nie odebrał”, a telefon policzył kilkanaście sekund: odebrała poczta głosowa albo sekretarka sieci.
+
+    To nie jest rozmowa z klientem – połączenie przestaje liczyć się do minut rozmów (answered=False).
+    Zwraca True, gdy tak poprawiono."""
+    if activity.outcome != Activity.Outcome.NO_ANSWER or not call.answered:
+        return False
+    if (call.duration_seconds or 0) > VOICEMAIL_MAX_SECONDS:
+        return False
+    CallRequest.objects.filter(pk=call.pk).update(answered=False)
+    call.answered = False
+    return True
 
 
 def attach_call_time(activity):
@@ -805,7 +825,8 @@ def attach_call_time(activity):
         ended_at__gte=timezone.now() - timedelta(minutes=30),
     ).order_by("-ended_at").first()
     if call and not Activity.objects.filter(lead=activity.lead, call_seconds__isnull=False, created_at__gte=call.ended_at).exists():
-        Activity.objects.filter(pk=activity.pk).update(call_seconds=call.duration_seconds)
+        if not _voicemail(call, activity):
+            Activity.objects.filter(pk=activity.pk).update(call_seconds=call.duration_seconds)
 
 
 def dialer_status(user):
@@ -813,11 +834,15 @@ def dialer_status(user):
     now = timezone.now()
     device = DialerDevice.objects.filter(user=user).order_by("-last_seen").first()
     online = bool(device and device.last_seen and (now - device.last_seen).total_seconds() <= DEVICE_ONLINE_SECONDS)
-    call = CallRequest.objects.filter(user=user, created_at__gte=now - timedelta(minutes=15)).order_by("-created_at").first()
+    # tylko połączenia zlecone z CRM („Zadzwoń”); przychodzące i z rejestru telefonu pokazuje osobno pasek „Dzwoni…”
+    call = (CallRequest.objects.filter(user=user, created_at__gte=now - timedelta(minutes=15), from_phone=False)
+            .order_by("-created_at").first())
     return {
         "paired": device is not None,
         "online": online,
         "device_name": device.name if device else "",
+        "app_version": device.app_version if device else "",
+        "latest_version": LATEST_DIALER,
         # nagrywanie rozmów: włączone przez managera i czy telefon agenta umie nagrywać (None = stara aplikacja)
         "recording": RecordingConfig.get().active,
         "can_record": device.can_record if device else None,

@@ -14,6 +14,19 @@
   const longDay = (k) => new Date(k + "T12:00:00").toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" });
   let month = new Date(); month.setDate(1);
   let byDay = {}, openDay = null, toastTimer;
+  /* „Tylko umówione” (domyślnie) chowa automatyczne ponowne próby po „Nie odebrał”; wybór pamięta przeglądarka */
+  const CAL_KEY = "crm_cal_show_all";
+  let showAll = false;
+  try { showAll = localStorage.getItem(CAL_KEY) === "1"; } catch { /* brak dostępu */ }
+  function paintFilter() { document.querySelectorAll("[data-calf]").forEach((b) => b.setAttribute("aria-pressed", String((b.dataset.calf === "all") === showAll))); }
+  function wireFilter(reload) {
+    paintFilter();
+    document.querySelectorAll("[data-calf]").forEach((b) => b.addEventListener("click", () => {
+      showAll = b.dataset.calf === "all";
+      try { localStorage.setItem(CAL_KEY, showAll ? "1" : "0"); } catch { /* brak dostępu */ }
+      paintFilter(); reload();
+    }));
+  }
 
   function toast(msg, isError) {
     const t = $("toast"); if (!t) return;
@@ -24,7 +37,10 @@
   async function load() {
     $("m-title").textContent = month.toLocaleDateString("pl-PL", { month: "long", year: "numeric" });
     const r = await api(`/api/my-leads/month/?month=${month.getFullYear()}-${p2(month.getMonth() + 1)}`);
-    const leads = r.ok ? await r.json() : [];
+    const all = r.ok ? await r.json() : [];
+    const leads = showAll ? all : all.filter((l) => segOf(l) !== "retry" && segOf(l) !== "new");
+    const hidden = all.length - leads.length;
+    $("cal-hidden").innerHTML = hidden ? `Ukryte ponowne próby: <b>${hidden}</b> (pokaż: „Wszystko”)` : "";
     byDay = {};
     leads.forEach((l) => { const k = key(new Date(l.next_contact_at)); (byDay[k] = byDay[k] || []).push(l); });
     const start = new Date(month); start.setDate(1 - ((month.getDay() + 6) % 7));
@@ -62,7 +78,7 @@
           <div class="cal-item-kind">${esc(SEG_LABEL[seg])}${l.phone ? ` · ${esc(l.phone)}` : ""}${l.transferred_from ? ` · ↪ od ${esc(l.transferred_from)}` : ""}</div>
           ${l.next_contact_note ? `<div class="cal-item-note">Sprawa: ${esc(l.next_contact_note)}</div>` : ""}
         </div>
-        <div class="cal-item-actions"><a class="btn btn-primary" href="/crm/queue/?lead=${l.id}">Otwórz</a>${tel ? `<a class="btn btn-secondary" href="tel:${esc(tel)}">Zadzwoń</a>` : ""}</div>
+        <div class="cal-item-actions"><a class="btn btn-primary" href="/crm/queue/?lead=${l.id}">Otwórz</a>${tel ? `<a class="btn btn-secondary" href="tel:${esc(tel)}" data-lead="${l.id}">Zadzwoń</a>` : ""}</div>
       </article>`;
     }).join("") : `<p class="muted">Tego dnia nic nie jest umówione. Kliknij „+ Dodaj callback”, żeby umówić kontakt.</p>`;
   }
@@ -126,6 +142,7 @@
     finally { $("cb-ok").disabled = false; }
   }
 
+  wireFilter(load);
   $("cal-grid").addEventListener("click", (e) => { const day = e.target.closest("[data-day]"); if (day) showDay(day.dataset.day); });
   $("cal-grid").addEventListener("keydown", (e) => { const day = e.target.closest("[data-day]"); if (day && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDay(day.dataset.day); } });
   $("day-close").addEventListener("click", () => $("day-dialog").close());

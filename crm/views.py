@@ -69,6 +69,8 @@ from .services import (
     InvalidAssignment,
     NoLeadsAvailable,
     UndoNotPossible,
+    ReopenNotPossible,
+    reopen_lead,
     base_progress,
     day_summary,
     undo_activity,
@@ -713,6 +715,17 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             Activity.objects.create(lead=lead, agent=request.user, outcome=Activity.Outcome.NOTE,
                                     note=f"Callback dodany w kalendarzu: {when}" + (f" – {note}" if note else ""))
         return Response(LeadSerializer(self.get_queryset().get(pk=lead.pk), context=self.get_serializer_context()).data)
+
+    @extend_schema(request=None, responses=LeadSerializer)
+    @action(detail=True, methods=["post"])
+    def reopen(self, request, pk=None):
+        """„Przywróć do dzwonienia”: zamknięty klient (pominięty, odmowa, zły numer) wraca do pracy agenta."""
+        lead = get_object_or_404(visible_to(request.user, Lead.objects.all(), "owner"), pk=pk)
+        try:
+            reopen_lead(lead, request.user, is_manager=is_manager(request.user))
+        except ReopenNotPossible as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(LeadSerializer(Lead.objects.get(pk=lead.pk), context=self.get_serializer_context()).data)
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=["get"])

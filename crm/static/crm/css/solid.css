@@ -86,7 +86,7 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .w-seg.all{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:space-between;--c:var(--brand)}
 
 .w-tabs{display:flex;gap:4px;background:var(--track);border-radius:10px;padding:3px;margin-bottom:8px}
-.w-tabs button{flex:1;border:0;background:none;border-radius:8px;padding:.4rem;font:inherit;font-size:.88rem;font-weight:600;color:var(--muted);cursor:pointer}
+.w-tabs button{flex:1 1 auto;white-space:nowrap;border:0;background:none;border-radius:8px;padding:.4rem .3rem;font:inherit;font-size:.88rem;font-weight:600;color:var(--muted);cursor:pointer}
 .w-tabs button[aria-selected=true]{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 
 /* lista kontaktów */
@@ -103,6 +103,18 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .w-item .wi-sub{display:block;font-size:.8rem;color:var(--muted);margin-top:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-item .wi-topic{display:block;font-size:.8rem;margin-top:.2rem;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-item .wi-topic::before{content:"↳ ";color:var(--muted)}
+/* zakładka SMS: SMS-y od klientów (cała treść, nie ucinamy) */
+.w-sms-badge{display:inline-block;min-width:1.2rem;padding:0 .35rem;margin-left:.2rem;border-radius:99px;background:#ef4444;color:#fff;font-size:.7rem;line-height:1.2rem}
+.w-sms-badge[hidden]{display:none}
+.w-item.sms{cursor:default;display:flex;flex-direction:column;gap:.4rem}
+.w-item.sms.unseen{background:color-mix(in srgb,var(--c) 10%,var(--card))}
+.w-sms-open{all:unset;display:block;cursor:pointer;min-width:0}
+.w-item .wi-out{display:block;font-size:.76rem;font-weight:700;color:var(--c)}
+.w-item .w-sms-text{white-space:pre-wrap;overflow:visible;color:var(--ink);font-size:.86rem;overflow-wrap:anywhere}
+.w-item.sms .btn-mini{align-self:flex-start}
+.w-sms-filter{display:flex;gap:2px;background:var(--track);border-radius:9px;padding:3px;margin-bottom:8px}
+.w-sms-filter button{flex:1;border:0;background:none;border-radius:7px;padding:.3rem .4rem;font:inherit;font-size:.8rem;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
+.w-sms-filter button[aria-pressed=true]{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .w-empty{color:var(--muted);font-size:.88rem;padding:.8rem .3rem;text-align:center}
 .w-item.hist{border-left-color:var(--c)}
 .w-item.hist .wi-out{font-size:.78rem;font-weight:700;color:var(--c)}
@@ -283,6 +295,12 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .cal-tabs a{padding:.42rem 1rem;border-radius:8px;color:var(--muted);text-decoration:none;font-weight:600;font-size:.92rem}
 .cal-tabs a.active{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.14)}
 .cal-head{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.cal-tabs-row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:.6rem}
+.cal-filter{display:inline-flex;background:var(--track);border-radius:10px;padding:3px;gap:2px}
+.cal-filter button{border:0;background:none;padding:.42rem 1rem;border-radius:8px;color:var(--muted);font:inherit;font-weight:600;font-size:.92rem;line-height:inherit;cursor:pointer}
+.cal-filter button[aria-pressed=true]{background:var(--card);color:var(--brand-text);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+.cal-hidden{margin-left:auto;color:var(--muted)}.cal-hidden b{color:var(--ink)}
+.plan-hidden{margin-top:.8rem}
 .cal-head h2{margin:0 .4rem;font-size:1.25rem;min-width:11rem;text-align:center}
 .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--line);gap:1px;margin-top:1rem}
 .cal-grid .dow{background:var(--bg);padding:.45rem .6rem;font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase}
@@ -386,12 +404,24 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .w-meta{margin-top:.7rem;font-size:.8rem;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .5rem}
 .w-meta .sep{opacity:.5}
 .w-meta .copy-btn,.w-meta button{font-size:.75rem}
-.w-step-net{margin-top:.6rem}
-.w-net>span{display:block;font-weight:600;margin-bottom:.4rem}
-.w-net small{font-weight:400}
-.w-contract{margin-top:.8rem}.w-contract>span{display:block;font-weight:600;margin-bottom:.4rem}.w-contract small{font-weight:400}
+/* sieć klienta i koniec umowy: stale w karcie, nad „Jak poszła rozmowa?” */
+.w-netbox{display:flex;flex-direction:column;gap:.6rem;margin-top:1rem;padding:.85rem 1rem;border-radius:12px;background:var(--bg);border:1px solid var(--line)}
+.w-net,.w-contract{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem .7rem}
+.w-nb-l{flex:0 0 5.6rem;font-size:.8rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)}
+.w-net .w-chip{padding:.32rem .85rem;font-size:.9rem;background:var(--card);border-color:color-mix(in srgb,var(--ink) 22%,var(--line))}
+.w-net .w-chip[aria-pressed=true]{background:var(--brand);border-color:var(--brand)}
+.w-net .w-ops button[data-op=tmobile][aria-pressed=true]{background:#e20074;border-color:#e20074}
+.w-ct-row select{background:var(--card);color:var(--ink);border-color:color-mix(in srgb,var(--ink) 22%,var(--line))}
+.w-ct-row .w-chip{background:var(--card);border-color:color-mix(in srgb,var(--ink) 22%,var(--line))}
+.w-ct-row .w-chip[aria-pressed=true]{background:var(--brand);border-color:var(--brand)}
+.w-net .w-chip:disabled{cursor:default;opacity:.7}
+.w-tm-hint{font-size:.85rem;color:#f472b6;font-weight:600}
 .w-ct-row{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}.w-ct-row select{width:auto;min-width:8.5rem}
-.w-contract .w-info{margin:.45rem 0 0}
+.w-ct-row .w-chip{padding:.28rem .75rem;font-size:.85rem}
+.w-ct-info{flex-basis:100%;margin:0 0 0 6.3rem;font-size:.86rem;color:var(--muted)}.w-ct-info b{color:var(--ink)}
+@media(max-width:700px){.w-ct-info{margin-left:0}}
+.w-reopen{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;border-color:color-mix(in srgb,var(--brand) 45%,var(--line))}
+.w-reopen>div{flex:1 1 20rem;font-size:.92rem}
 .phrases[hidden]{display:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* samouczek */
@@ -578,7 +608,7 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 .w-info-head label{font-size:.75rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .w-info-by{font-size:.78rem;color:var(--muted)}.w-info-by b{color:var(--ink);font-weight:600}
 .w-info-head .w-status{margin-left:auto}
-.w-info textarea{width:100%;background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;font:inherit;resize:vertical;min-height:2.8rem}
+.w-info textarea{width:100%;background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;font:inherit;resize:none;overflow:hidden;min-height:2.8rem}
 
 /* Ustawienia: dni pracy (przełączniki) i kolejne próby po nieodebranym umówionym terminie */
 .rule .rule-label{font-weight:700;font-size:.9rem}
@@ -625,6 +655,7 @@ html[data-noteam] .topnav [data-team-only]{display:none}
 #lead-pane { transition: opacity .12s; }
 #lead-pane.w-busy { opacity: .55; pointer-events: none; }
 .w-psec{margin:.3rem 0 -.2rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.w-psec:not(:first-child){margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--line)}
+.w-toggle button:disabled{opacity:.4;cursor:not-allowed}
 .w-term-hint{display:block;margin-top:.25rem;font-size:.75rem;color:var(--warn)}
 .w-pmode{margin-top:.7rem}.w-pmode button{font-size:.95rem;padding-left:1.1rem;padding-right:1.1rem}
 /* Ustawienia → SMS z przypomnieniem */

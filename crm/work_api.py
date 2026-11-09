@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from .models import DialerDevice, Lead, Offer, OfferConfig, Product, RecordingConfig
+from .models import DialerDevice, Lead, Offer, OfferConfig, Product, RecordingConfig, SmsReminder
 from .permissions import IsAgentOrManager, IsManager
 from .roles import is_manager, visible_to
 from .serializers import LeadDetailSerializer, LeadSerializer
@@ -461,7 +461,8 @@ class DialerPollView(DialerDeviceAuthMixin, APIView):
             sms = next_sms(request.auth)
             if sms is not None:
                 return Response({"type": "sms", "id": sms.pk, "phone": sms.phone, "text": sms.text,
-                                 "name": sms.lead.display_name if sms.lead else "próbny SMS"})
+                                 "name": sms.lead.display_name if sms.lead else
+                                 ("na Twój telefon" if sms.kind == SmsReminder.Kind.SELF else "próbny SMS")})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

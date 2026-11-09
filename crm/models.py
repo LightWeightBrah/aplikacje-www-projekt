@@ -474,6 +474,8 @@ class AgentProfile(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(60)],
         help_text="Własny cel tej osoby; puste = cel zespołu ustawiony przez managera (domyślnie 15).",
     )
+    # „Wyślij na mój telefon”: prywatny numer agenta (SMS idzie z telefonu z dialerem)
+    private_phone = models.CharField("mój prywatny numer", max_length=30, blank=True)
     avatar = models.TextField(
         "zdjęcie profilowe",
         blank=True,
@@ -697,7 +699,12 @@ class DialerPairing(models.Model):
 
 
 class CallRequest(models.Model):
-    """Połączenie zlecone z CRM: telefon je wybiera i odsyła wynik (czy odebrał, ile trwało)."""
+    """Połączenie zlecone z CRM: telefon je wybiera i odsyła wynik (czy odebrał, ile trwało).
+
+    Od dialera 1.3 także połączenia, których CRM nie zlecał (z rejestru połączeń telefonu, tylko z numerami
+    klientów z CRM): klient oddzwonił do agenta (direction=in) albo agent wybrał numer ręcznie na telefonie.
+    Dzięki temu minuty rozmów liczą się ze wszystkich rozmów z klientami. Gdy klient dzwoni, telefon od razu
+    zgłasza to CRM (stan „dzwoni”, direction=in) – CRM pokazuje wtedy agentowi, kto dzwoni."""
 
     class State(models.TextChoices):
         PENDING = "pending", "Czeka na telefon"
@@ -705,12 +712,19 @@ class CallRequest(models.Model):
         DONE = "done", "Zakończone"
         CANCELLED = "cancelled", "Anulowane"
 
+    class Direction(models.TextChoices):
+        OUT = "out", "Wychodzące"
+        IN = "in", "Przychodzące"
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="call_requests")
     lead = models.ForeignKey(Lead, on_delete=models.CASCADE, null=True, blank=True, related_name="call_requests")
     phone = models.CharField(max_length=30)
     state = models.CharField(max_length=10, choices=State.choices, default=State.PENDING, db_index=True)
     answered = models.BooleanField(null=True, blank=True)
     duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    direction = models.CharField(max_length=3, choices=Direction.choices, default=Direction.OUT)
+    # True = z rejestru połączeń telefonu (CRM tego połączenia nie zlecał)
+    from_phone = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
@@ -799,6 +813,7 @@ class SmsReminder(models.Model):
         TALKED = "talked", "Po rozmowie"
         STRANGER = "stranger", "Umówiony tylko termin"
         TEST = "test", "Próbny"
+        SELF = "self", "Na mój telefon"     # agent wysyła sobie tekst / link do pliku na prywatny numer
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sms_reminders")
     # puste przy próbnym SMS-ie (wysłanym z ustawień na wpisany numer)
@@ -913,3 +928,52 @@ class ActivationCode(models.Model):
     class Meta:
         verbose_name = "Kod aktywacji urządzenia"
         verbose_name_plural = "Kody aktywacji urządzeń"
+
+
+class IncomingSms(models.Model):
+    """SMS, który przyszedł na telefon agenta z dialerem – tylko dotyczący klientów z CRM.
+
+    - „od klienta”: z numeru klienta (np. klient przysłał e-mail SMS-em),
+    - „dostępny”: wiadomość od sieci, że numer klienta jest już dostępny / włączony (można dzwonić),
+    - „informacja”: inna wiadomość od sieci o numerze klienta (np. „dzwonił do Ciebie”).
+    Inne SMS-y (prywatne, reklamy) nie są zapisywane. Kasowane po SMS_KEEP_DAYS dniach (crm/phone.py)."""
+
+    class Kind(models.TextChoices):
+        CLIENT = "client", "Od klienta"
+        AVAILABLE = "available", "Numer już dostępny"
+        INFO = "info", "Informacja od sieci"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="incoming_sms")
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="incoming_sms")
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.CLIENT)
+    sender = models.CharField("nadawca", max_length=40)
+    text = models.TextField("treść")
+    received_at = models.DateTimeField("odebrany")
+    seen = models.BooleanField("przeczytany", default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "SMS od klienta"
+        verbose_name_plural = "SMS-y od klientów"
+        ordering = ["-received_at"]
+        constraints = [models.UniqueConstraint(fields=["user", "sender", "received_at"], name="incoming_sms_once")]
+
+    def __str__(self):
+        return f"{self.get_kind_display()}: {self.sender}"
+
+
+class SharedFile(models.Model):
+    """„Wyślij plik na mój telefon”: plik czeka 24 godziny pod jednorazowym, losowym linkiem z SMS-a."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="shared_files")
+    name = models.CharField(max_length=200)
+    content_type = models.CharField(max_length=100, blank=True)
+    data = models.BinaryField()
+    size = models.PositiveIntegerField(default=0)
+    token = models.CharField(max_length=40, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    downloads = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Plik na telefon"
+        verbose_name_plural = "Pliki na telefon"

@@ -139,7 +139,7 @@ def flood_block(phone, rules=None, now=None):
         return "brak numeru"
     recent = SmsReminder.objects.filter(
         phone__endswith=tail, state__in=(SmsReminder.State.SENDING, SmsReminder.State.SENT),
-    )
+    ).exclude(kind=SmsReminder.Kind.SELF)
     last = recent.filter(created_at__gte=now - timedelta(minutes=rules.sms_min_gap_minutes)).order_by("-created_at").first()
     if last:
         wait = rules.sms_min_gap_minutes - int((now - last.created_at).total_seconds() // 60)
@@ -166,13 +166,14 @@ def has_phone(user):
 
 
 def _next_test_sms(device, now):
+    """Próbny SMS z ustawień albo „na mój telefon” (agent sam do siebie – bez blokady serii SMS-ów)."""
     with transaction.atomic():
         sms = (SmsReminder.objects.select_for_update()
-               .filter(user=device.user, kind=SmsReminder.Kind.TEST, state=SmsReminder.State.QUEUED,
-                       created_at__gte=now - TEST_SMS_VALID)
+               .filter(user=device.user, kind__in=(SmsReminder.Kind.TEST, SmsReminder.Kind.SELF),
+                       state=SmsReminder.State.QUEUED, created_at__gte=now - TEST_SMS_VALID)
                .order_by("created_at").first())
         if sms:
-            blocked = flood_block(sms.phone, now=now)
+            blocked = None if sms.kind == SmsReminder.Kind.SELF else flood_block(sms.phone, now=now)
             sms.state = SmsReminder.State.FAILED if blocked else SmsReminder.State.SENDING
             sms.error = f"zablokowany: {blocked}" if blocked else ""
             sms.save(update_fields=["state", "error"])

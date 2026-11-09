@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import device_api, recordings_api, reports_api, rules_api, users_api, views, work_api
+from . import device_api, phone_api, recordings_api, reports_api, rules_api, users_api, views, work_api
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -52,6 +52,14 @@ urlpatterns = [
     path("dialer/calls/<int:pk>/finish/", work_api.DialerFinishView.as_view(), name="dialer-finish"),
     path("dialer/sms/<int:pk>/done/", work_api.DialerSmsDoneView.as_view(), name="dialer-sms-done"),
     path("dialer/calls/<int:pk>/recording/", recordings_api.DialerRecordingView.as_view(), name="dialer-recording"),
+    # telefon zgłasza, co się na nim dzieje (dzwoni klient, rejestr połączeń, SMS-y) – crm/phone.py
+    path("dialer/phone/ring/", phone_api.DialerRingView.as_view(), name="dialer-ring"),
+    path("dialer/phone/log/", phone_api.DialerCallLogView.as_view(), name="dialer-call-log"),
+    path("dialer/phone/sms/", phone_api.DialerIncomingSmsView.as_view(), name="dialer-incoming-sms"),
+    path("phone/live/", phone_api.PhoneLiveView.as_view(), name="phone-live"),
+    path("phone/sms/", phone_api.PhoneSmsView.as_view(), name="phone-sms"),
+    path("phone/self/", phone_api.PhoneSelfView.as_view(), name="phone-self"),
+    path("phone/self/<int:pk>/", phone_api.PhoneSelfStateView.as_view(), name="phone-self-state"),
     # nagrywanie rozmów (opcjonalne, manager)
     path("recordings/", recordings_api.RecordingListView.as_view(), name="recordings"),
     path("recordings/<int:pk>/audio/", recordings_api.RecordingAudioView.as_view(), name="recording-audio"),

@@ -30,7 +30,7 @@ def fiber(speed):
     return features(
         f"Prędkość światłowodu: {speed}",
         "Internet światłowodowy: bez limitu danych",
-        "Opłata za przyłączenie do sieci: 25,00 zł netto",
+        "Opłata za przyłączenie do sieci: 1,00 zł netto",
     )
 
 
@@ -53,10 +53,12 @@ def fiber_info(home):
         f"Cena dla: {where}",
         "Prędkość zależy tylko od taryfy (M 300 / L 600 / VIP 900 Mb/s) – blok i dom różnią się tylko ceną",
         "Umowa na 24 miesiące, router HOME BOX w cenie",
-        "Promocja „6 miesięcy za 0 zł”: przez 6 miesięcy 0 zł, potem cena standardowa",
-        "Promocja „12 miesięcy za 50 zł” (dom 60 zł) – w zestawie z Kontraktem Podstawowym; od 13. miesiąca 85 / 105 / 140 zł (dom +10 zł)",
-        "Promocja „12 miesięcy za 10 zł” (regulamin od 14.03.2026) – tylko w zestawie z Kontraktem Podstawowym, z e-fakturą "
-        "i zgodami marketingowymi (bez tych rabatów 35 zł); od 13. miesiąca cena standardowa; przyłączenie 1 zł",
+        "Jedyna promocja na światłowód: „12 miesięcy za 10 zł”, od 13. miesiąca cena standardowa "
+        "(potwierdzone 09.11.2026; „6 miesięcy za 0 zł” i „12 miesięcy za 50 zł” na światłowód NIE obowiązują)",
+        "Cena 10 zł i ceny od 13. miesiąca są po rabatach (regulamin z 14.03.2026): zestaw z Kontraktem Podstawowym "
+        "na jednej fakturze −10 zł, e-faktura i terminowe płatności −10 zł, zgody marketingowe −5 zł; bez rabatów 35 zł "
+        "w pierwszych 12 miesiącach",
+        "Przyłączenie do sieci 1 zł netto; po 24 miesiącach abonament rośnie o 10 zł netto",
         "Przed sprzedażą sprawdź dostępność światłowodu pod adresem klienta",
     )
 
@@ -66,7 +68,7 @@ def kp_features():
         "Nielimitowane rozmowy, SMS-y i MMS-y w kraju i w roamingu UE",
         "Internet w kraju bez limitu danych, prędkość do 150 Mb/s",
         "100 minut na połączenia z Polski do innych krajów UE",
-        "Roaming w UE: 23 GB",
+        "Roaming w UE: 23 GB (po wyczerpaniu 4,73 zł netto za 1 GB)",
         "Każdy kolejny numer (Kontrakt Dodatkowy): 25,00 zł netto, internet do 30 Mb/s",
     )
 
@@ -74,7 +76,7 @@ def kp_features():
 def kp_info():
     return features(
         "Sam numer głosowy, bez karty internetowej – np. do zestawu ze światłowodem "
-        "(promocje „12 miesięcy za 50 zł” i „12 miesięcy za 10 zł” wymagają Kontraktu Podstawowego)",
+        "(promocja światłowodu „12 miesięcy za 10 zł” wymaga Kontraktu Podstawowego)",
         "W taryfach S / M100 / M / L / VIP Kontrakt Podstawowy jest już w środku (pierwszy numer) – nie dodawaj go osobno",
         "Promocja: 6 miesięcy za 0 zł, potem 40 zł netto",
         "Minuty do UE: 100 bez telefonu, 200 z telefonem; kraje spoza UE nie wchodzą w pakiet",
@@ -112,17 +114,14 @@ def tv(channels, plan_l):
 
 D = Decimal
 NONE = None   # brak promocji (telewizja)
-# Promocja światłowodu z wzornika: 12 miesięcy po 50 zł (dom +10 zł), od 13. miesiąca 85 / 105 / 140 zł (dom +10 zł)
-FIBER_PROMO = "12 miesięcy za 50 zł"
+# Jedyna promocja światłowodu (potwierdzone 09.11.2026): 12 miesięcy po 10 zł, od 13. miesiąca cena standardowa.
+# „6 miesięcy za 0 zł” jest tylko na numery, „12 miesięcy za 50 zł” na światłowód już nie ma.
+FIBER_PROMO = "12 miesięcy za 10 zł"
 
 
-def fiber_extra(month_price, home, standard):
-    """Światłowód ma trzy promocje (materiały ze szkolenia): główna 12×50 zł i do wyboru 6×0 zł albo 12×10 zł."""
-    return {"promo_label": FIBER_PROMO, "promo_months": 12, "promo_month_price": month_price, "info": fiber_info(home),
-            "promos": [
-                {"label": "6 miesięcy za 0 zł", "months": 6, "month_price": "0.00", "price": f"{standard}.00"},
-                {"label": "12 miesięcy za 10 zł", "months": 12, "month_price": "10.00", "price": f"{standard}.00"},
-            ]}
+def fiber_extra(home):
+    return {"promo_label": FIBER_PROMO, "promo_months": 12, "promo_month_price": D("10"), "info": fiber_info(home),
+            "promos": []}
 
 # nazwa, cena netto 1. numeru / sztuki, cena po promocji, każdy kolejny numer, punkty oferty, dodatki:
 # inna promocja niż „6 miesięcy gratis” (promo_label, promo_months, promo_month_price), inne promocje
@@ -145,12 +144,12 @@ STANDARD_TARIFFS = (
      {"info": features("Najtańszy numer: 15 zł netto, umowa na 24 miesiące",
                        "Po wyczerpaniu limitu w UE: 7,48 zł netto za 1 GB")}),
     # Magenta Światłowód Biznes (umowa na 24 miesiące) – cena zależy od zabudowy: blok (MFH) albo dom (SFH)
-    ("Światłowód M – blok", D("45"), D("85"), D("0"), fiber("do 300 Mb/s"), fiber_extra(D("50"), False, 45)),
-    ("Światłowód M – dom", D("55"), D("95"), D("0"), fiber("do 300 Mb/s"), fiber_extra(D("60"), True, 55)),
-    ("Światłowód L – blok", D("65"), D("105"), D("0"), fiber("do 600 Mb/s"), fiber_extra(D("50"), False, 65)),
-    ("Światłowód L – dom", D("75"), D("115"), D("0"), fiber("do 600 Mb/s"), fiber_extra(D("60"), True, 75)),
-    ("Światłowód VIP – blok", D("100"), D("140"), D("0"), fiber("do 900 Mb/s"), fiber_extra(D("50"), False, 100)),
-    ("Światłowód VIP – dom", D("110"), D("150"), D("0"), fiber("do 900 Mb/s"), fiber_extra(D("60"), True, 110)),
+    ("Światłowód M – blok", D("45"), D("45"), D("0"), fiber("do 300 Mb/s"), fiber_extra(False)),
+    ("Światłowód M – dom", D("55"), D("55"), D("0"), fiber("do 300 Mb/s"), fiber_extra(True)),
+    ("Światłowód L – blok", D("65"), D("65"), D("0"), fiber("do 600 Mb/s"), fiber_extra(False)),
+    ("Światłowód L – dom", D("75"), D("75"), D("0"), fiber("do 600 Mb/s"), fiber_extra(True)),
+    ("Światłowód VIP – blok", D("100"), D("100"), D("0"), fiber("do 900 Mb/s"), fiber_extra(False)),
+    ("Światłowód VIP – dom", D("110"), D("110"), D("0"), fiber("do 900 Mb/s"), fiber_extra(True)),
     # Magenta TV – ceny netto z rabatami (brutto z VAT 8%: 20 / 50 / 80 zł)
     # liczby kanałów jak na t-mobile.pl (lista z 1.07.2026); wzornik 11.0 miał jeszcze 85 / 147 / 193
     ("Magenta TV S", D("18.52"), NONE, D("0"), tv(CHANNEL_COUNTS["S"], True), {"info": tv_info("S")}),

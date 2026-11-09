@@ -12,8 +12,8 @@
     <script>try{var z=parseFloat(localStorage.getItem("crm_text_size"));if(z>=0.8&&z<=1.5&&z!==1)document.documentElement.style.setProperty("--ts",z)}catch(e){}</script>
     {# zanim cokolwiek się narysuje: rola (menu bez mignięcia) i ukrycie treści do czasu wczytania danych (app.js zdejmuje klasę; awaryjnie po 4 s) #}
     <script>(function(d){d.classList.add("crm-loading");setTimeout(function(){d.classList.remove("crm-loading","crm-loading-slow")},4000);try{var u=JSON.parse(localStorage.getItem("crm_user")||"null");if(u){d.dataset.role=u.role;if(u.role!=="manager"&&u.can_view_team===false)d.dataset.noteam="1"}}catch(e){}})(document.documentElement)</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=134">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=134">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=139">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=139">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -78,6 +78,7 @@
                 <button type="button" data-text-size="1.35" title="Bardzo duża" style="font-size:1.18rem">A</button>
             </div>
             <button type="button" class="pop-item" id="dialer-open">Telefon (dialer)…</button>
+            <button type="button" class="pop-item" data-self-open>Wyślij na mój telefon…</button>
             <button type="button" class="pop-item" id="notif-open">Moje ustawienia…</button>
             <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
             <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
@@ -199,6 +200,24 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
         </div>
     </form>
 </dialog>
+<dialog id="self-dialog" class="dialog">
+    <form id="self-form" novalidate>
+        <h2>Wyślij na mój telefon</h2>
+        <p class="muted small">Tekst albo plik z komputera idzie SMS-em na Twój prywatny numer – wysyła go telefon z Solid Dialer (jak zwykły SMS z abonamentu). Plik dostaniesz jako link, ważny 24 godziny.</p>
+        <p class="form-error" id="self-nophone" hidden>Najpierw połącz telefon z Solid Dialer (menu konta → Telefon).</p>
+        <label class="field">Mój prywatny numer<input id="self-phone" class="select" maxlength="30" inputmode="tel" autocomplete="off" placeholder="np. 600 100 200"></label>
+        <label class="field">Tekst<textarea id="self-text" class="select" rows="4" maxlength="600" placeholder="np. adres klienta, numer, notatka"></textarea></label>
+        <div class="field">Plik (opcjonalnie, do 10 MB)
+            <div class="self-file-row"><label class="btn btn-secondary self-file-btn">Wybierz plik<input type="file" id="self-file" hidden></label><span class="muted small" id="self-file-name"></span></div>
+        </div>
+        <p class="form-error" id="self-error" hidden></p>
+        <p class="small" id="self-state" role="status"></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="self-cancel">Zamknij</button>
+            <button type="submit" class="btn btn-primary" id="self-ok">Wyślij SMS</button>
+        </div>
+    </form>
+</dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
 {% comment %}
 Zakładki otwierają się szybciej: Chrome pobiera w tle sam plik strony (prefetch), zanim agent kliknie.
@@ -218,12 +237,13 @@ całą kartę (sprawdzone u Juliana 09.11.2026 – po wyłączeniu wstępnego wc
    {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
   "eagerness": "moderate"}]}
 </script>
-<script src="{% static 'crm/js/app.js' %}?v=134"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=134"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=134"></script>
-<script src="{% static 'crm/js/search.js' %}?v=134"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=134"></script>
-<script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();</script>
+<script src="{% static 'crm/js/app.js' %}?v=139"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=139"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=139"></script>
+<script src="{% static 'crm/js/search.js' %}?v=139"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=139"></script>
+<script src="{% static 'crm/js/live.js' %}?v=139"></script>
+<script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();CRM.initPhone();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

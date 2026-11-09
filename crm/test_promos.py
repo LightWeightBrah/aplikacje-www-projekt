@@ -100,8 +100,8 @@ class PromoListTests(CrmTestBase):
         self.assertIn("JUMP proFirma XS", created)
         old.refresh_from_db(); tv.refresh_from_db()
         self.assertEqual(old.price, Decimal("44"))            # cena managera zostaje
-        self.assertEqual(len(old.promos), 2)
-        self.assertEqual((old.promo_price, old.promo_label), (Decimal("85"), "12 miesięcy za 50 zł"))
+        self.assertEqual(old.promos, [])                       # światłowód ma jedną promocję
+        self.assertEqual((old.promo_price, old.promo_label), (Decimal("45"), "12 miesięcy za 10 zł"))
         self.assertIn("Polsat", tv.info)
         self.assertEqual(load_standard_tariffs()[1], [])       # drugi raz nic się nie zmienia
 

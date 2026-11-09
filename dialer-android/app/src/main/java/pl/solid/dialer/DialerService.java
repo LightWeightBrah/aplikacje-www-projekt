@@ -45,6 +45,7 @@ public class DialerService extends Service {
 
     private Thread worker;
     private PowerManager.WakeLock wakeLock;
+    private PhoneWatcher watcher;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -62,6 +63,9 @@ public class DialerService extends Service {
             wakeLock.acquire(12 * 60 * 60 * 1000L);   // maks. 12 h dnia pracy
             worker = new Thread(this::loop, "dialer-poll");
             worker.start();
+            // kto dzwoni, rejestr połączeń i SMS-y od klientów (dialer 1.3)
+            watcher = new PhoneWatcher(getApplicationContext(), Api.server(this), Api.token(this));
+            watcher.start();
         }
         return START_STICKY;
     }
@@ -70,6 +74,7 @@ public class DialerService extends Service {
     public void onDestroy() {
         running = false;
         if (worker != null) worker.interrupt();
+        if (watcher != null) watcher.stop();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         lastState = "Zatrzymany";
         super.onDestroy();
@@ -98,6 +103,7 @@ public class DialerService extends Service {
                     setState("Dialer gotowy do pracy");
                     // nagrania, których nie udało się wysłać (np. brak internetu), próbujemy co minutę
                     if (System.currentTimeMillis() - lastUploadTry > 60000) uploadPending(base, token);
+                    if (watcher != null) watcher.tick();
                 } else if (r.status == 401) {
                     setState("Telefon odłączony od CRM – sparuj go ponownie");
                     running = false;
@@ -138,8 +144,8 @@ public class DialerService extends Service {
             if (recording) setState("Dzwonię (nagrywam): " + (name.isEmpty() ? phone : name));
         }
 
-        // Rozmowa kończy się wpisem w rejestrze połączeń: czekamy na niego (maks. 30 min)
-        long deadline = placedAt + 30 * 60 * 1000L;
+        // Rozmowa kończy się wpisem w rejestrze połączeń: czekamy na niego (maks. 4 h – długa rozmowa też się liczy)
+        long deadline = placedAt + 4 * 60 * 60 * 1000L;
         try {
             while (running && System.currentTimeMillis() < deadline) {
                 Thread.sleep(2000);

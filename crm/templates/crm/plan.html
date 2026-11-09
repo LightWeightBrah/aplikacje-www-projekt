@@ -5,7 +5,12 @@
 {% block content %}
 <header class="page-head">
     <div>
-        <div class="cal-tabs" style="margin-bottom:.6rem"><a href="/crm/plan/" class="active">Dzień</a><a href="/crm/calendar/">Miesiąc</a></div>
+        <div class="cal-tabs-row"><div class="cal-tabs"><a href="/crm/plan/" class="active">Dzień</a><a href="/crm/calendar/">Miesiąc</a></div>
+            <div class="cal-filter" role="group" aria-label="Co pokazywać">
+            <button type="button" data-calf="important" title="Oferty, zainteresowani i oddzwonienia umówione z klientem – bez automatycznych ponownych prób">Tylko umówione</button>
+            <button type="button" data-calf="all" title="Także ponowne próby po „Nie odebrał” (ustawiane automatycznie)">Wszystko</button>
+        </div>
+        </div>
         <h1>Plan dnia</h1>
         <p class="muted" id="subtitle">Ładowanie…</p>
     </div>
@@ -33,5 +38,5 @@
 </section>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=134"></script>
+{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=139"></script>
 <script>CRM.initPlan();</script>{% endblock %}

@@ -318,6 +318,54 @@ def undo_activity(activity, user, is_manager=False):
     return Lead.objects.get(pk=lead.pk)
 
 
+class ReopenNotPossible(Exception):
+    """Klienta nie da się przywrócić (nie jest zamknięty, jest sprzedany albo prowadzi go ktoś inny)."""
+
+
+REOPENABLE_STATUSES = (Lead.Status.LOST, Lead.Status.DO_NOT_CALL, Lead.Status.UNREACHABLE)
+
+
+def reopen_lead(lead, user, is_manager=False):
+    """„Przywróć do dzwonienia”: zamknięty klient (pominięty, odmowa, zły numer) wraca do pracy.
+
+    Po pomyłce, której nie zdążono cofnąć w 10 sekund (np. „Pomiń firmę” zamiast oferty, bo zadzwonił
+    inny klient). Klient wraca do stanu sprzed wpisu, który go zamknął (termin, sprawa, status), a gdy
+    tego stanu nie ma – jako „oddzwonić teraz”. W historii zostaje notatka, wpis zamykający też zostaje.
+    """
+    with transaction.atomic():
+        lead = Lead.objects.select_for_update().get(pk=lead.pk)
+        if lead.status == Lead.Status.WON:
+            raise ReopenNotPossible("Sprzedanego klienta nie przywracamy – dopisz nową rozmowę w historii.")
+        if lead.status not in REOPENABLE_STATUSES:
+            raise ReopenNotPossible("Ten klient nie jest zamknięty.")
+        if lead.owner_id not in (None, user.pk) and not is_manager:
+            raise ReopenNotPossible("Tego klienta prowadzi inny agent.")
+        closing = (Activity.objects.filter(lead_id=lead.pk).exclude(outcome=Activity.Outcome.NOTE)
+                   .order_by("-created_at", "-pk").first())
+        state = (closing.undo_state if closing else None) or {}
+        now = timezone.now()
+        changes = {"owner_id": lead.owner_id or user.pk, "last_activity_at": now}
+        if lead.owner_id is None:
+            changes["claimed_at"] = now
+        before = state.get("status")
+        if before in ACTIVE_STATUSES:
+            changes["status"] = before
+            for field in ("next_contact_at", "next_contact_note", "agreed_contact_at", "missed_calls"):
+                if field in state:
+                    changes[field] = _restore_value(field, state[field])
+        else:
+            changes.update(status=Lead.Status.CALLBACK, next_contact_at=now, next_contact_note="", missed_calls=0)
+        if changes["status"] == Lead.Status.CALLBACK and not changes.get("next_contact_at"):
+            changes["next_contact_at"] = now   # „oddzwonić” zawsze ma termin
+        Lead.objects.filter(pk=lead.pk).update(**changes)
+        what = closing.get_outcome_display().lower() if closing else "zamknięty"
+        if closing and closing.outcome == Activity.Outcome.SKIPPED:
+            what = "pominięty" + (f" ({closing.skip_reason})" if closing.skip_reason else "")
+        Activity.objects.create(lead=lead, agent=user, outcome=Activity.Outcome.NOTE,
+                                note=f"Przywrócony do dzwonienia (wcześniej: {what}).")
+    return Lead.objects.get(pk=lead.pk)
+
+
 def add_sale_items(activity, lines):
     """Zapisuje pozycje sprzedaży do rozmowy „Sprzedane”.
 

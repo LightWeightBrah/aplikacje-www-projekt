@@ -178,6 +178,7 @@ public class MainActivity extends Activity {
         need.add(Manifest.permission.READ_CALL_LOG);
         need.add(Manifest.permission.READ_PHONE_STATE);
         need.add(Manifest.permission.SEND_SMS);   // SMS z przypomnieniem przed umówionym telefonem
+        need.add(Manifest.permission.RECEIVE_SMS);   // SMS-y od klientów i „numer już dostępny” w CRM
         if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS);
         List<String> missing = new ArrayList<>();
         for (String p : need) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);

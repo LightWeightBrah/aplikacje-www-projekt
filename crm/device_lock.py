@@ -32,6 +32,7 @@ SEEN_EVERY = timedelta(minutes=10)
 # pliki CSS/JS (lokalnie podaje je Django) i service worker.
 OPEN_PATHS = ("/crm/activate/", "/api/device/activate/", "/crm/dialer.apk",
               "/api/dialer/pair/", "/api/dialer/poll/", "/api/dialer/calls/", "/api/dialer/sms/",
+              "/api/dialer/phone/", "/crm/f/",
               "/crm/recordings/google/callback/", "/crm/privacy/",
               "/static/", "/favicon.ico")
 

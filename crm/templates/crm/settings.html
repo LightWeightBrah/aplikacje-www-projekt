@@ -74,7 +74,7 @@
 
     <section class="card" id="offer-card">
         <h2>Oferty dla klientów</h2>
-        <p class="card-desc">Agent wybiera „4 Wyślij ofertę”, taryfę i termin follow-upu. Oferta idzie e-mailem tam, gdzie ustawisz niżej: sformatowana jak we wzorniku ofert, a dodatkowo jako załącznik (plik do przesłania klientowi). Bez skonfigurowanego serwera poczty agent kopiuje gotową ofertę albo pobiera plik.</p>
+        <p class="card-desc">Agent wybiera „5 Wyślij ofertę”, taryfę i termin follow-upu. Oferta idzie e-mailem tam, gdzie ustawisz niżej: sformatowana jak we wzorniku ofert, a dodatkowo jako załącznik (plik do przesłania klientowi). Bez skonfigurowanego serwera poczty agent kopiuje gotową ofertę albo pobiera plik.</p>
         <p class="card-desc" id="mail-state"></p>
         <form id="offer-form" class="form-grid" novalidate>
             <label class="field">Sposób wysyłki
@@ -150,8 +150,8 @@
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=134"></script>
-<script src="{% static 'crm/js/offer_settings.js' %}?v=134"></script>
-<script src="{% static 'crm/js/devices.js' %}?v=134"></script>
-<script src="{% static 'crm/js/recordings.js' %}?v=134"></script>
+{% block scripts %}<script src="{% static 'crm/js/settings.js' %}?v=139"></script>
+<script src="{% static 'crm/js/offer_settings.js' %}?v=139"></script>
+<script src="{% static 'crm/js/devices.js' %}?v=139"></script>
+<script src="{% static 'crm/js/recordings.js' %}?v=139"></script>
 <script>CRM.initSettings();CRM.initOfferSettings();CRM.initDevices();CRM.initRecordings();</script>{% endblock %}

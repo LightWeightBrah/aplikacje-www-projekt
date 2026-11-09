@@ -94,6 +94,8 @@ CRM.initReminders = function initReminders() {
     } catch { /* przeglądarka blokuje dźwięk do pierwszego kliknięcia na stronie */ }
   }
 
+  CRM.playChime = beep;   // karty z telefonu (live.js): „klient już dostępny”, „klient dzwonił”
+
   /* ---------- powiadomienia przeglądarki (systemowe) ---------- */
   const supported = "Notification" in window;
   let swReg = null;
@@ -272,7 +274,7 @@ CRM.initReminders = function initReminders() {
         ${missed}
         <div class="rem-actions">
           <a class="btn btn-primary" href="/crm/queue/?lead=${l.id}">Otwórz leada</a>
-          ${tel ? `<a class="btn btn-secondary" href="tel:${esc(tel)}">Zadzwoń</a>` : ""}
+          ${tel ? `<a class="btn btn-secondary" href="tel:${esc(tel)}" data-lead="${l.id}">Zadzwoń</a>` : ""}
         </div>
       </div>`;
     el.querySelector(".rem-x").addEventListener("click", () => closeCard(el));

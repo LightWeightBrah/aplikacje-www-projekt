@@ -20,7 +20,8 @@
         <div class="w-panel">
             <div class="w-tabs" role="tablist">
                 <button type="button" role="tab" id="tab-todo" aria-selected="true">Moi klienci <span id="lead-count"></span></button>
-                <button type="button" role="tab" id="tab-hist" aria-selected="false">Historia dziś</button>
+                <button type="button" role="tab" id="tab-hist" aria-selected="false" title="Co dziś zapisałeś">Historia</button>
+                <button type="button" role="tab" id="tab-sms" aria-selected="false" title="SMS-y od klientów na telefon z Solid Dialer">SMS <span class="w-sms-badge" id="sms-badge" hidden></span></button>
             </div>
             <div class="w-items" id="lead-list"></div>
         </div>
@@ -87,5 +88,5 @@
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
 {% block scripts %}{{ tv_channels|json_script:"tv-channels" }}
-<script src="{% static 'crm/js/when.js' %}?v=134"></script>
-<script src="{% static 'crm/js/queue.js' %}?v=134"></script>{% endblock %}
+<script src="{% static 'crm/js/when.js' %}?v=139"></script>
+<script src="{% static 'crm/js/queue.js' %}?v=139"></script>{% endblock %}

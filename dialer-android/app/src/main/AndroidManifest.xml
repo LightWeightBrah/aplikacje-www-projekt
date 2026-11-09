@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- SMS z przypomnieniem przed umówionym telefonem, z karty SIM telefonu (jak zwykły SMS) -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- SMS-y od klientów i od sieci („numer już dostępny”) widać w CRM (prywatnych CRM nie zapisuje) -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <!-- nagrywanie rozmów (opcjonalne, włącza manager w CRM i agent w aplikacji) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- praca w tle (stałe powiadomienie „Dialer gotowy do pracy”) -->

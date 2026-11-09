@@ -1467,9 +1467,10 @@ class LeaderboardTests(CrmTestBase):
         self.assertEqual(response.data["created"][:4], ["S", "M100", "L", "VIP"])
         self.assertIn("Światłowód VIP – dom", response.data["created"])
         fiber = Product.objects.get(name="Światłowód M – blok")
-        self.assertEqual((fiber.price, fiber.promo_price, fiber.extra_price), (Decimal("45"), Decimal("85"), Decimal("0")))
-        self.assertEqual((fiber.promo_label, fiber.promo_months, fiber.promo_month_price),
-                         ("12 miesięcy za 50 zł", 12, Decimal("50")))   # jak we wzorniku: 12 mies. po 50 zł, potem 85 zł
+        self.assertEqual((fiber.price, fiber.promo_price, fiber.extra_price), (Decimal("45"), Decimal("45"), Decimal("0")))
+        # jedyna promocja na światłowód (potwierdzone 09.11.2026): 12 mies. po 10 zł, potem cena standardowa
+        self.assertEqual((fiber.promo_label, fiber.promo_months, fiber.promo_month_price, fiber.promos),
+                         ("12 miesięcy za 10 zł", 12, Decimal("10"), []))
         self.assertIn("HBO", Product.objects.get(name="Magenta TV L").info)        # kanały z listy T-Mobile
         self.assertNotIn("HBO", Product.objects.get(name="Magenta TV M").info)
         self.assertEqual(Product.objects.get(name="Magenta TV S").price, Decimal("18.52"))

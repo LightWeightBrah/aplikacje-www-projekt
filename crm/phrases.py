@@ -15,8 +15,10 @@ DEFAULT_PHRASES = {
     "offer": ["Porównuje z obecną umową", "Decyzja po rozmowie ze wspólnikiem", "Interesuje go też internet",
               "Ma ofertę konkurencji"],
     "sold": ["Przeniesienie numerów", "Nowe numery", "Umowa przez kuriera", "Klient poleca znajomych"],
-    "refused": ["Ma umowę w innej sieci", "Za drogo", "Nie jest zainteresowany", "Nie decyduje o tym",
-                "Prosi o brak kontaktu"],
+    # „Już jest w T-Mobile” i „Nie prowadzi już firmy” wychodzą w trakcie rozmowy: to odmowa (był telefon),
+    # a nie „Pomiń firmę” (to tylko bez dzwonienia)
+    "refused": ["Już jest w T-Mobile", "Nie prowadzi już firmy", "Ma umowę w innej sieci", "Za drogo",
+                "Nie jest zainteresowany", "Nie decyduje o tym", "Prosi o brak kontaktu"],
     "wrong_number": ["Numer prywatny – nie firma", "Numer nieaktywny", "Inna firma pod tym numerem"],
     # „Pomiń firmę” (bez dzwonienia): powód decyduje, co dalej z firmą
     "skip_never": ["Firma nie istnieje / zawieszona", "Brak numeru / numer stacjonarny", "Duplikat"],   # nie dzwonić więcej

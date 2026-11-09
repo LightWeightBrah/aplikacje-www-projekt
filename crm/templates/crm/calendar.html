@@ -5,9 +5,14 @@
 {% block content %}
 <header class="page-head">
     <div>
-        <div class="cal-tabs" style="margin-bottom:.6rem"><a href="/crm/plan/">Dzień</a><a href="/crm/calendar/" class="active">Miesiąc</a></div>
+        <div class="cal-tabs-row"><div class="cal-tabs"><a href="/crm/plan/">Dzień</a><a href="/crm/calendar/" class="active">Miesiąc</a></div>
+            <div class="cal-filter" role="group" aria-label="Co pokazywać">
+            <button type="button" data-calf="important" title="Oferty, zainteresowani i oddzwonienia umówione z klientem – bez automatycznych ponownych prób">Tylko umówione</button>
+            <button type="button" data-calf="all" title="Także ponowne próby po „Nie odebrał” (ustawiane automatycznie)">Wszystko</button>
+        </div>
+        </div>
         <h1>Kalendarz kontaktów</h1>
-        <p class="muted">Wszystkie umówione kontakty: oferty, oddzwonienia i ponowne próby. Kliknij dzień, żeby zobaczyć go dokładnie i zadzwonić.</p>
+        <p class="muted">Umówione kontakty: oferty, oddzwonienia i (w „Wszystko”) ponowne próby. Kliknij dzień, żeby zobaczyć go dokładnie i zadzwonić.</p>
     </div>
     <div class="cal-head">
         <button type="button" class="btn-mini" id="m-prev" aria-label="Poprzedni miesiąc">&lsaquo;</button>
@@ -24,6 +29,7 @@
         <span><i style="--c:var(--seg-callback)"></i>Umówione oddzwonienie</span>
         <span><i style="--c:var(--seg-retry)"></i>Ponowna próba</span>
         <span><i style="--c:var(--late)"></i>Spóźnione</span>
+        <span class="cal-hidden" id="cal-hidden"></span>
     </div>
 </section>
 
@@ -61,4 +67,4 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=134"></script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=139"></script>{% endblock %}
