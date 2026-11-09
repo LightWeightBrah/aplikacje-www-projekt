@@ -153,7 +153,6 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .w-call-btn.busy{background:var(--warn)}
 .w-hangup-btn{display:inline-flex;align-items:center;gap:.4rem;border:0;border-radius:11px;background:#dc2626;color:#fff;font:inherit;font-weight:700;font-size:1.05rem;padding:.75rem 1.2rem;cursor:pointer}
 .w-hangup-btn[hidden]{display:none}.w-hangup-btn:hover{filter:brightness(1.08)}
-.dialbar button.db-hangup{background:#dc2626}.dialbar button.db-hangup:disabled{opacity:.6}.dialbar button.db-hangup[hidden]{display:none}
 .w-call .w-alt{font-size:.88rem;color:var(--muted)}.w-call .w-alt a{color:var(--ink);font-weight:600}
 .w-call-state{flex-basis:100%;font-size:.85rem;color:var(--muted);min-height:1.1em}
 .w-call-state b{color:var(--ink)}

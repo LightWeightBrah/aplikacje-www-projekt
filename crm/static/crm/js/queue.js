@@ -314,8 +314,10 @@
     const dialing = call && (call.state === "dialing" || call.state === "pending");
     $("db-timer").hidden = !dialing;
     // „Rozłącz” (np. poczta głosowa): telefon z dialerem 1.4+ kończy połączenie
-    const hb = $("db-hangup"); if (hb) { hb.hidden = !(call && call.state === "dialing"); hb.disabled = !!call && !!call.hangup; }
-    const ch = $("hangup-btn"); if (ch) ch.hidden = !(call && call.state === "dialing" && current && call.lead === current.id);
+    const hangOn = showPart("hangupBtn");   // „Moje ustawienia” → „Przycisk „Rozłącz””
+    const hb = $("db-hangup"); if (hb) { hb.hidden = !hangOn || !(call && call.state === "dialing"); hb.disabled = !!call && !!call.hangup; }
+    const ch = $("hangup-btn"); if (ch) ch.hidden = !hangOn || !(call && call.state === "dialing" && current && call.lead === current.id);
+    const hk = document.querySelector("[data-hangup-kbd]"); if (hk) hk.hidden = !showPart("hangupKey");
     if (dialing && !callTimer) { callStart = Date.now(); callTimer = setInterval(tick, 1000); tick(); }
     if (!dialing && callTimer) { clearInterval(callTimer); callTimer = null; }
     const t = summary && summary.today;
@@ -521,7 +523,7 @@
         <div class="w-call">
           <a class="w-phone" href="tel:${esc(tel)}">${esc(d.phone)}</a>
           <button type="button" class="w-call-btn" id="call-btn"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg><span>Zadzwoń</span> <kbd class="w-kbd">Z</kbd></button>
-          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz</button>
+          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz <kbd class="w-kbd" data-hangup-kbd>R</kbd></button>
           ${CRM.copyButton(d.phone)}
           ${d.phone_alt ? `<span class="w-alt">drugi numer: <a href="tel:${esc(d.phone_alt.replace(/[^\d+]/g, ""))}">${esc(d.phone_alt)}</a></span>` : ""}
           <span class="w-call-state" id="call-state"></span>
@@ -1597,6 +1599,7 @@
     const k = e.key.toLowerCase();
     if (k === "n") { e.preventDefault(); nextClient(); return; }
     if (k === "z" && current) { e.preventDefault(); callNow(); return; }
+    if (k === "r" && showPart("hangupBtn") && showPart("hangupKey") && dialer.call && dialer.call.state === "dialing" && !dialer.call.hangup) { e.preventDefault(); hangUp(); return; }
     if (e.key === "Enter" && form) { e.preventDefault(); save(true); return; }
     const o = OUTCOMES.find((x) => String(x.n) === e.key);
     if (o && current) { e.preventDefault(); pick(o.key); }
