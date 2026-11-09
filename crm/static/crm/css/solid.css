@@ -410,14 +410,16 @@ html{font-size:calc(100% * var(--ts, 1))}body{font-size:calc(15px * var(--ts, 1)
 .w-meta .copy-btn,.w-meta button{font-size:.75rem}
 /* sieć klienta i koniec umowy: stale w karcie, nad „Jak poszła rozmowa?” */
 .w-netbox{display:flex;flex-direction:column;gap:.6rem;margin-top:1rem;padding:.85rem 1rem;border-radius:12px;background:var(--bg);border:1px solid var(--line)}
-.w-net>span,.w-contract>span{display:block;font-weight:600;margin-bottom:.45rem}
-.w-net small,.w-contract small{font-weight:400}
+/* krótko: „SIEĆ” i „UMOWA DO” po lewej, przyciski w tej samej linii (zwykłe .w-chip – niebieska ramka po najechaniu) */
+.w-net,.w-contract{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem .7rem}
+.w-nb-l{flex:0 0 5.6rem;font-size:.8rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)}
 .w-net-row{display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center}
 .w-net .w-chip:disabled{cursor:default;opacity:.7}
 .w-tm-hint{font-size:.85rem;color:#f472b6;font-weight:600}
-.w-contract{margin-top:.4rem}
+.w-contract{margin-top:.2rem}
 .w-ct-row{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}.w-ct-row select{width:auto;min-width:8.5rem}
-.w-ct-info{margin:.45rem 0 0;font-size:.88rem;color:var(--muted)}.w-ct-info b{color:var(--ink)}
+.w-ct-info{flex-basis:100%;margin:0 0 0 6.3rem;font-size:.86rem;color:var(--muted)}.w-ct-info:empty{display:none}
+@media(max-width:700px){.w-ct-info{margin-left:0}}.w-ct-info b{color:var(--ink)}
 .w-reopen{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;border-color:color-mix(in srgb,var(--brand) 45%,var(--line))}
 .w-reopen>div{flex:1 1 20rem;font-size:.92rem}
 .phrases[hidden]{display:none}

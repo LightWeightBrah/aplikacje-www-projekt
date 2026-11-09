@@ -635,7 +635,7 @@
   function networkHtml(d) {
     const cur = (d.operators || "").split(",").filter(Boolean)[0] || "";
     const closed = CLOSED.includes(d.status);
-    return `<div class="w-net"><span>W jakiej sieci jest teraz klient? <small class="muted">(zapisuje się od razu, kliknij ponownie, żeby wyczyścić)</small></span>
+    return `<div class="w-net"><span class="w-nb-l" title="Zapisuje się od razu; kliknij ponownie, żeby wyczyścić">Sieć</span>
       <div class="w-net-row"><div class="w-ops" role="radiogroup" aria-label="W jakiej sieci jest teraz klient">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip${c === "tmobile" ? " tm" : ""}" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}"${closed ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>
       <button type="button" class="w-link" data-uke title="Kopiuje numer i otwiera stronę UKE: wklej numer (prawy przycisk myszy → Wklej) i kliknij „Znajdź”">Sprawdź w UKE ↗</button>
       ${cur === "tmobile" && !closed ? `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>` : ""}</div></div>`;
@@ -695,7 +695,7 @@
   function contractInfo(d) {
     const sel = { m: $("ct-month") ? $("ct-month").value : "", y: $("ct-year") ? $("ct-year").value : "" };
     if (d.contract_open_ended) return "Umowa bez terminu: numery można przenieść od razu.";
-    if (!d.contract_end) return sel.m && !sel.y ? "Wybierz jeszcze rok." : sel.y && !sel.m ? "Wybierz jeszcze miesiąc." : "Klient mówi „mamy umowę”? Zapytaj: „A do kiedy?”. CRM sam przypomni, kiedy będzie można przenieść numery.";
+    if (!d.contract_end) return sel.m && !sel.y ? "Wybierz jeszcze rok." : sel.y && !sel.m ? "Wybierz jeszcze miesiąc." : "";
     const from = portingFrom(d.contract_end);
     if (from <= new Date()) return "Do końca umowy zostało mniej niż 12 miesięcy: <b>numery można przenieść już teraz</b>.";
     const date = `${from.getDate()} ${MONTHS_GEN[from.getMonth()]} ${from.getFullYear()}`;
@@ -709,7 +709,7 @@
     for (let y = year; y <= year + 4; y++) years.push(y);
     if (cy && !years.includes(cy)) years.unshift(cy);
     const closed = CLOSED.includes(d.status);
-    return `<div class="w-contract"><span>Do kiedy klient ma umowę? <small class="muted">(zapisuje się od razu)</small></span>
+    return `<div class="w-contract"><span class="w-nb-l" title="Do kiedy klient ma umowę u obecnego operatora – zapisuje się od razu">Umowa do</span>
       <div class="w-ct-row"${closed ? ' inert' : ""}>
         <select id="ct-month" class="select" aria-label="Miesiąc końca umowy"><option value="">miesiąc…</option>${MONTHS.map((n, i) => `<option value="${i + 1}"${cm === i + 1 ? " selected" : ""}>${n}</option>`).join("")}</select>
         <select id="ct-year" class="select" aria-label="Rok końca umowy"><option value="">rok…</option>${years.map((y) => `<option value="${y}"${cy === y ? " selected" : ""}>${y}</option>`).join("")}</select>
