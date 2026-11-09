@@ -173,3 +173,19 @@ class ReopenTests(CrmTestBase):
     def test_sold_client_is_not_reopened(self):
         lead = self.make_lead(owner=self.agent1, status=Lead.Status.WON)
         self.assertEqual(self.api(self.agent1).post(f"/api/my-leads/{lead.pk}/reopen/").status_code, 400)
+
+
+class AvailableCardTests(PhoneTestBase):
+    def test_card_only_for_agreed_contacts_and_says_why(self):
+        fresh = self.make_lead(owner=self.agent1, phone="600 300 400")   # nowa firma z bazy – bez karty
+        call = CallRequest.objects.create(user=self.agent1, lead=self.lead, phone=self.lead.phone,
+                                          state=CallRequest.State.DIALING, started_at=timezone.now() - timedelta(minutes=12))
+        finish_call(self.device, call.pk, False, 0)
+        self.dialer("/api/dialer/phone/sms/", {"sender": "Play", "text": "Numer 600 300 400 jest juz dostepny."})
+        self.dialer("/api/dialer/phone/sms/", {"sender": "Play", "text": "Numer 600 100 200 jest juz dostepny."})
+        cards = self.api(self.agent1).get("/api/phone/live/").data["available"]
+        self.assertEqual([c["lead"] for c in cards], [self.lead.pk])
+        self.assertEqual(cards[0]["last_call_answered"], False)
+        self.assertIsNotNone(cards[0]["last_call_at"])
+        # SMS o nowej firmie jest dalej w zakładce SMS
+        self.assertIn(fresh.pk, [s["lead"] for s in self.api(self.agent1).get("/api/phone/sms/").data["results"]])

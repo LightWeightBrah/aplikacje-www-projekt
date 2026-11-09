@@ -54,7 +54,9 @@ CRM.initPhone = function initPhone() {
     if (CRM.openLead && location.pathname.startsWith("/crm/queue")) CRM.openLead(id);
     else location.href = `/crm/queue/?lead=${id}`;
   }
+  const want = (part) => !CRM.showPart || CRM.showPart(part);   // „Moje ustawienia” → „Karty z telefonu”
   function paintRing(r) {
+    if (r && !want("phoneRing")) r = null;
     if (!r) { bar.hidden = true; bar.innerHTML = ""; ringShownFor = null; return; }
     const talking = Date.now() - new Date(r.since).getTime() > 45000;
     const head = talking ? "Rozmowa z klientem" : "Dzwoni do Ciebie";
@@ -85,13 +87,13 @@ CRM.initPhone = function initPhone() {
   function paintCards(d) {
     const box = cardsBox(); if (!box) return;
     const gone = new Set(dismissed());
-    const want = [
-      ...d.available.map((s) => ({ key: "a" + s.id, kind: "available", s })),
-      ...d.missed.filter((c) => !gone.has("m" + c.id)).map((c) => ({ key: "m" + c.id, kind: "missed", c })),
+    const cards = [
+      ...(want("phoneAvailable") ? d.available : []).map((s) => ({ key: "a" + s.id, kind: "available", s })),
+      ...(want("phoneMissed") ? d.missed : []).filter((c) => !gone.has("m" + c.id)).map((c) => ({ key: "m" + c.id, kind: "missed", c })),
     ];
-    const keys = new Set(want.map((w) => w.key));
+    const keys = new Set(cards.map((w) => w.key));
     box.querySelectorAll(".ph-card").forEach((el) => { if (!keys.has(el.dataset.key)) el.remove(); });
-    want.forEach((w) => {
+    cards.forEach((w) => {
       if (box.querySelector(`.ph-card[data-key="${w.key}"]`)) return;
       const el = document.createElement("div");
       el.className = `reminder ph-card ${w.kind}`; el.dataset.key = w.key;
@@ -104,7 +106,7 @@ CRM.initPhone = function initPhone() {
           <button type="button" class="rem-x" aria-label="Zamknij">&times;</button></div>
         <div class="rem-body"><div class="rem-name">${esc(name)}</div>
           <div class="rem-company">${esc([STATUS(status), phone, "o " + hhmm(w.kind === "available" ? w.s.received_at : w.c.at)].filter(Boolean).join(" · "))}</div>
-          ${w.kind === "available" ? `<div class="ph-sms">„${esc(w.s.text)}”</div>` : ""}
+          ${w.kind === "available" ? whyHtml(w.s) : ""}
           <div class="rem-actions"><button type="button" class="btn btn-primary" data-ph-call>Zadzwoń</button><button type="button" class="btn btn-secondary" data-ph-open>Otwórz kartę</button></div></div>`;
       const close = () => {
         el.remove();
@@ -121,6 +123,17 @@ CRM.initPhone = function initPhone() {
       if (CRM.playChime) CRM.playChime();
     });
     if (!bar.hidden) placeBar();   // „Dzwoni do Ciebie” zawsze na samej górze
+  }
+
+  /* Dlaczego karta „już dostępny” jest ważna: termin umówiony z klientem, sprawa i ostatnia próba */
+  const ago = (v) => { const m = Math.max(0, Math.round((Date.now() - new Date(v).getTime()) / 60000)); return m < 60 ? `${m} min temu` : `${Math.floor(m / 60)} h ${m % 60} min temu`; };
+  const dayHour = (v) => { const t = new Date(v), today = new Date().toDateString() === t.toDateString(); return `${today ? "dziś" : t.toLocaleDateString("pl-PL", { day: "numeric", month: "short" })} ${hhmm(v)}`; };
+  function whyHtml(s) {
+    const rows = [];
+    if (s.agreed_at) rows.push(`Umówiony kontakt: <b>${esc(dayHour(s.agreed_at))}</b>${s.missed_calls ? ` · nie odebrał ×${s.missed_calls}` : ""}`);
+    if (s.last_call_at) rows.push(`Dzwoniłeś <b>${esc(ago(s.last_call_at))}</b> (${esc(hhmm(s.last_call_at))})${s.last_call_answered === false ? " – nie odebrał" : ""}`);
+    if (s.note) rows.push(`Sprawa: <b>${esc(s.note)}</b>`);
+    return `<div class="ph-why">${rows.map((r) => `<div>${r}</div>`).join("")}</div><div class="ph-sms">SMS od sieci: „${esc(s.text)}”</div>`;
   }
 
   /* ---------- pytanie o stan ---------- */
@@ -141,6 +154,7 @@ CRM.initPhone = function initPhone() {
     timer = setTimeout(poll, paired ? 3000 : 60000);
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+  document.addEventListener("crm:view", () => { if (last) { paintRing(last.ringing); paintCards(last); } });
   CRM.refreshPhone = poll;
   poll();
 

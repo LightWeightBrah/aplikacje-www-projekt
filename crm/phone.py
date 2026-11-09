@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from .models import NON_CALL_OUTCOMES, Activity, AgentProfile, CallRequest, IncomingSms, Lead, SharedFile, SmsReminder
 from .roles import visible_to
-from .services import _local_phone
+from .services import PROMISED_STATUSES, _local_phone
 
 RING_MINUTES = 60            # tyle najdłużej trwa „dzwoni / rozmowa” bez wpisu z rejestru (potem pasek znika)
 SMS_KEEP_DAYS = 30           # SMS-y od klientów kasujemy po miesiącu
@@ -220,8 +220,13 @@ def live(user):
                    "lead": lead.pk if lead else None, "name": lead.display_name if lead else "",
                    "status": lead.status if lead else "", "note": lead.next_contact_note if lead else ""}
     since = now - timedelta(hours=8)
-    available = [sms_row(s) for s in IncomingSms.objects.select_related("lead", "lead__company").filter(
-        user=user, kind=IncomingSms.Kind.AVAILABLE, seen=False, received_at__gte=since)[:5]]
+    # karta „już dostępny” tylko dla klientów, z którymi coś umówiono (oddzwonienie, zainteresowany, oferta) –
+    # przy nowych firmach z bazy to tylko szum; same SMS-y od sieci są dalej w zakładce SMS („Wszystkie”)
+    available = []
+    for sms in IncomingSms.objects.select_related("lead", "lead__company").filter(
+            user=user, kind=IncomingSms.Kind.AVAILABLE, seen=False, received_at__gte=since,
+            lead__status__in=PROMISED_STATUSES)[:5]:
+        available.append({**sms_row(sms), **why_now(user, sms.lead)})
     missed = []
     for call in (CallRequest.objects.select_related("lead", "lead__company")
                  .filter(user=user, direction=CallRequest.Direction.IN, from_phone=True, state=CallRequest.State.DONE,
@@ -235,6 +240,19 @@ def live(user):
     return {
         "ringing": ringing, "available": available, "missed": missed,
         "sms_unseen": IncomingSms.objects.filter(user=user, seen=False).exclude(kind=IncomingSms.Kind.AVAILABLE).count(),
+    }
+
+
+def why_now(user, lead):
+    """Dlaczego ten klient jest ważny: umówiony termin, sprawa i ostatnia próba dodzwonienia się do niego."""
+    call = (CallRequest.objects.filter(user=user, lead=lead, direction=CallRequest.Direction.OUT,
+                                       state=CallRequest.State.DONE).order_by("-ended_at").first())
+    return {
+        "agreed_at": lead.agreed_contact_at or lead.next_contact_at,
+        "note": lead.next_contact_note,
+        "missed_calls": lead.missed_calls,
+        "last_call_at": (call.started_at or call.ended_at) if call else None,
+        "last_call_answered": call.answered if call else None,
     }
 
 

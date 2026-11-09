@@ -12,8 +12,8 @@
     <script>try{var z=parseFloat(localStorage.getItem("crm_text_size"));if(z>=0.8&&z<=1.5&&z!==1)document.documentElement.style.setProperty("--ts",z)}catch(e){}</script>
     {# zanim cokolwiek się narysuje: rola (menu bez mignięcia) i ukrycie treści do czasu wczytania danych (app.js zdejmuje klasę; awaryjnie po 4 s) #}
     <script>(function(d){d.classList.add("crm-loading");setTimeout(function(){d.classList.remove("crm-loading","crm-loading-slow")},4000);try{var u=JSON.parse(localStorage.getItem("crm_user")||"null");if(u){d.dataset.role=u.role;if(u.role!=="manager"&&u.can_view_team===false)d.dataset.noteam="1"}}catch(e){}})(document.documentElement)</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=139">
-    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=139">
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=140">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=140">
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -152,6 +152,14 @@ document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(fun
             <button type="button" class="btn-mini notif-test" id="notif-test" hidden>Wyślij powiadomienie testowe</button>
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
+        <details class="view-prefs">
+            <summary><strong>Karty z telefonu (Solid Dialer)</strong><small class="muted">Kto dzwoni, „klient już dostępny”, nieodebrane od klientów. Kliknij, żeby zmienić.</small></summary>
+            <div class="view-prefs-body">
+                <label class="check"><input type="checkbox" id="pref-ring"> <span><strong>„Dzwoni do Ciebie”</strong><small class="muted">Gdy klient z CRM dzwoni na telefon do pracy: karta z nazwą firmy i „Otwórz kartę”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-available"> <span><strong>„Klient już dostępny – możesz dzwonić”</strong><small class="muted">Sieć przysłała SMS, że numer klienta znów jest dostępny. Tylko klienci z umówionym oddzwonieniem, zainteresowani i po ofercie.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-missed"> <span><strong>„Klient dzwonił – nieodebrane”</strong><small class="muted">Klient z CRM dzwonił, a Ty nie odebrałeś. Karta znika, gdy oddzwonisz.</small></span></label>
+            </div>
+        </details>
         <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
         <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe</strong><small class="muted">Jeden klawisz zamiast klikania. Wyłącz, jeśli przypadkiem w coś wciskasz.</small></span></label>
         <details class="keys-help">
@@ -237,12 +245,12 @@ całą kartę (sprawdzone u Juliana 09.11.2026 – po wyłączeniu wstępnego wc
    {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
   "eagerness": "moderate"}]}
 </script>
-<script src="{% static 'crm/js/app.js' %}?v=139"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=139"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=139"></script>
-<script src="{% static 'crm/js/search.js' %}?v=139"></script>
-<script src="{% static 'crm/js/tour.js' %}?v=139"></script>
-<script src="{% static 'crm/js/live.js' %}?v=139"></script>
+<script src="{% static 'crm/js/app.js' %}?v=140"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=140"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=140"></script>
+<script src="{% static 'crm/js/search.js' %}?v=140"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=140"></script>
+<script src="{% static 'crm/js/live.js' %}?v=140"></script>
 <script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();CRM.initPhone();</script>
 {% block scripts %}{% endblock %}
 </body>

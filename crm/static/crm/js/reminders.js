@@ -20,7 +20,9 @@ CRM.initReminders = function initReminders() {
   const LIVE_KEY = "crm_rem_live_" + user.username;   // kiedy ostatnio jakaś karta CRM była na wierzchu
   // lead = sekundy przed terminem; goal / base / footer = drobne napisy na ekranie „Dzwonienie” (można schować)
   const DEFAULTS = { enabled: true, lead: 300, sound: true, dayBar: true, undoBar: true, autoDial: true, autoDialSec: 4, keys: true, goal: true, base: true, footer: true };
-  const VIEW_PREFS = { goal: "pref-goal", base: "pref-base", footer: "pref-footer", phone: "pref-phone" };
+  const VIEW_PREFS = { goal: "pref-goal", base: "pref-base", footer: "pref-footer", phone: "pref-phone",
+    // karty z telefonu (live.js): kto dzwoni, „klient już dostępny”, „klient dzwonił – nieodebrane”
+    phoneRing: "pref-ring", phoneAvailable: "pref-available", phoneMissed: "pref-missed" };
   const baseTitle = document.title;
   const box = $("reminders");
   box.addEventListener("click", (e) => {
