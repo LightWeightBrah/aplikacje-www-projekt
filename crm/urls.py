@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import rules_api, users_api, views
+from . import device_api, phone_api, recordings_api, reports_api, rules_api, users_api, views, work_api
 
 router = DefaultRouter()
 router.register("products", views.ProductViewSet)
@@ -18,6 +18,55 @@ router.register("stats", views.StatsViewSet, basename="stats")
 urlpatterns = [
     path("settings/", rules_api.TeamRulesView.as_view(), name="team-rules"),
     path("settings/reset/", rules_api.TeamRulesResetView.as_view(), name="team-rules-reset"),
+    path("settings/test-sms/", rules_api.TestSmsView.as_view(), name="test-sms"),
+    path("settings/test-sms/<int:pk>/", rules_api.TestSmsStateView.as_view(), name="test-sms-state"),
     path("leaderboard/", views.LeaderboardView.as_view(), name="leaderboard"),
+    path("reports/", reports_api.ReportsView.as_view(), name="reports"),
+    path("reports/agent/", reports_api.AgentReportView.as_view(), name="reports-agent"),
+    # praca agenta: „Następny klient”, liczniki follow-upów i liczby dnia
+    path("work/next/", work_api.NextWorkView.as_view(), name="work-next"),
+    path("work/summary/", work_api.WorkSummaryView.as_view(), name="work-summary"),
+    # oferty
+    path("work/contact/", work_api.WorkContactView.as_view(), name="work-contact"),
+    path("device/activate/", device_api.DeviceActivateView.as_view(), name="device-activate"),
+    path("devices/", device_api.DeviceListView.as_view(), name="devices"),
+    path("devices/code/", device_api.DeviceCodeView.as_view(), name="device-code"),
+    path("devices/<int:pk>/revoke/", device_api.DeviceRevokeView.as_view(), name="device-revoke"),
+    path("work/login/", work_api.WorkLoginView.as_view(), name="work-login"),
+    path("work/logout/", work_api.WorkLogoutView.as_view(), name="work-logout"),
+    path("work/attendance/", work_api.AttendanceView.as_view(), name="work-attendance"),
+    path("work/minutes/", work_api.WorkMinutesView.as_view(), name="work-minutes"),
+    path("offers/", work_api.OffersView.as_view(), name="offers"),
+    path("offers/<int:pk>/html/", work_api.OfferHtmlView.as_view(), name="offer-html"),
+    path("offers/preview/", work_api.OfferPreviewView.as_view(), name="offer-preview"),
+    path("offer-config/", work_api.OfferConfigView.as_view(), name="offer-config"),
+    # informacje dla zespołu (panel „Solid info”)
+    path("announcements/", work_api.AnnouncementsView.as_view(), name="announcements"),
+    path("announcements/<int:pk>/", work_api.AnnouncementDetailView.as_view(), name="announcement"),
+    # dialer: CRM ↔ aplikacja na telefonie
+    path("dialer/status/", work_api.DialerStatusView.as_view(), name="dialer-status"),
+    path("dialer/call/", work_api.DialerCallView.as_view(), name="dialer-call"),
+    path("dialer/pairing/", work_api.DialerPairingView.as_view(), name="dialer-pairing"),
+    path("dialer/pair/", work_api.DialerPairView.as_view(), name="dialer-pair"),
+    path("dialer/poll/", work_api.DialerPollView.as_view(), name="dialer-poll"),
+    path("dialer/calls/<int:pk>/finish/", work_api.DialerFinishView.as_view(), name="dialer-finish"),
+    path("dialer/calls/<int:pk>/hangup/", work_api.DialerCallHangupView.as_view(), name="dialer-call-hangup"),
+    path("dialer/hangup/", work_api.DialerHangupView.as_view(), name="dialer-hangup"),
+    path("dialer/sms/<int:pk>/done/", work_api.DialerSmsDoneView.as_view(), name="dialer-sms-done"),
+    path("dialer/calls/<int:pk>/recording/", recordings_api.DialerRecordingView.as_view(), name="dialer-recording"),
+    # telefon zgłasza, co się na nim dzieje (dzwoni klient, rejestr połączeń, SMS-y) – crm/phone.py
+    path("dialer/phone/ring/", phone_api.DialerRingView.as_view(), name="dialer-ring"),
+    path("dialer/phone/log/", phone_api.DialerCallLogView.as_view(), name="dialer-call-log"),
+    path("dialer/phone/sms/", phone_api.DialerIncomingSmsView.as_view(), name="dialer-incoming-sms"),
+    path("phone/live/", phone_api.PhoneLiveView.as_view(), name="phone-live"),
+    path("phone/sms/", phone_api.PhoneSmsView.as_view(), name="phone-sms"),
+    path("phone/self/", phone_api.PhoneSelfView.as_view(), name="phone-self"),
+    path("phone/self/<int:pk>/", phone_api.PhoneSelfStateView.as_view(), name="phone-self-state"),
+    # nagrywanie rozmów (opcjonalne, manager)
+    path("recordings/", recordings_api.RecordingListView.as_view(), name="recordings"),
+    path("recordings/<int:pk>/audio/", recordings_api.RecordingAudioView.as_view(), name="recording-audio"),
+    path("recordings/settings/", recordings_api.RecordingSettingsView.as_view(), name="recording-settings"),
+    path("recordings/google/connect/", recordings_api.GoogleConnectView.as_view(), name="recording-google-connect"),
+    path("recordings/google/disconnect/", recordings_api.GoogleDisconnectView.as_view(), name="recording-google-disconnect"),
     *router.urls,
 ]

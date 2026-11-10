@@ -5,7 +5,8 @@ from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers as drf_serializers
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -56,6 +57,7 @@ from .serializers import (
     LeadSerializer,
     ProductSerializer,
     ReassignLeadsSerializer,
+    ScheduleCallbackSerializer,
     ScheduleSerializer,
     StatsSerializer,
     assignable_users,
@@ -67,6 +69,9 @@ from .services import (
     InvalidAssignment,
     NoLeadsAvailable,
     UndoNotPossible,
+    ReopenNotPossible,
+    reopen_lead,
+    base_progress,
     day_summary,
     undo_activity,
     OverdueCallbacks,
@@ -75,6 +80,7 @@ from .services import (
     LEADERBOARD_SORT_KEYS,
     build_stats,
     leaderboard,
+    CLOSED_STATUSES,
     PROMISED_STATUSES,
     with_owner_tries,
     with_transfer_info,
@@ -108,6 +114,95 @@ class ProductViewSet(viewsets.ModelViewSet):
     filterset_fields = ["is_active"]
     search_fields = ["name"]
 
+    @extend_schema(responses={204: None, 409: OpenApiTypes.OBJECT})
+    def destroy(self, request, *args, **kwargs):
+        """Usuwa produkt dodany przez pomyłkę. Produkt, który jest już w sprzedażach albo ofertach,
+        zostaje (409) – wtedy wystarczy go wyłączyć, żeby historia i statystyki się zgadzały."""
+        product = self.get_object()
+        if product.sale_items.exists() or product.offers.exists():
+            return Response(
+                {"detail": f"„{product.name}” jest już w sprzedażach albo ofertach, więc nie można go usunąć. "
+                           "Kliknij „Wyłącz” – agenci nie wybiorą go już przy sprzedaży, a historia zostanie."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        request=None,
+        responses=inline_serializer("StandardTariffsResult", {
+            "created": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "updated": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="load-standard")
+    def load_standard(self, request):
+        """Dodaje brakujące taryfy z wzornika ofert (komórkowe S–VIP, światłowód, Magenta TV).
+
+        Włączone taryfy o tej samej nazwie zostają bez zmian; wyłączone wracają do sprzedaży z cenami z wzornika."""
+        from .tariffs import load_standard_tariffs
+
+        created, updated = load_standard_tariffs()   # updated: uzupełnione puste pola (ściąga, promocje)
+        return Response({"created": created, "updated": updated})
+
+    @extend_schema(
+        request=None,
+        responses=inline_serializer("ClearProductsResult", {
+            "deleted": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "disabled": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="clear", permission_classes=[IsManager])
+    def clear(self, request):
+        """Manager: czyści katalog jednym przyciskiem, żeby wgrać taryfy od nowa.
+
+        Produkt, którego nikt nie sprzedał ani nie ofertował, jest usuwany. Produkt z historią
+        sprzedaży lub ofert zostaje tylko wyłączony, żeby dawne wyniki i przychód się zgadzały.
+        """
+        deleted, disabled = [], []
+        for product in Product.objects.all():
+            if product.sale_items.exists() or product.offers.exists():
+                if product.is_active:
+                    product.is_active = False
+                    product.save(update_fields=["is_active"])
+                disabled.append(product.name)
+            else:
+                deleted.append(product.name)
+                product.delete()
+        return Response({"deleted": deleted, "disabled": disabled})
+
+    @extend_schema(responses={(200, XLSX_CONTENT_TYPE): OpenApiTypes.BINARY})
+    @action(detail=False, methods=["get"], url_path="export", renderer_classes=[XlsxRenderer],
+            permission_classes=[IsManager])
+    def export_file(self, request):
+        """Manager: plik .xlsx ze wszystkimi taryfami (ten sam układ przyjmuje import)."""
+        from .tariffs import tariffs_to_xlsx
+
+        response = Response(tariffs_to_xlsx(Product.objects.all()))
+        response["Content-Disposition"] = 'attachment; filename="taryfy.xlsx"'
+        return response
+
+    @extend_schema(
+        request={"multipart/form-data": inline_serializer("TariffFileUpload", {"file": drf_serializers.FileField()})},
+        responses=inline_serializer("TariffImportResult", {
+            "created": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "updated": drf_serializers.ListField(child=drf_serializers.CharField()),
+            "errors": drf_serializers.ListField(child=drf_serializers.CharField()),
+        }),
+    )
+    @action(detail=False, methods=["post"], url_path="import", parser_classes=[MultiPartParser, FormParser],
+            permission_classes=[IsManager])
+    def import_file(self, request):
+        """Manager: wgrywa taryfy z pliku .xlsx (tej samej nazwy – aktualizuje, nowe – dodaje, nic nie usuwa)."""
+        from .tariffs import TariffFileError, import_tariffs
+
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response({"detail": "Wybierz plik .xlsx z taryfami."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(import_tariffs(uploaded))
+        except TariffFileError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class CompanyViewSet(viewsets.ModelViewSet):
     queryset = Company.objects.all()
@@ -123,6 +218,28 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @extend_schema(responses=inline_serializer("BatchRemoved", {
+        "name": drf_serializers.CharField(), "removed": drf_serializers.IntegerField(),
+        "kept": drf_serializers.IntegerField()}))
+    def destroy(self, request, *args, **kwargs):
+        """Manager: „Usuń tę bazę”. Firmy, do których nikt nie dzwonił, znikają;
+        firmy z historią pracy (rozmowy, oferty, sprzedaż) zostają w CRM bez bazy."""
+        from .batches import remove_batch
+        return Response(remove_batch(self.get_object()))
+
+    @extend_schema(responses=inline_serializer("BatchOverview", {
+        "id": drf_serializers.IntegerField(), "name": drf_serializers.CharField(),
+        "created_at": drf_serializers.DateTimeField(), "assigned_to": drf_serializers.IntegerField(allow_null=True),
+        "assigned_to_name": drf_serializers.CharField(), "total": drf_serializers.IntegerField(),
+        "untouched": drf_serializers.IntegerField()}, many=True))
+    @action(detail=False, methods=["get"])
+    def overview(self, request):
+        """Manager: wgrane bazy z liczbą firm i ile z nich jeszcze bez telefonu (strona Import)."""
+        if not is_manager(request.user):
+            raise PermissionDenied("Tylko manager.")
+        from .batches import overview
+        return Response(overview())
 
     @extend_schema(request=ImportLeadsSerializer, responses=ImportResultSerializer)
     @action(
@@ -146,6 +263,7 @@ class LeadBatchViewSet(viewsets.ModelViewSet):
                 request.user,
                 data.get("name", ""),
                 data.get("product"),
+                assigned_to=data.get("assigned_to"),
             )
         except ImportFileError as error:
             return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
@@ -165,7 +283,7 @@ MANAGER_ONLY_ACTIONS = (
 
 
 class LeadViewSet(OwnerScopedMixin, viewsets.ModelViewSet):
-    queryset = Lead.objects.select_related("product", "company", "owner", "batch")
+    queryset = Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by")
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
     filterset_class = LeadFilter
     search_fields = ["contact_name", "phone", "email", "company__name", "company__nip", "company__krs"]
@@ -353,6 +471,7 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 "user_id", flat=True
             )
         )
+        hidden = set(AgentProfile.objects.filter(show_in_ranking=False).values_list("user_id", flat=True))
         rows = [
             {
                 "id": u.pk,
@@ -362,6 +481,7 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 "active_leads": u.active_leads,
                 "overdue_leads": u.overdue_leads,
                 "can_view_team_stats": u.pk not in blocked,
+                "show_in_ranking": u.pk not in hidden,
             }
             for u in users.order_by("username")
         ]
@@ -369,24 +489,18 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     @extend_schema(request=AgentAccessSerializer, responses=AgentAccessSerializer)
     def partial_update(self, request, pk=None):
-        """Manager włącza lub wyłącza agentowi podgląd wyników innych agentów."""
+        """Agentowi: włącza / wyłącza podgląd wyników innych. Managerowi: czy jest w rankingu."""
         agent = self.get_object()
-        if is_manager(agent):
-            return Response(
-                {"detail": "Manager zawsze widzi wyniki zespołu."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         serializer = AgentAccessSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        AgentProfile.objects.update_or_create(
-            user=agent,
-            defaults={
-                "can_view_team_stats": serializer.validated_data["can_view_team_stats"]
-            },
-        )
-        return Response(
-            {"can_view_team_stats": serializer.validated_data["can_view_team_stats"]}
-        )
+        field = "show_in_ranking" if is_manager(agent) else "can_view_team_stats"
+        if field not in serializer.validated_data:
+            detail = ("Manager zawsze widzi wyniki zespołu – można tylko ukryć go w rankingu (show_in_ranking)."
+                      if field == "show_in_ranking" else "Agent jest zawsze w rankingu – podaj can_view_team_stats.")
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        value = serializer.validated_data[field]
+        AgentProfile.objects.update_or_create(user=agent, defaults={field: value})
+        return Response({field: value})
 
     @extend_schema(request=AgentAccessSerializer, responses=AgentAccessBulkSerializer)
     @action(detail=False, methods=["post"], url_path="team-access")
@@ -394,6 +508,8 @@ class AgentViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """Manager włącza lub wyłącza podgląd wyników zespołu wszystkim agentom naraz."""
         serializer = AgentAccessSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if "can_view_team_stats" not in serializer.validated_data:
+            return Response({"detail": "Podaj can_view_team_stats."}, status=status.HTTP_400_BAD_REQUEST)
         value = serializer.validated_data["can_view_team_stats"]
         agents = get_user_model().objects.filter(is_active=True, groups__name=AGENT).distinct()
         with transaction.atomic():
@@ -413,11 +529,23 @@ class ActivityViewSet(
 ):
     """Historia kontaktów: można dodawać i czytać, poprawiać tylko komentarz; usuwać nie można."""
 
-    queryset = Activity.objects.select_related("lead", "agent")
+    queryset = Activity.objects.select_related("lead", "lead__company", "agent")
     serializer_class = ActivitySerializer
     permission_classes = [IsAgentOrManager, IsLeadOwnerOrManager]
     owner_lookup = "lead__owner"
     filterset_fields = ["lead", "agent", "outcome"]
+
+    @extend_schema(parameters=[OpenApiParameter(
+        "next", int, description="1 = w odpowiedzi także następny klient (pole `next`, jak POST /api/work/next/)")])
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        # „Zapisz i dalej”: zapis i następny klient w jednym zapytaniu – na serwerze w internecie
+        # każde zapytanie to opóźnienie, więc następny klient wchodzi od razu
+        if request.query_params.get("next") == "1" and response.status_code == status.HTTP_201_CREATED:
+            from .work_api import next_work_payload
+
+            response.data["next"] = next_work_payload(request)
+        return response
 
     def perform_create(self, serializer):
         lead = serializer.validated_data["lead"]
@@ -434,8 +562,16 @@ class ActivityViewSet(
             # brak pola = zostaje dotychczasowa sprawa; puste pole = agent świadomie ją czyści
             next_contact_note=data.get("next_contact_note"),
             # sprzedane produkty (tylko przy wyniku „Sprzedane”): pary (produkt, ilość)
-            sale_items=[(line["product"], line["quantity"]) for line in data.get("sale_lines", [])],
+            sale_items=[
+                (line["product"], line["quantity"], line.get("term_months"), line.get("promo", False), line.get("option", 0))
+                for line in data.get("sale_lines", [])
+            ],
+            skip_reason=data.get("skip_reason", ""),
+            introduced=data.get("introduced"),
         )
+        from .work import attach_call_time, touch_workday
+        attach_call_time(serializer.instance)   # czas rozmowy z dialera (jeśli dzwonił przez telefon)
+        touch_workday(self.request.user, work=True)   # zapis rozmowy = praca
 
     @extend_schema(request=ActivityNoteSerializer, responses=ActivitySerializer)
     def partial_update(self, request, pk=None):
@@ -483,7 +619,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def get_queryset(self):
         if not self.request.user.is_authenticated:  # np. generowanie schematu Swaggera
             return Lead.objects.none()
-        queryset = Lead.objects.select_related("product", "company", "owner", "batch").filter(
+        queryset = Lead.objects.select_related("product", "company", "owner", "batch", "client_comment_by").filter(
             owner=self.request.user
         )
         return with_owner_tries(with_transfer_info(queryset))
@@ -533,6 +669,76 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         data = {"date": day, "overdue": overdue, "scheduled": scheduled}
         return Response(ScheduleSerializer(data).data)
 
+    @extend_schema(
+        responses=LeadSerializer(many=True),
+        parameters=[OpenApiParameter("month", str, description="Miesiąc RRRR-MM (domyślnie bieżący)")],
+    )
+    @action(detail=False, methods=["get"])
+    def month(self, request):
+        """Kalendarz miesięczny: aktywne leady z terminem kontaktu w danym miesiącu (bez paginacji)."""
+        raw = request.query_params.get("month") or timezone.localdate().strftime("%Y-%m")
+        try:
+            first = date.fromisoformat(raw + "-01")
+        except ValueError:
+            return Response({"detail": "Parametr month musi mieć format RRRR-MM."}, status=status.HTTP_400_BAD_REQUEST)
+        nxt = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+        # siatka kalendarza pokazuje też końcówkę poprzedniego i początek następnego miesiąca
+        since, until = first - timedelta(days=7), nxt + timedelta(days=14)
+        tz = timezone.get_current_timezone()
+        from datetime import datetime, time as dtime
+        leads = self.get_queryset().filter(
+            status__in=ACTIVE_STATUSES,
+            next_contact_at__gte=datetime.combine(since, dtime.min, tz),
+            next_contact_at__lt=datetime.combine(until, dtime.min, tz),
+        ).order_by("next_contact_at")[:2000]
+        return Response(LeadSerializer(leads, many=True, context=self.get_serializer_context()).data)
+
+    @extend_schema(request=ScheduleCallbackSerializer, responses=LeadSerializer)
+    @action(detail=True, methods=["post"], url_path="add-callback")
+    def add_callback(self, request, pk=None):
+        """Kalendarz → „Dodaj callback”: umówiony termin kontaktu z własnym klientem bez zapisywania rozmowy.
+
+        Lead dostaje termin i sprawę (status „oddzwonić”, chyba że jest już ofertą / zainteresowanym),
+        a w historii zostaje notatka (nie liczy się jako telefon)."""
+        lead = self.get_object()
+        serializer = ScheduleCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        at, note = serializer.validated_data["next_contact_at"], serializer.validated_data.get("next_contact_note", "")
+        if lead.status in CLOSED_STATUSES:
+            return Response({"detail": "Ten klient jest zamknięty (sprzedany, odmówił albo nie dzwonić). Otwórz go w „Dzwonieniu”."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        new_status = lead.status if lead.status in PROMISED_STATUSES else Lead.Status.CALLBACK
+        with transaction.atomic():
+            Lead.objects.filter(pk=lead.pk).update(next_contact_at=at, next_contact_note=note, status=new_status,
+                                                   agreed_contact_at=at, missed_calls=0)
+            when = timezone.localtime(at).strftime("%d.%m.%Y, %H:%M")
+            Activity.objects.create(lead=lead, agent=request.user, outcome=Activity.Outcome.NOTE,
+                                    note=f"Callback dodany w kalendarzu: {when}" + (f" – {note}" if note else ""))
+        return Response(LeadSerializer(self.get_queryset().get(pk=lead.pk), context=self.get_serializer_context()).data)
+
+    @extend_schema(request=None, responses=LeadSerializer)
+    @action(detail=True, methods=["post"])
+    def reopen(self, request, pk=None):
+        """„Przywróć do dzwonienia”: zamknięty klient (pominięty, odmowa, zły numer) wraca do pracy agenta."""
+        lead = get_object_or_404(visible_to(request.user, Lead.objects.all(), "owner"), pk=pk)
+        try:
+            reopen_lead(lead, request.user, is_manager=is_manager(request.user))
+        except ReopenNotPossible as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(LeadSerializer(Lead.objects.get(pk=lead.pk), context=self.get_serializer_context()).data)
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"])
+    def base(self, request):
+        """Postęp w bazach przypisanych zalogowanemu agentowi: ile leadów, ile już ruszonych, ile czeka."""
+        rows = base_progress(request.user)
+        return Response({
+            "batches": rows,
+            "total": sum(r["total"] for r in rows),
+            "left": sum(r["left"] for r in rows),
+            "done": sum(r["done"] for r in rows),
+        })
+
     @extend_schema(responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=["get"])
     def summary(self, request):
@@ -548,7 +754,7 @@ class MyLeadsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def calendar(self, request):
         """Plik .ics z terminami kontaktów: można go zaimportować do kalendarza."""
         response = Response(calendar_ics(calendar_leads(request.user)))
-        response["Content-Disposition"] = 'attachment; filename="leadcrm.ics"'
+        response["Content-Disposition"] = 'attachment; filename="solidcrm-kalendarz.ics"'
         return response
 
 

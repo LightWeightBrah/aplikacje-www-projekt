@@ -12,6 +12,7 @@ CRM.initManager = function initManager() {
   const OUTCOME = {
     no_answer: "Nie odebrał", callback: "Prosił o oddzwonienie", interested: "Zainteresowany",
     sold: "Sprzedane", refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka",
+    offer: "Wysłana oferta", skipped: "Pominięty bez dzwonienia",
   };
   const state = { total: null, tab: "all", page: 1, ordering: "", search: "", count: 0, pageSize: 20 };
   let agents = [], leads = [], selected = new Set(), openId = null, searchTimer;
@@ -41,7 +42,7 @@ CRM.initManager = function initManager() {
   async function readJson(r) { try { return await r.json(); } catch { return {}; } }
   async function fetchAll(path) {
     const out = [];
-    let url = path;
+    let url = path + (path.includes("?") ? "&" : "?") + "page_size=500";   // jedno zapytanie zamiast kilku po kolei
     while (url) {
       const r = await api(url);
       if (!r.ok) throw new Error("Nie udało się wczytać danych (" + r.status + ").");
@@ -113,8 +114,8 @@ CRM.initManager = function initManager() {
           && ["callback", "interested", "offer"].includes(l.status);
         return `<tr data-id="${l.id}" class="${l.id === openId ? "open" : ""}">
           <td class="chk"><input type="checkbox" data-check="${l.id}" ${selected.has(l.id) ? "checked" : ""} aria-label="Zaznacz leada"></td>
-          <td><strong>${esc(l.contact_name)}</strong>${l.company_name
-            ? `<small class="sub">${esc(l.company_name)}${l.company_nip ? " · NIP " + esc(l.company_nip) : ""}</small>` : ""}</td>
+          <td><strong>${esc(CRM.leadTitle(l))}</strong><small class="sub">${[l.contact_name && l.company_name ? esc(l.contact_name) : "",
+            l.company_nip ? "NIP " + esc(l.company_nip) : "", l.company_city ? esc(l.company_city) : ""].filter(Boolean).join(" · ")}</small></td>
           <td class="nowrap">${esc(l.phone)}</td>
           <td>${chip(l.status)}</td>
           <td>${l.owner_name ? esc(l.owner_name) : '<span class="muted">pula</span>'}${l.transferred_from ? `<small class="sub">od ${esc(l.transferred_from)}</small>` : ""}</td>
@@ -208,7 +209,7 @@ CRM.initManager = function initManager() {
       try { await assign(id, agent, "Przypisanie z panelu managera"); ok++; }
       catch (ex) {
         const l = leads.find((x) => x.id === id);
-        problems.push(`${l ? l.contact_name : "#" + id}: ${ex.message}`);
+        problems.push(`${l ? CRM.leadTitle(l) : "#" + id}: ${ex.message}`);
       }
     }
     $("bulk-assign").disabled = $("bulk-pool").disabled = false;
@@ -240,7 +241,7 @@ CRM.initManager = function initManager() {
     const moves = (l.assignments || []).map((a) => `<li>${esc(agentName(a.from_agent))} → <strong>${esc(agentName(a.to_agent))}</strong>
       <time>${esc(fmt(a.assigned_at))}</time>${a.reason ? `<p>${esc(a.reason)}</p>` : ""}</li>`).join("") || `<li class="muted">Brak zmian opiekuna.</li>`;
     $("drawer-body").innerHTML = `
-      <h2 class="drawer-title">${esc(l.contact_name)}</h2>
+      <h2 class="drawer-title">${esc(CRM.leadTitle(l))}</h2>
       <p class="muted">${l.company_name ? esc(l.company_name) : "Bez firmy"}${l.company_nip ? " · NIP " + esc(l.company_nip) : ""}</p>
       <div class="drawer-chips">${chip(l.status)}</div>
       <dl class="kv">
@@ -260,7 +261,9 @@ CRM.initManager = function initManager() {
       </div>
       ${closed ? `<p class="hint">Zamkniętego leada nie można przepisać.</p>` : ""}
       <h3>Historia kontaktów</h3><ul class="history">${acts}</ul>
+      <div id="d-recordings" hidden></div>
       <h3>Historia opiekunów</h3><ul class="history">${moves}</ul>`;
+    if (CRM.drawRecordings) CRM.drawRecordings(l.id, $("d-recordings"));
     const btn = $("d-assign");
     if (btn) btn.addEventListener("click", async () => {
       const v = $("d-agent").value;
@@ -393,5 +396,10 @@ CRM.initManager = function initManager() {
   $("reassign-form").addEventListener("submit", submitReassign);
   $("export-btn").addEventListener("click", exportXlsx);
 
-  loadDictionaries().then(() => { load(); loadCounts(); loadTotal(); }).catch((ex) => showError(ex.message));
+  loadDictionaries().then(() => {
+    load(); loadCounts(); loadTotal();
+    // link z „Raportów”: /crm/manager/?lead=ID od razu otwiera szczegóły klienta
+    const linked = Number(new URLSearchParams(location.search).get("lead"));
+    if (linked) openLead(linked);
+  }).catch((ex) => showError(ex.message));
 };

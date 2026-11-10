@@ -4,9 +4,20 @@
 (() => {
   const { esc } = CRM;
   const OUT_LABEL = { no_answer: "Nie odebrał", callback: "Oddzwonić", interested: "Zainteresowany", sold: "Sprzedane",
-    refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka" };
-  const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e",
-    refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8" };
+    refused: "Odmowa", wrong_number: "Zły numer", note: "Notatka", skipped: "Pominięty", offer: "Wysłana oferta" };
+  const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e", offer: "#22c55e",
+    refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8", skipped: "#78716c" };
+  /* Główna nazwa leada: firma (w bazach z CEIDG prawie zawsze jest), a bez niej osoba albo numer */
+  const leadTitle = (l) => (l && (l.display_name || l.company_name || l.contact_name || l.phone)) || "–";
+  /* Powody pominięcia leada bez dzwonienia (te same kody co w API) */
+  const SKIP_REASONS = [
+    ["closed", "Firma nie istnieje / zawieszona"],
+    ["has_tmobile", "Już jest w T-Mobile"],
+    ["no_phone", "Brak numeru / stacjonarny"],
+    ["duplicate", "Duplikat"],
+    ["other", "Inny powód"],
+  ];
+  const OPERATORS = [["play", "Play"], ["orange", "Orange"], ["plus", "Plus"], ["tmobile", "T-Mobile"], ["other", "Inna sieć"]];
   const hhmm = (d) => d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
   /* „dziś 22:01”, „wczoraj 14:10”, „pt 23.10, 10:05” */
   function shortWhen(iso) {
@@ -49,7 +60,7 @@
   }, true);
 
   /* Szybkie frazy do pola komentarza (klik dopisuje frazę, drugi raz tej samej nie dubluje) */
-  const PHRASES = ["Wysłać ofertę mailem", "Wróci za tydzień", "Dzwonić po urlopie"];
+  const PHRASES = ["Wróci za tydzień", "Dzwonić po urlopie", "Decyduje szef / wspólnik"];
   const phraseButtons = () => `<div class="phrases" role="group" aria-label="Szybkie frazy">${PHRASES.map((p, i) => `<button type="button" data-phrase="${i}">${esc(p)}</button>`).join("")}</div>`;
   function wirePhrases(root, textarea) {
     root.querySelectorAll("[data-phrase]").forEach((b) => b.addEventListener("click", () => {
@@ -69,6 +80,7 @@
   /* Wszystkie strony listy DRF (paginacja) jako jedna tablica */
   async function fetchAll(url) {
     const items = [];
+    url += (url.includes("?") ? "&" : "?") + "page_size=500";   // jedno zapytanie zamiast kilku po kolei
     while (url) {
       const r = await CRM.api(url);
       if (!r.ok) throw new Error("Nie udało się pobrać danych (" + r.status + ").");
@@ -87,5 +99,5 @@
     return `<div class="h-sale"><ul>${lines}</ul><div class="h-sale-sum"><span>Wartość sprzedaży</span><b>${money(a.sale_total)}</b></div></div>`;
   }
 
-  Object.assign(CRM, { OUT_LABEL, OUT_COLOR, shortWhen, lastContact, copyButton, copyText, phraseButtons, wirePhrases, money, fetchAll, saleHtml });
+  Object.assign(CRM, { leadTitle, SKIP_REASONS, OPERATORS, OUT_LABEL, OUT_COLOR, shortWhen, lastContact, copyButton, copyText, phraseButtons, wirePhrases, money, fetchAll, saleHtml });
 })();

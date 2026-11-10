@@ -44,8 +44,32 @@ HEADER_ALIASES = {
     "krs": ("krs", "numerkrs"),
     "regon": ("regon",),
     "city": ("miasto", "city", "miejscowosc"),
+    "street": ("ulica", "adres", "ulicainumer", "street", "address"),
+    "postal_code": ("kod", "kodpocztowy", "postalcode", "zip"),
+    "phone_alt": ("dodatkowytelefon", "telefon2", "tel2", "telefondodatkowy", "drugitelefon"),
+    "client_comment": ("komentarz", "uwagi", "opis", "notatka", "informacje"),
 }
-REQUIRED_COLUMNS = {"contact_name": "imię i nazwisko", "phone": "telefon"}
+REQUIRED_COLUMNS = {"phone": "telefon"}
+
+# Układ bazy z CEIDG, w jakim dostajemy pliki od managera: nazwy mają tylko pierwsze kolumny,
+# reszta jest rozpoznawana po pozycji (A = 0).
+CEIDG_COLUMNS = {
+    "phone": 0,          # A: telefon (9 cyfr, oczyszczony)
+    "contact_date": 1,   # B: data kontaktu (wypełnia agent)
+    "comment": 2,        # C: termin oddzwonki / opis klienta (wypełnia agent)
+    "nip": 5,            # F
+    "regon": 6,          # G
+    "company": 8,        # I: nazwa firmy
+    "phone_raw": 9,      # J: telefon w oryginalnym zapisie
+    "street": 10,        # K
+    "building": 11,      # L
+    "apartment": 12,     # M
+    "place_note": 13,    # N: np. „Pawilon nr 4”
+    "city": 14,          # O
+    "postal_code": 15,   # P
+    "post_office": 16,   # Q
+}
+LAYOUT_HEADERS, LAYOUT_CEIDG = "headers", "ceidg"
 
 
 class ImportFileError(Exception):
@@ -103,25 +127,34 @@ def _validate_ids(record):
 
 
 def _clean_row(raw):
-    """Sprawdza jeden wiersz i zwraca oczyszczone dane albo zgłasza RowError."""
+    """Sprawdza jeden wiersz i zwraca oczyszczone dane albo zgłasza RowError.
+
+    Wymagany jest tylko telefon: w bazach z rejestru zwykle znamy firmę, a nie osobę.
+    """
     record = {
         "contact_name": _text(raw.get("contact_name")),
         "phone": _text(raw.get("phone")),
+        "phone_alt": _text(raw.get("phone_alt")),
         "email": _text(raw.get("email")),
         "company": _text(raw.get("company")),
+        "street": _text(raw.get("street")),
+        "postal_code": _text(raw.get("postal_code")),
         "city": _text(raw.get("city")),
+        "client_comment": _text(raw.get("client_comment")),
         "nip": _id_digits(raw.get("nip"), 10),
         "krs": _id_digits(raw.get("krs"), 10),
         "regon": _id_digits(raw.get("regon"), 9),
     }
-    if not record["contact_name"]:
-        raise RowError("Brak imienia i nazwiska.")
     if len(record["contact_name"]) > 150:
         raise RowError("Imię i nazwisko jest za długie (max 150 znaków).")
     if not 9 <= len(re.sub(r"\D", "", record["phone"])) <= 15:
         raise RowError("Numer telefonu musi mieć od 9 do 15 cyfr.")
     if len(record["phone"]) > 30:
         raise RowError("Numer telefonu jest za długi (max 30 znaków).")
+    alt_digits = len(re.sub(r"\D", "", record["phone_alt"]))
+    if record["phone_alt"] and not 9 <= alt_digits <= 15:
+        record["phone_alt"] = ""  # zepsuty dodatkowy numer nie blokuje leada
+    record["phone_alt"] = record["phone_alt"][:30]
     if record["email"]:
         try:
             validate_email(record["email"])
@@ -131,8 +164,91 @@ def _clean_row(raw):
         raise RowError("Nazwa firmy jest za długa (max 200 znaków).")
     if len(record["city"]) > 100:
         raise RowError("Nazwa miasta jest za długa (max 100 znaków).")
+    record["street"] = record["street"][:200]
+    record["postal_code"] = record["postal_code"][:10]
     _validate_ids(record)
     return record
+
+
+def _building(value):
+    """Nr budynku/lokalu; Excel czasem zamienia „5/2” na datę 5 lutego, wtedy odtwarzamy „5/2”."""
+    if isinstance(value, datetime):
+        return f"{value.day}/{value.month}", True
+    return _text(value), False
+
+
+def _ceidg_raw(row):
+    """Wiersz w układzie CEIDG -> (słownik pól jak przy nagłówkach, lista ostrzeżeń).
+
+    Część wierszy w plikach z CEIDG jest przesunięta: cudzysłów w nazwie firmy rozbił ją
+    na kilka kolumn i wszystko za nazwą przesunęło się w prawo. Rozpoznajemy to po tym,
+    że oryginalny telefon (kol. J) nie zgadza się z telefonem z kol. A, i szukamy go dalej.
+    """
+    cells = list(row) + [None] * 20
+    warnings = []
+    phone = _text(cells[CEIDG_COLUMNS["phone"]])
+    key = phone_key(phone)
+    name_end = CEIDG_COLUMNS["phone_raw"]  # pierwsza kolumna za nazwą firmy
+    if key and phone_key(_text(cells[name_end])) != key:
+        for index in range(name_end + 1, min(len(row), name_end + 6)):
+            if phone_key(_text(cells[index])) == key:
+                name_end = index
+                warnings.append("Wiersz był przesunięty (nazwa firmy w kilku kolumnach), dane poprawione.")
+                break
+        else:
+            warnings.append("Nie znaleziono oryginalnego numeru w kol. J: sprawdź adres w tym wierszu.")
+    shift = name_end - CEIDG_COLUMNS["phone_raw"]
+    at = lambda name: cells[CEIDG_COLUMNS[name] + shift]  # kolumny za nazwą firmy, po przesunięciu
+
+    name_parts = [_text(c) for c in cells[CEIDG_COLUMNS["company"]:name_end] if _text(c)]
+    company = " ".join(name_parts).replace('\\"', '"').strip()
+
+    street = _text(at("street"))
+    building, fixed_b = _building(at("building"))
+    apartment, fixed_a = _building(at("apartment"))
+    if fixed_b or fixed_a:
+        warnings.append("Numer budynku był zapisany jako data, odtworzono go (sprawdź).")
+    number = building + (f"/{apartment}" if apartment else "")
+    address = " ".join(part for part in (street, number) if part)
+    place = _text(at("place_note"))
+    if place:
+        address = f"{address}, {place}" if address else place
+
+    postal = _text(at("postal_code"))
+    if not re.fullmatch(r"\d{2}-\d{3}", postal):
+        postal = ""
+    city = _text(at("city")) or _text(at("post_office"))
+
+    comment_parts = []
+    contact_date = cells[CEIDG_COLUMNS["contact_date"]]
+    if contact_date not in (None, ""):
+        when = contact_date.strftime("%d.%m.%Y %H:%M") if isinstance(contact_date, datetime) else _text(contact_date)
+        comment_parts.append(f"Data kontaktu z pliku: {when}")
+    if _text(cells[CEIDG_COLUMNS["comment"]]):
+        comment_parts.append(_text(cells[CEIDG_COLUMNS["comment"]]))
+
+    raw = {
+        "phone": phone,
+        "company": company,
+        "nip": cells[CEIDG_COLUMNS["nip"]],
+        "regon": cells[CEIDG_COLUMNS["regon"]],
+        "street": address,
+        "postal_code": postal,
+        "city": city,
+        "client_comment": "\n".join(comment_parts),
+    }
+    return raw, warnings
+
+
+def _is_ceidg_layout(header):
+    """Układ z CEIDG: „tel” w kol. A, „nip” w kol. F i nazwa firmy bez nagłówka (kol. I)."""
+    keys = [_header_key(h) for h in header]
+    return (
+        len(keys) > CEIDG_COLUMNS["company"]
+        and keys[0] in HEADER_ALIASES["phone"]
+        and keys[CEIDG_COLUMNS["nip"]] == "nip"
+        and not keys[CEIDG_COLUMNS["company"]]
+    )
 
 
 def _find_or_create_company(record, cache):
@@ -155,6 +271,8 @@ def _find_or_create_company(record, cache):
             nip=nip,
             krs=record["krs"],
             regon=record["regon"],
+            street=record["street"],
+            postal_code=record["postal_code"],
             city=record["city"],
         )
     cache[key] = company
@@ -162,7 +280,7 @@ def _find_or_create_company(record, cache):
 
 
 def _read_sheet(uploaded_file):
-    """Otwiera plik i zwraca (mapa kolumn, iterator wierszy)."""
+    """Otwiera plik i zwraca (układ, mapa kolumn, iterator wierszy)."""
     if uploaded_file.size > MAX_IMPORT_BYTES:
         raise ImportFileError("Plik jest za duży (max 5 MB).")
     try:
@@ -174,6 +292,8 @@ def _read_sheet(uploaded_file):
     header = next(rows, None)
     if not header:
         raise ImportFileError("Plik jest pusty.")
+    if _is_ceidg_layout(header):
+        return LAYOUT_CEIDG, {}, rows
 
     columns = {}
     for index, title in enumerate(header):
@@ -187,16 +307,21 @@ def _read_sheet(uploaded_file):
             "Brak wymaganych kolumn: " + ", ".join(missing) + ". "
             "Pierwszy wiersz pliku musi zawierać nagłówki."
         )
-    return columns, rows
+    return LAYOUT_HEADERS, columns, rows
 
 
 # ---------------------------------------------------------------------- import
 
-def import_leads(uploaded_file, user, batch_name="", product=None):
+def import_leads(uploaded_file, user, batch_name="", product=None, assigned_to=None):
     """Importuje leady z pliku .xlsx do nowej paczki (LeadBatch).
 
-    Zwraca raport: liczba utworzonych leadów, pominięte duplikaty i błędne wiersze.
-    Gdy nie powstał żaden lead, nic nie jest zapisywane (batch = None).
+    Rozpoznaje dwa układy: kolumny z nagłówkami (HEADER_ALIASES) albo bazę z CEIDG
+    (CEIDG_COLUMNS, po pozycji). `assigned_to` = agent, dla którego jest cała baza
+    (tylko on będzie z niej losował); bez niego leady trafiają do wspólnej puli.
+
+    Zwraca raport: liczba utworzonych leadów, pominięte duplikaty, błędne wiersze
+    i ostrzeżenia (wiersze zaimportowane, ale poprawione). Gdy nie powstał żaden lead,
+    nic nie jest zapisywane (batch = None).
     """
     if not batch_name:
         stem = re.sub(r"\.xlsx$", "", uploaded_file.name, flags=re.IGNORECASE)
@@ -205,7 +330,7 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
     if LeadBatch.objects.filter(name=batch_name).exists():
         raise ImportFileError(f"Baza o nazwie „{batch_name}” już istnieje.")
 
-    columns, rows = _read_sheet(uploaded_file)
+    layout, columns, rows = _read_sheet(uploaded_file)
 
     # numery już obecne w systemie (jakikolwiek lead, także przypisany lub zamknięty)
     existing = {}
@@ -213,7 +338,7 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
         existing.setdefault(phone_key(phone), lead_id)
     seen_in_file = {}
 
-    leads, duplicates, errors = [], [], []
+    leads, duplicates, errors, warnings = [], [], [], []
     total_rows = 0
     company_cache = {}
 
@@ -222,6 +347,7 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
             name=batch_name,
             source_file_name=uploaded_file.name[:255],
             created_by=user,
+            assigned_to=assigned_to,
         )
         for number, row in enumerate(rows, start=2):
             if all(_text(cell) == "" for cell in row):
@@ -230,10 +356,14 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
             if total_rows > MAX_IMPORT_ROWS:
                 raise ImportFileError(f"Za dużo wierszy (max {MAX_IMPORT_ROWS}).")
 
-            raw = {
-                name: (row[index] if index < len(row) else None)
-                for name, index in columns.items()
-            }
+            row_warnings = []
+            if layout == LAYOUT_CEIDG:
+                raw, row_warnings = _ceidg_raw(row)
+            else:
+                raw = {
+                    name: (row[index] if index < len(row) else None)
+                    for name, index in columns.items()
+                }
             try:
                 record = _clean_row(raw)
             except RowError as error:
@@ -256,6 +386,7 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
                 })
                 continue
             seen_in_file[key] = number
+            warnings.extend({"row": number, "message": text} for text in row_warnings)
 
             leads.append(
                 Lead(
@@ -264,7 +395,9 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
                     product=product,
                     contact_name=record["contact_name"],
                     phone=record["phone"],
+                    phone_alt=record["phone_alt"],
                     email=record["email"],
+                    client_comment=record["client_comment"],
                 )
             )
 
@@ -277,8 +410,10 @@ def import_leads(uploaded_file, user, batch_name="", product=None):
         "batch": {"id": batch.pk, "name": batch.name} if leads else None,
         "total_rows": total_rows,
         "created": len(leads),
+        "layout": layout,
         "duplicates": duplicates,
         "errors": errors,
+        "warnings": warnings,
     }
 
 
@@ -307,6 +442,16 @@ EXPORT_COLUMNS = (
     ("Następny kontakt", 18, lambda l: _local(l.next_contact_at)),
     ("Notatka kontaktu", 30, lambda l: l.next_contact_note),
     ("Ostatnia aktywność", 18, lambda l: _local(l.last_activity_at)),
+    # kolumny dodane później są na końcu, żeby nie przestawiać arkuszy, które ktoś już ma
+    ("Dodatkowy telefon", 18, lambda l: l.phone_alt),
+    ("REGON", 13, lambda l: l.company.regon if l.company else ""),
+    ("Adres", 28, lambda l: l.company.street if l.company else ""),
+    ("Kod", 8, lambda l: l.company.postal_code if l.company else ""),
+    ("Miejscowość", 18, lambda l: l.company.city if l.company else ""),
+    ("Obecny operator", 16, lambda l: l.operators),
+    ("Informacje o kliencie", 30, lambda l: l.client_comment),
+    ("Umowa do", 12, lambda l: "bez terminu" if l.contract_open_ended
+     else (f"{l.contract_end.month:02d}.{l.contract_end.year}" if l.contract_end else "")),
 )
 
 

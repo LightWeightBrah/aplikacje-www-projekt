@@ -1,0 +1,70 @@
+{% extends "crm/app_base.html" %}
+{% load static %}
+{% block title %}Kalendarz – Solid CRM{% endblock %}
+{% block nav_plan %}active{% endblock %}
+{% block content %}
+<header class="page-head">
+    <div>
+        <div class="cal-tabs-row"><div class="cal-tabs"><a href="/crm/plan/">Dzień</a><a href="/crm/calendar/" class="active">Miesiąc</a></div>
+            <div class="cal-filter" role="group" aria-label="Co pokazywać">
+            <button type="button" data-calf="important" title="Oferty, zainteresowani i oddzwonienia umówione z klientem – bez automatycznych ponownych prób">Tylko umówione</button>
+            <button type="button" data-calf="all" title="Także ponowne próby po „Nie odebrał” (ustawiane automatycznie)">Wszystko</button>
+        </div>
+        </div>
+        <h1>Kalendarz kontaktów</h1>
+        <p class="muted">Umówione kontakty: oferty, oddzwonienia i (w „Wszystko”) ponowne próby. Kliknij dzień, żeby zobaczyć go dokładnie i zadzwonić.</p>
+    </div>
+    <div class="cal-head">
+        <button type="button" class="btn-mini" id="m-prev" aria-label="Poprzedni miesiąc">&lsaquo;</button>
+        <h2 id="m-title">…</h2>
+        <button type="button" class="btn-mini" id="m-next" aria-label="Następny miesiąc">&rsaquo;</button>
+        <button type="button" class="btn-mini" id="m-today">Dziś</button>
+        <button type="button" class="btn btn-primary" id="cb-open">+ Dodaj callback</button>
+    </div>
+</header>
+<section class="card">
+    <div class="cal-grid" id="cal-grid" aria-live="polite"></div>
+    <div class="cal-legend">
+        <span><i style="--c:var(--seg-offer)"></i>Oferta / zainteresowany</span>
+        <span><i style="--c:var(--seg-callback)"></i>Umówione oddzwonienie</span>
+        <span><i style="--c:var(--seg-retry)"></i>Ponowna próba</span>
+        <span><i style="--c:var(--late)"></i>Spóźnione</span>
+        <span class="cal-hidden" id="cal-hidden"></span>
+    </div>
+</section>
+
+<dialog id="day-dialog" class="dialog cal-dialog" aria-labelledby="day-title">
+    <div class="cal-dhead">
+        <div><h2 id="day-title">…</h2><p class="muted" id="day-sub"></p></div>
+    </div>
+    <div id="day-list" class="cal-list"></div>
+    {# zamykanie w tym samym miejscu co „Anuluj” w „Dodaj callback”: na dole, po lewej od głównego przycisku #}
+    <div class="dialog-actions"><button type="button" class="btn btn-secondary" id="day-close">Zamknij</button><button type="button" class="btn btn-primary" id="day-add">+ Dodaj callback na ten dzień</button></div>
+</dialog>
+
+<dialog id="cb-dialog" class="dialog" aria-labelledby="cb-title">
+    <form id="cb-form" novalidate>
+        <h2 id="cb-title">Dodaj callback</h2>
+        <p class="muted small">Umawiasz termin rozmowy z jednym ze swoich klientów. To nie zapisuje rozmowy, tylko termin: przypomnienie przyjdzie jak przy zwykłym oddzwonieniu.</p>
+        <label class="field">Klient
+            <input id="cb-find" class="select" autocomplete="off" placeholder="Nazwa firmy, telefon albo NIP">
+        </label>
+        <div id="cb-picked" class="cb-picked" hidden></div>
+        <div id="cb-results" class="cb-results"></div>
+        <div class="field-row">
+            <label class="field">Dzień<input id="cb-date" class="select" type="date"></label>
+            <label class="field">Godzina<input id="cb-time" class="select" type="time" step="300"></label>
+        </div>
+        <label class="field">W jakiej sprawie (opcjonalnie)
+            <input id="cb-note" class="select" maxlength="255" autocomplete="off" placeholder="np. omówić ofertę na 3 numery">
+        </label>
+        <p class="form-error" id="cb-error" hidden></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="cb-cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="cb-ok">Zapisz termin</button>
+        </div>
+    </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/calendar.js' %}?v=148"></script>{% endblock %}

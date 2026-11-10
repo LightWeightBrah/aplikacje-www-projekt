@@ -89,4 +89,12 @@ class EditCaseTests(CrmTestBase):
 class QueuePageLayoutTests(CrmTestBase):
     def test_queue_page_uses_current_static_version(self):
         html = self.client.get("/crm/queue/").content.decode()
-        self.assertIn("crm/js/queue.js?v=59", html)
+        self.assertIn("crm/js/queue.js?v=148", html)
+
+    # Komentarz szablonu {# … #} w kilku liniach Django pokazuje jako tekst na stronie – żadna strona go nie ma
+    def test_no_template_comment_leaks_into_pages(self):
+        for url in ("/crm/queue/", "/crm/plan/", "/crm/", "/crm/ranking/", "/crm/manager/", "/crm/settings/",
+                    "/crm/products/", "/crm/users/", "/crm/import/", "/crm/login/"):
+            html = self.client.get(url).content.decode()
+            self.assertNotIn("{#", html, url)
+            self.assertNotIn("{% comment", html, url)

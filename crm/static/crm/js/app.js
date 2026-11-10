@@ -1,10 +1,10 @@
-/* LeadCRM – frontend: logowanie JWT, klient API i dashboard (bez bibliotek). */
+/* Solid CRM – frontend: logowanie JWT, klient API i dashboard (bez bibliotek). */
 const CRM = (() => {
   const LOGIN_URL = "/crm/login/";
   const HOME_URL = "/crm/";
   const STATUS = {
     new: ["Nowy", "#6366f1"], callback: ["Do oddzwonienia", "#f59e0b"],
-    interested: ["Zainteresowany", "#10b981"], offer: ["Oferta wysłana", "#0ea5e9"],
+    interested: ["Zainteresowany", "#10b981"], offer: ["Oferta wysłana", "#22c55e"],
     won: ["Sprzedany", "#16a34a"], lost: ["Bez sprzedaży", "#94a3b8"],
     do_not_call: ["Nie dzwonić", "#ef4444"], unreachable: ["Nieosiągalny", "#a855f7"],
   };
@@ -27,7 +27,7 @@ const CRM = (() => {
   };
 
   function logout() {
-    ["crm_access", "crm_refresh", "crm_user"].forEach(store.del);
+    ["crm_access", "crm_refresh", "crm_user", "crm_plan_badge"].forEach(store.del);
     location.href = LOGIN_URL;
   }
 
@@ -43,14 +43,57 @@ const CRM = (() => {
     return true;
   }
 
-  /* Zapytanie do API z tokenem; przy 401 próbuje odświeżyć token raz. */
+  /* Pierwsze wczytanie strony: treść (main) jest ukryta, dopóki nie wrócą wszystkie
+     zapytania wysłane przy otwarciu strony – wtedy pokazuje się od razu cała. */
+  const docEl = document.documentElement;
+  let pending = 0, revealed = !docEl.classList.contains("crm-loading"), settleTimer = null;
+  function reveal() {
+    if (revealed) return;
+    revealed = true;
+    docEl.classList.remove("crm-loading", "crm-loading-slow");
+  }
+  function settle() {
+    if (revealed) return;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { if (pending === 0) reveal(); }, 40);  // dajemy chwilę na zapytania „jedno po drugim”
+  }
+  if (!revealed) {
+    document.addEventListener("DOMContentLoaded", settle);
+    setTimeout(() => { if (!revealed) docEl.classList.add("crm-loading-slow"); }, 500);
+    setTimeout(reveal, 4000);
+  }
+
   async function api(path, options = {}, retry = true) {
+    if (revealed) return apiCall(path, options, retry);
+    pending++;
+    try { return await apiCall(path, options, retry); } finally { pending--; settle(); }
+  }
+
+  /* Zakładki otwierają się od razu: gdy kursor stoi na linku w menu, Chrome przygotowuje tę stronę
+     w tle (reguły „speculationrules” w app_base.html). Taka strona może tylko CZYTAĆ dane – zapisy
+     (POST/PATCH/DELETE) i „otwarcie Dzwonienia” (?open=1, liczy się do czasu pracy) czekają,
+     aż agent naprawdę kliknie. Gdy nie kliknie, nic się nie zapisuje. */
+  const shown = document.prerendering
+    ? new Promise((done) => document.addEventListener("prerenderingchange", done, { once: true }))
+    : null;
+
+  /* Zapytanie do API z tokenem; przy 401 próbuje odświeżyć token raz. */
+  async function apiCall(path, options = {}, retry = true) {
+    if (shown && document.prerendering) {
+      if ((options.method || "GET").toUpperCase() !== "GET") await shown;
+      else if (/[?&]open=1/.test(path)) {
+        shown.then(() => apiCall(path, options, retry)).catch(() => {});   // ruch agenta – dopiero po kliknięciu
+        path = path.replace(/([?&])open=1&?/, "$1").replace(/[?&]$/, "");
+      }
+    }
     const headers = { ...(options.headers || {}) };
     const access = store.get("crm_access");
     if (access) headers.Authorization = "Bearer " + access;
     const r = await fetch(path, { ...options, headers });
-    if (r.status === 401 && retry && (await refreshToken())) return api(path, options, false);
+    if (r.status === 401 && retry && (await refreshToken())) return apiCall(path, options, false);
     if (r.status === 401) { logout(); throw new Error("Sesja wygasła"); }
+    // manager zablokował to urządzenie – wracamy na ekran aktywacji
+    if (r.status === 403 && r.headers.get("X-Device-Lock")) { location.href = "/crm/activate/"; throw new Error("Urządzenie bez dostępu"); }
     return r;
   }
 
@@ -60,12 +103,13 @@ const CRM = (() => {
 
   /* Motyw: domyślnie jak w systemie, wybór ręczny zapamiętany w przeglądarce. */
   const root = document.documentElement;
+  /* Domyślnie ciemny (jak lubi zespół); jasny albo „auto” (jak w systemie) wybiera się w menu konta. */
   const themeMode = () => root.dataset.theme || "auto";
   const isDark = () => (root.dataset.theme
     ? root.dataset.theme === "dark"
     : matchMedia("(prefers-color-scheme: dark)").matches);
   function setTheme(mode) {
-    if (mode === "auto") { delete root.dataset.theme; store.del("crm_theme"); }
+    if (mode === "auto") { delete root.dataset.theme; store.set("crm_theme", "auto"); }
     else { root.dataset.theme = mode; store.set("crm_theme", mode); }
   }
 
@@ -156,7 +200,22 @@ const CRM = (() => {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggle(false); });
     document.querySelectorAll("[data-theme-choice]").forEach((b) =>
       b.addEventListener("click", () => { setTheme(b.dataset.themeChoice); paint(); }));
-    $("logout-btn").addEventListener("click", logout);
+    // wielkość tekstu: każdy agent ustawia sobie sam (zapamiętane na tym komputerze), 1 = standardowa
+    const textSize = () => parseFloat(getComputedStyle(root).getPropertyValue("--ts")) || 1;
+    const paintText = () => document.querySelectorAll("[data-text-size]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(Math.abs(Number(b.dataset.textSize) - textSize()) < 0.01)));
+    document.querySelectorAll("[data-text-size]").forEach((b) => b.addEventListener("click", () => {
+      const z = Number(b.dataset.textSize);
+      if (z !== 1) { root.style.setProperty("--ts", z); store.set("crm_text_size", String(z)); }
+      else { root.style.removeProperty("--ts"); store.del("crm_text_size"); }
+      paintText();
+    }));
+    paintText();
+    $("logout-btn").addEventListener("click", async () => {
+      // wylogowanie = godzina wyjścia z pracy (manager widzi ją w „Zespół” → Obecność)
+      try { await api("/api/work/logout/", { method: "POST" }, false); } catch { /* i tak wylogowujemy */ }
+      logout();
+    });
     paint();
   }
 
@@ -221,7 +280,7 @@ const CRM = (() => {
 
   function initLogin() {
     initTheme();
-    if (store.get("crm_access") && currentUser()) { location.href = HOME_URL; return; }
+    if (store.get("crm_access") && currentUser()) { location.href = currentUser().role === "agent" ? "/crm/queue/" : HOME_URL; return; }
     const form = $("login-form"), err = $("login-error");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -233,6 +292,7 @@ const CRM = (() => {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: $("username").value.trim(), password: $("password").value }),
         });
+        if (r.status === 429) throw new Error("Za dużo prób logowania. Odczekaj minutę i spróbuj ponownie.");
         if (!r.ok) throw new Error("Nieprawidłowy login lub hasło.");
         const tokens = await r.json();
         store.set("crm_access", tokens.access);
@@ -243,7 +303,8 @@ const CRM = (() => {
           throw new Error("To konto nie ma roli Agent ani Manager. Skontaktuj się z administratorem.");
         }
         store.set("crm_user", JSON.stringify(me));
-        location.href = HOME_URL;
+        try { await api("/api/work/login/", { method: "POST" }); } catch { /* przyjście zapisze też pierwszy ruch */ }
+        location.href = me.role === "agent" ? "/crm/queue/" : HOME_URL;   // agent zaczyna od dzwonienia
       } catch (ex) {
         err.textContent = ex.message || "Nie udało się zalogować.";
         err.hidden = false;
@@ -251,6 +312,41 @@ const CRM = (() => {
       }
     });
   }
+
+  /* Ekran „To urządzenie nie ma dostępu”: kod od managera + nazwa urządzenia → ciasteczko urządzenia. */
+  function initActivate() {
+    initTheme();
+    const form = $("act-form"), err = $("act-error");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const code = $("act-code").value.trim(), name = $("act-name").value.trim();
+      if (!code || !name) { err.textContent = "Wpisz kod i nazwę urządzenia."; err.hidden = false; return; }
+      const btn = form.querySelector("button"); btn.disabled = true;
+      try {
+        const r = await fetch("/api/device/activate/", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, name }),
+        });
+        if (r.status === 429) throw new Error("Za dużo prób. Odczekaj minutę.");
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Nie udało się aktywować.");
+        location.href = LOGIN_URL;
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    });
+  }
+
+  /* Przewija się środek strony (main.content), a nie okno – górny i dolny pasek stoją na całą szerokość.
+     scrollTop(): na górę strony; scroller(): element, który się przewija. */
+  const scroller = () => document.querySelector("body > main.content") || document.scrollingElement;
+  function scrollTop() { const el = scroller(); if (el) el.scrollTo({ top: 0 }); window.scrollTo({ top: 0 }); }
+  /* PageUp/PageDown/spacja/strzałki/Home/End przewijają środek także wtedy, gdy nic nie jest kliknięte
+     (bez tego przeglądarka próbowałaby przewinąć okno, które stoi w miejscu) */
+  document.addEventListener("keydown", (e) => {
+    if (!["PageDown", "PageUp", "Home", "End", "ArrowDown", "ArrowUp", " "].includes(e.key)) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && a !== document.documentElement) return;
+    const el = document.querySelector("body > main.content");
+    if (el) { el.tabIndex = -1; el.focus({ preventScroll: true }); }
+  }, true);
 
   function initShell() {
     const user = currentUser();
@@ -260,6 +356,8 @@ const CRM = (() => {
     document.querySelectorAll("[data-manager-only]").forEach((el) => { el.hidden = user.role !== "manager"; });
     applyTeamAccess(user);
     initUserMenu(user);
+    initNavMore();
+    initDialerDialog();
     paintAvatars(user);
     initAvatar(user);
     const password = initPassword(user);
@@ -279,25 +377,82 @@ const CRM = (() => {
     }).catch(() => { /* zostaje zapamiętana wartość */ });
   }
 
+  /* Menu „Zarządzanie ▾” (manager): rozwija się po kliknięciu, zwija po kliknięciu obok */
+  function initNavMore() {
+    const btn = $("nav-more-btn"), menu = $("nav-more-menu");
+    if (!btn || !menu) return;
+    const toggle = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", (e) => { e.stopPropagation(); toggle(menu.hidden); });
+    document.addEventListener("click", () => toggle(false));
+    if (menu.querySelector("a.active")) btn.classList.add("active");
+  }
+
+  /* Okno „Telefon (dialer)”: stan telefonu, kod parowania, odłączenie */
+  function initDialerDialog() {
+    const dlg = $("dialer-dialog"), open = $("dialer-open");
+    if (!dlg || !open) return;
+    const paint = async () => {
+      let d = null;
+      try { const r = await api("/api/dialer/status/"); if (r.ok) d = await r.json(); } catch { /* brak sieci */ }
+      const st = $("dialer-state");
+      if (!d) { st.textContent = "Nie udało się sprawdzić stanu telefonu."; return; }
+      st.className = "dialer-state " + (d.online ? "on" : d.paired ? "off" : "none");
+      const pb = $("dialer-pause");
+      pb.hidden = !d.paired; pb.dataset.paused = d.paused ? "1" : "0";
+      pb.textContent = d.paused ? "Włącz dzwonienie przez telefon" : "Wyłącz dzwonienie przez telefon";
+      if (d.paused) { st.textContent = "Dzwonienie przez telefon jest wyłączone (parowanie zostaje). „Zadzwoń” otworzy zwykłe wybieranie numeru na tym komputerze. SMS-y z przypomnieniem dalej idą z telefonu."; $("dialer-unpair").hidden = false; return; }
+      st.textContent = d.online ? `Telefon połączony${d.device_name ? ": " + d.device_name : ""}. Przycisk „Zadzwoń” wybierze numer na telefonie.`
+        : d.paired ? "Telefon jest sparowany, ale teraz nie odpowiada. Otwórz aplikację Solid Dialer na telefonie."
+          : "Telefon nie jest połączony. „Zadzwoń” otworzy zwykłe wybieranie numeru (np. na komputerze z telefonem).";
+      // stara aplikacja: nowa wersja pokazuje w CRM, kto dzwoni, SMS-y od klientów i liczy rozmowy przychodzące
+      if (d.paired && d.app_version && d.latest_version && d.app_version !== d.latest_version) {
+        st.textContent += ` Na telefonie jest Solid Dialer ${d.app_version} – zainstaluj nową wersję ${d.latest_version} z adresu w kroku 1 (parowanie zostaje).`;
+      }
+      $("dialer-unpair").hidden = !d.paired;
+    };
+    open.addEventListener("click", () => { $("user-popover").hidden = true; $("dialer-code").hidden = true; dlg.showModal(); paint(); });
+    $("dialer-code-btn").addEventListener("click", async () => {
+      const r = await api("/api/dialer/pairing/", { method: "POST" });
+      if (!r.ok) return;
+      const d = await r.json(), box = $("dialer-code");
+      box.hidden = false;
+      box.innerHTML = `<span>Adres CRM: <b>${esc(location.origin)}</b></span><span>Kod parowania (ważny ${d.valid_minutes} min):</span><strong>${esc(d.code.slice(0, 3))} ${esc(d.code.slice(3))}</strong>`;
+      const poll = setInterval(async () => { if (!dlg.open) { clearInterval(poll); return; } await paint(); if ($("dialer-state").classList.contains("on")) { clearInterval(poll); box.hidden = true; } }, 3000);
+    });
+    $("dialer-pause").addEventListener("click", async () => {
+      const paused = $("dialer-pause").dataset.paused !== "1";
+      await api("/api/dialer/status/", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused }) });
+      await paint();
+      document.dispatchEvent(new CustomEvent("crm:dialer"));   // „Dzwonienie” od razu odświeża pasek na dole
+      if (CRM.refreshPhone) CRM.refreshPhone();
+    });
+    $("dialer-unpair").addEventListener("click", async () => {
+      if (!confirm("Odłączyć telefon od CRM? Trzeba będzie sparować go ponownie.")) return;
+      await api("/api/dialer/status/", { method: "DELETE" });
+      paint();
+    });
+  }
+
   /* Pozycja "Ranking" w menu: manager zawsze, agent dopóki manager nie wyłączył mu podglądu. */
   function applyTeamAccess(user) {
     const allowed = user.role === "manager" || user.can_view_team !== false;
     document.querySelectorAll("[data-team-only]").forEach((el) => { el.hidden = !allowed; });
+    if (allowed) delete docEl.dataset.noteam; else docEl.dataset.noteam = "1";
   }
 
   const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
 
   function renderKpis(d, manager) {
     const o = d.outcomes;
-    const calls = o.no_answer + o.callback + o.interested + o.sold + o.refused + o.wrong_number;
+    const calls = o.no_answer + o.callback + o.interested + (o.offer || 0) + o.sold + o.refused + o.wrong_number;
     const answered = calls - o.no_answer;
     const active = d.agents.reduce((s, a) => s + a.leads_active, 0);
     const cards = [
       ["Rozmowy", calls, "w wybranym okresie"],
       ["Dodzwoniłem się", pct(calls ? answered / calls : null), `${answered} z ${calls} rozmów`],
-      ["Zainteresowani", o.interested, answered ? `${pct(o.interested / answered)} odebranych` : ""],
-      ["Sprzedane", o.sold, "sprzedaże w wybranym okresie"],
-      ["Przychód", CRM.money(d.revenue), d.revenue && Number(d.revenue) > 0 ? "wartość sprzedanych produktów" : "wpisuj produkty przy sprzedaży"],
+      ["Wysłane oferty", (o.offer || 0) + o.interested, answered ? `${pct(((o.offer || 0) + o.interested) / answered)} rozmów` : ""],
+      ["Sprzedane", o.sold, o.sold ? `1 sprzedaż na ${String(Math.round((calls / o.sold) * 10) / 10).replace(".", ",")} rozmów` : "sprzedaże w wybranym okresie"],
+      ["Prowizja", CRM.money(d.commission), `sprzedane abonamenty: ${CRM.money(d.revenue)} / mies.`],
       manager ? ["Czekają na agenta", d.pool_leads, "klienci, których nikt jeszcze nie prowadzi"] : ["Moi klienci w toku", active, "jeszcze niezamknięci, do obsłużenia"],
     ];
     $("kpis").innerHTML = cards.map(([label, value, sub]) =>
@@ -310,18 +465,20 @@ const CRM = (() => {
       <div class="track"><i style="width:${max ? (n / max) * 100 : 0}%;background:${color}"></i></div><b>${n}</b></div>`;
 
   function renderOutcomes(o) {
-    const calls = o.no_answer + o.callback + o.interested + o.sold + o.refused + o.wrong_number;
+    const calls = o.no_answer + o.callback + o.interested + (o.offer || 0) + o.sold + o.refused + o.wrong_number;
     const lost = o.refused + o.wrong_number;
     $("outcomes").innerHTML =
       `<div class="big-total"><b>${calls}</b> rozmów w wybranym okresie</div>` +
       [
         ["Nie odebrał", o.no_answer, "#64748b", ""],
         ["Oddzwonić", o.callback, "#f59e0b", "klient zostaje u Ciebie, wraca w terminie"],
+        ["Wysłana oferta", o.offer || 0, "#0f766e", "oferta poszła, follow-up w kalendarzu"],
         ["Zainteresowany", o.interested, "#10b981", "chce usłyszeć ofertę, jeszcze nie kupił"],
         ["Sprzedane", o.sold, "#16a34a", "klient kupił – sprawa zamknięta"],
         ["Odmowa", o.refused, "#ef4444", "klient nie chce – sprawa zamknięta"],
         ["Zły numer", o.wrong_number, "#a855f7", "nie ten numer – sprawa zamknięta"],
-      ].map(([l, n, c, h]) => orow(l, n, c, calls, h)).join("") +
+      ].filter(([l, n]) => n || l !== "Zainteresowany").map(([l, n, c, h]) => orow(l, n, c, calls, h)).join("") +
+      (o.skipped ? `<div class="closed-line"><span>Pominięte bez dzwonienia: <b>${o.skipped}</b></span></div>` : "") +
       `<div class="closed-line"><span>Sprawy zamknięte w okresie: <b>${o.sold + lost}</b></span>
         <span class="ok">ze sprzedażą: <b>${o.sold}</b></span><span class="bad">bez sprzedaży: <b>${lost}</b></span></div>`;
   }
@@ -400,15 +557,45 @@ const CRM = (() => {
     $("daily").innerHTML = `<div class="bars" style="gap:${gap}">${bars}</div><div class="axis" style="gap:${gap}">${axis}</div>`;
   }
 
-  function renderAgents(rows) {
-    $("agents").innerHTML = `<thead><tr><th>Agent</th><th>Klienci w toku</th><th>Sprzedani klienci (łącznie)</th>
-      <th>Rozmowy</th><th>Nie odebrał</th><th>Oddzwonić</th><th>Zainteresowani</th>
-      <th>Sprzedaże w okresie</th><th>Przychód</th><th>Odmowy</th><th>Zły numer</th><th>Dodzwonienia</th></tr></thead><tbody>` +
-      rows.map((a) => `<tr><td><strong>${esc(a.username)}</strong></td><td>${a.leads_active}</td>
-        <td>${a.leads_won}</td><td>${a.calls}</td><td>${a.no_answer}</td><td>${a.callbacks}</td>
-        <td>${a.interested}</td><td>${a.sold}</td><td class="nowrap">${esc(CRM.money(a.revenue))}</td><td>${a.refused}</td><td>${a.wrong_number}</td>
-        <td>${pct(a.answer_rate)}</td></tr>`).join("") + "</tbody>";
+  /* Tabela „Wyniki agentów” (manager → Cały zespół): każda osoba + wiersz całego zespołu, układanie po kliknięciu nagłówka */
+  let agentRows = [], agentSort = "minutes";
+  const perSale = (calls, sold) => (sold ? Math.round((calls / sold) * 10) / 10 : null);
+  const fmt1 = (v) => String(v).replace(".", ",");
+  const durHM = (m) => { m = Math.max(0, Math.round(m || 0)); const h = Math.floor(m / 60), r = m % 60; return h ? `${h} h${r ? ` ${r} min` : ""}` : `${r} min`; };
+  const AGENT_COLS = [
+    ["minutes", "Minuty / powinno być"], ["worked_minutes", "Czas pracy"], ["calls", "Rozmowy"], ["answer_rate", "Dodzwonienia"],
+    ["no_answer", "Nie odebrał"], ["callbacks", "Oddzwonić"], ["interested", "Zainteresowani"], ["offers", "Oferty"],
+    ["sold", "Sprzedane"], ["calls_per_sale", "Rozmów na 1 sprzedaż"], ["commission", "Prowizja"], ["leads_active", "Klienci w toku"],
+  ];
+  function agentCells(a) {
+    const minutes = a.minutes || 0, goal = a.goal || 0;
+    return [
+      `<span class="${goal ? (minutes >= goal ? "ok-num" : "low-num") : ""}">${talk(minutes)}</span> / ${talk(goal)}`,
+      a.worked_minutes ? durHM(a.worked_minutes) : "–",
+      a.calls, pct(a.answer_rate), a.no_answer, a.callbacks, a.interested, a.offers, a.sold,
+      a.calls_per_sale != null ? fmt1(a.calls_per_sale) : "–",
+      `<span class="nowrap">${esc(CRM.money(a.commission))}</span>`, a.leads_active,
+    ].map((v) => `<td class="num">${v}</td>`).join("");
   }
+  function drawAgents() {
+    const val = (a) => { const v = a[agentSort]; return v == null ? (agentSort === "calls_per_sale" ? Infinity : -Infinity) : Number(v); };
+    // „rozmów na 1 sprzedaż”: mniej = lepiej, więc rosnąco; reszta malejąco
+    const rows = agentRows.slice().sort((x, y) => (agentSort === "calls_per_sale" ? val(x) - val(y) : val(y) - val(x)) || x.username.localeCompare(y.username));
+    const sum = (k) => agentRows.reduce((s, a) => s + Number(a[k] || 0), 0);
+    const calls = sum("calls"), answered = sum("answered"), sold = sum("sold");
+    const total = { minutes: sum("minutes"), goal: sum("goal"), worked_minutes: sum("worked_minutes"), calls,
+      answer_rate: calls ? answered / calls : null, no_answer: sum("no_answer"), callbacks: sum("callbacks"), interested: sum("interested"),
+      offers: sum("offers"), sold, calls_per_sale: perSale(calls, sold), commission: sum("commission"), leads_active: sum("leads_active") };
+    $("agents").innerHTML = `<thead><tr><th>Osoba</th>${AGENT_COLS.map(([k, label]) =>
+      `<th class="num sortable${k === agentSort ? " sorted" : ""}" data-agent-sort="${k}">${label}${k === agentSort ? (k === "calls_per_sale" ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>` +
+      rows.map((a) => `<tr><td><strong>${esc(a.username)}</strong></td>${agentCells(a)}</tr>`).join("") +
+      `</tbody><tfoot><tr class="team-total"><td><strong>Cały zespół</strong></td>${agentCells(total)}</tr></tfoot>`;
+  }
+  function renderAgents(rows) { agentRows = rows; drawAgents(); }
+  document.addEventListener("click", (e) => {
+    const th = e.target.closest("[data-agent-sort]"); if (!th) return;
+    agentSort = th.dataset.agentSort; drawAgents();
+  });
 
   function initDashboard() {
     const user = currentUser();
@@ -471,5 +658,14 @@ const CRM = (() => {
     load();
   }
 
-  return { initLogin, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser };
+  /* Czas rozmów z minut (np. 0.23) na czytelny tekst – najważniejsze są minuty, sekundy to dodatek:
+     „0 min”, „0 min 14 s”, „3 min 5 s”, „2 h 4 min” */
+  function talk(minutes) {
+    const s = Math.round((Number(minutes) || 0) * 60);
+    if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? `${m} min ${r} s` : `${m} min`; }
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return m ? `${h} h ${m} min` : `${h} h`;
+  }
+
+  return { initLogin, initActivate, initShell, initDashboard, resizeToSquare, api, esc, STATUS, $, currentUser, talk, scroller, scrollTop };
 })();

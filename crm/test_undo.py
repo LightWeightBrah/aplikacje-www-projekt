@@ -134,7 +134,10 @@ class AgentUiPiecesTests(CrmTestBase):
         for url in ("/crm/queue/", "/crm/plan/"):
             html = self.client.get(url).content.decode()
             self.assertIn("crm/js/contact.js", html, url)
-        self.assertIn('id="day-bar"', self.client.get("/crm/queue/").content.decode())
+        # pasek dnia zastąpił panel „Dziś” (prawa kolumna) i pasek dialera na dole
+        html = self.client.get("/crm/queue/").content.decode()
+        self.assertIn('id="side"', html)
+        self.assertIn('id="dialbar"', html)
 
 
 class DaySummaryRetriesTests(CrmTestBase):

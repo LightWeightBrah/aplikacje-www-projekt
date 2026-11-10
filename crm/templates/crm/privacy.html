@@ -1,0 +1,34 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polityka prywatności – Solid CRM</title>
+    <meta name="color-scheme" content="light dark">
+    <script>try{var t=localStorage.getItem("crm_theme")||"dark";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="dark"}</script>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=148">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=148">
+</head>
+<body class="auth-page">
+    <main class="auth-card privacy-card">
+        <div class="logo logo-lg"><span class="logo-mark">S</span><span class="logo-text">SOLID<b>CRM</b></span></div>
+        <h1>Polityka prywatności</h1>
+        <p class="muted">Solid CRM to wewnętrzny system zespołu sprzedaży. Korzystają z niego wyłącznie pracownicy firmy na urządzeniach aktywowanych przez managera.</p>
+
+        <h2>Jakie dane przetwarzamy</h2>
+        <p>Dane firm i osób kontaktowych z baz zespołu (nazwa firmy, NIP, numer telefonu, e-mail), historię kontaktów, oferty i wyniki rozmów oraz dane kont pracowników (login, imię i nazwisko, czas pracy).</p>
+
+        <h2>Nagrywanie rozmów i Dysk Google</h2>
+        <p>Nagrywanie rozmów jest opcjonalne i włącza je manager. Gdy jest włączone, klient jest informowany na początku rozmowy, że rozmowa jest nagrywana. Nagrania są zapisywane na Dysku Google konta firmy, które manager połączył z CRM.</p>
+        <p>Solid CRM prosi Google wyłącznie o zakres <code>drive.file</code>: może tworzyć, czytać i usuwać <strong>tylko pliki, które sam utworzył</strong> (folder „Solid CRM – nagrania”). Nie ma dostępu do innych plików na Dysku. Adres e-mail połączonego konta służy tylko do pokazania managerowi, które konto jest połączone. Danych z Google nie przekazujemy nikomu i nie używamy ich do reklam.</p>
+        <p>Nagrania są automatycznie usuwane po liczbie dni ustawionej przez managera (domyślnie 90). Manager może w każdej chwili odłączyć Dysk Google w Ustawieniach CRM; dostęp można też cofnąć na stronie <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+
+        <h2>Kto ma dostęp</h2>
+        <p>Agent widzi swoje leady i swoją pracę. Manager widzi pracę zespołu i jako jedyny może odsłuchiwać nagrania. Dane nie są sprzedawane ani udostępniane podmiotom zewnętrznym.</p>
+
+        <h2>Twoje prawa</h2>
+        <p>Masz prawo dostępu do swoich danych, ich poprawienia lub usunięcia oraz wniesienia sprzeciwu. W sprawach danych osobowych skontaktuj się z firmą, która dzwoniła do Ciebie, albo z managerem zespołu.</p>
+        <p class="muted small"><a href="/crm/">Solid CRM</a></p>
+    </main>
+</body>
+</html>

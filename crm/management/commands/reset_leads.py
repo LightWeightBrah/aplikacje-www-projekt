@@ -5,12 +5,12 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from crm.models import Activity, Company, Lead, LeadAssignment, LeadBatch
+from crm.models import Activity, CallRequest, Company, Lead, LeadAssignment, LeadBatch, WorkDay
 
 
 class Command(BaseCommand):
     help = (
-        "Usuwa WSZYSTKIE leady, historię rozmów, przypisania, bazy i firmy, a potem wgrywa dane demo "
+        "Usuwa WSZYSTKIE leady, historię rozmów, przypisania, bazy, firmy, telefony do dialera i dni pracy, a potem wgrywa dane demo "
         "(seed_demo). Konta użytkowników, produkty i ustawienia zespołu zostają. "
         "Działa tylko przy DEBUG=True i wymaga wpisania RESET."
     )
@@ -31,6 +31,8 @@ class Command(BaseCommand):
             ("przypisania", LeadAssignment.objects.count()),
             ("bazy", LeadBatch.objects.count()),
             ("firmy", Company.objects.count()),
+            ("telefony z CRM do dialera", CallRequest.objects.count()),
+            ("dni pracy (obecność)", WorkDay.objects.count()),
         )
         self.stdout.write(self.style.WARNING("Zostanie usunięte: " + ", ".join(f"{n}: {c}" for n, c in counts)))
         if not options["yes"]:
@@ -44,6 +46,8 @@ class Command(BaseCommand):
             Lead.objects.all().delete()
             LeadBatch.objects.all().delete()
             Company.objects.all().delete()
+            CallRequest.objects.all().delete()
+            WorkDay.objects.all().delete()
         self.stdout.write(self.style.SUCCESS("Baza leadów wyczyszczona."))
         if not options["empty"]:
             call_command("seed_demo", stdout=self.stdout)

@@ -4,8 +4,11 @@ CRM.initRanking = function initRanking() {
   const { api, esc, $ } = CRM;
   const me = CRM.currentUser() || {};
   const manager = me.role === "manager";
-  const UNIT = { sold: "sprzedanych", calls: "rozmów", interested: "zainteresowanych", revenue: "przychodu" };
-  let sort = "sold";
+  const FORMS = { sold: ["sprzedaż", "sprzedaże", "sprzedaży"], calls: ["rozmowa", "rozmowy", "rozmów"], interested: ["zainteresowany", "zainteresowanych", "zainteresowanych"] };
+  const few = (n) => n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20);
+  const unitFor = (key, n) => (key === "minutes" ? "min rozmów" : FORMS[key] ? FORMS[key][n === 1 ? 0 : Number.isInteger(n) && few(n) ? 1 : 2] : "");
+  const MONEY = ["revenue", "commission"];
+  let sort = "minutes";
 
   const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $("date-from").value = iso(new Date());
@@ -30,29 +33,50 @@ CRM.initRanking = function initRanking() {
     const today = d.date_from === d.date_to && d.date_from === iso(new Date());
     const when = today ? "Dziś" : "W tym okresie";
     const top = rows.filter((r) => r.rank === 1 && r[d.sort] > 0);
-    const score = top.length ? (d.sort === "revenue" ? CRM.money(top[0].revenue) : `${top[0][d.sort]} ${UNIT[d.sort]}`) : "";
+    const best = top.length ? score(top[0], d.sort) : "";
     $("champion").textContent = top.length
-      ? `${when} prowadzi: ${top.map((r) => r.full_name).join(", ")} – ${score}.`
+      ? `${when} prowadzi: ${top.map((r) => r.full_name).join(", ")} – ${best}.`
       : `${when} nikt jeszcze nie ma wyniku w tej kategorii. Pierwszy wpis zajmie pierwsze miejsce.`;
   }
 
-  function avatarHtml(r) {
+  function avatarHtml(r, cls = "") {
     const style = r.avatar ? ` style="background-image:url('${esc(r.avatar)}')"` : "";
-    return `<span class="avatar av-rank${r.avatar ? " has-img" : ""}"${style} aria-hidden="true">${r.avatar ? "" : esc(r.full_name.charAt(0).toUpperCase())}</span>`;
+    return `<button type="button" class="avatar av-rank${cls}${r.avatar ? " has-img" : ""}"${style} data-photo="${esc(r.username)}" title="Pokaż zdjęcie: ${esc(r.full_name)}">${r.avatar ? "" : esc(r.full_name.charAt(0).toUpperCase())}</button>`;
   }
+  let lastRows = [];
+  const score = (r, key) => (MONEY.includes(key) ? CRM.money(r[key]) : key === "minutes" ? `${CRM.talk(r[key])} rozmów` : `${r[key]} ${unitFor(key, r[key])}`);
+  function renderPodium(rows, d) {
+    const top = rows.filter((r) => r.rank <= 3 && r[d.sort] > 0).slice(0, 3);
+    $("podium").hidden = !top.length;
+    // zawsze trzy miejsca: 2 po lewej, 1 w środku, 3 po prawej (puste miejsce zostaje niewidoczne)
+    const order = [top[1], top[0], top[2]];
+    $("podium").innerHTML = order.map((r, i) => (r ? `<div class="pod pod${i === 1 ? 1 : i === 0 ? 2 : 3}${r.is_me ? " me" : ""}">${avatarHtml(r, " av-pod")}
+      <span class="pod-place">${r.rank}</span><strong>${esc(r.full_name)}</strong><span class="pod-score">${esc(score(r, d.sort))}</span></div>`
+      : `<div class="pod pod-empty" aria-hidden="true"></div>`)).join("");
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-photo]"); if (!b) return;
+    const r = lastRows.find((x) => x.username === b.dataset.photo); if (!r) return;
+    const big = $("photo-big");
+    big.style.backgroundImage = r.avatar ? `url('${r.avatar}')` : "";
+    big.textContent = r.avatar ? "" : r.full_name.charAt(0).toUpperCase();
+    big.classList.toggle("has-img", !!r.avatar);
+    $("photo-name").textContent = r.full_name;
+    $("photo-dialog").showModal();
+  });
 
   function renderTable(rows, d) {
     const col = (key, label) => `<th class="num${d.sort === key ? " sorted" : ""}">${label}</th>`;
-    const show = (r, key) => (key === "answer_rate" ? pct(r[key]) : key === "revenue" ? CRM.money(r[key]) : r[key]);
+    const show = (r, key) => (key === "answer_rate" ? pct(r[key]) : MONEY.includes(key) ? CRM.money(r[key]) : key === "minutes" ? CRM.talk(r[key]) : r[key]);
     const cell = (r, key) => `<td class="num${d.sort === key ? " sorted" : ""}">${esc(show(r, key))}</td>`;
     $("rank-table").innerHTML =
-      `<thead><tr><th>Miejsce</th><th>Agent</th>${col("sold", "Sprzedane")}${col("revenue", "Przychód")}${col("calls", "Rozmowy")}` +
-      `${col("interested", "Zainteresowani")}<th class="num">Dodzwonienia</th></tr></thead><tbody>` +
+      `<thead><tr><th>Miejsce</th><th>Agent</th>${col("minutes", "Minuty")}${col("calls", "Rozmowy")}${col("interested", "Zainteresowani")}` +
+      `<th class="num">Dodzwonienia</th>${col("sold", "Sprzedane").replace('class="num', 'class="num grp')}${col("commission", "Prowizja")}</tr></thead><tbody>` +
       (rows.length ? rows.map((r) => {
         const medal = r.rank <= 3 && r[d.sort] > 0 ? ` medal m${r.rank}` : "";
         return `<tr class="${r.is_me ? "me" : ""}"><td><span class="place${medal}">${r.rank}</span></td>
           <td><span class="who-cell">${avatarHtml(r)}<strong>${esc(r.full_name)}</strong>${r.is_me ? ' <small class="you">to Ty</small>' : ""}</span></td>
-          ${cell(r, "sold")}${cell(r, "revenue")}${cell(r, "calls")}${cell(r, "interested")}${cell(r, "answer_rate")}</tr>`;
+          ${cell(r, "minutes")}${cell(r, "calls")}${cell(r, "interested")}${cell(r, "answer_rate")}${cell(r, "sold").replace('class="num', 'class="num grp')}${cell(r, "commission")}</tr>`;
       }).join("") : `<tr><td colspan="7" class="muted">Brak agentów do pokazania.</td></tr>`) + "</tbody>";
   }
 
@@ -77,7 +101,9 @@ CRM.initRanking = function initRanking() {
       $("subtitle").textContent = "Wyniki agentów · " +
         (d.date_from === d.date_to ? (d.date_from === iso(new Date()) ? "dziś" : day(d.date_from))
           : day(d.date_from) + " – " + day(d.date_to));
+      lastRows = d.results;
       renderChampion(d.results, d);
+      renderPodium(d.results, d);
       renderTable(d.results, d);
     } catch (ex) {
       $("page-error").textContent = ex.message;
@@ -99,13 +125,17 @@ CRM.initRanking = function initRanking() {
     try {
       const r = await api("/api/agents/");
       if (!r.ok) throw new Error();
-      const agents = (await r.json()).filter((a) => a.role === "agent");
-      if (!agents.length) { list.innerHTML = `<p class="muted">Brak agentów.</p>`; return; }
-      list.innerHTML = agents.map((a) => `<div class="access-row" data-id="${a.id}">
-        <span class="who"><strong>${esc(a.full_name)}</strong><small class="muted">${esc(a.username)}</small></span>
+      const all = await r.json();
+      const agents = all.filter((a) => a.role === "agent");
+      const managers = all.filter((a) => a.role === "manager");
+      const row = (a, field, label) => `<div class="access-row" data-id="${a.id}" data-field="${field}">
+        <span class="who"><strong>${esc(a.full_name)}${a.id === me.id ? ' <small class="you">to Ty</small>' : ""}</strong><small class="muted">${esc(a.username)}</small></span>
         <span class="saved muted" aria-live="polite"></span>
-        <label class="switch"><input type="checkbox" ${a.can_view_team_stats ? "checked" : ""}
-          aria-label="Podgląd wyników innych: ${esc(a.full_name)}"><i></i></label></div>`).join("");
+        <label class="switch"><input type="checkbox" ${a[field] ? "checked" : ""}
+          aria-label="${label}: ${esc(a.full_name)}"><i></i></label></div>`;
+      list.innerHTML = (agents.length ? agents.map((a) => row(a, "can_view_team_stats", "Podgląd wyników innych")).join("") : `<p class="muted">Brak agentów.</p>`);
+      $("managers-list").innerHTML = managers.map((a) => row(a, "show_in_ranking", "Pokazuj w rankingu")).join("");
+      $("managers-block").hidden = !managers.length;
     } catch {
       list.innerHTML = `<p class="form-error">Nie udało się pobrać listy agentów.</p>`;
       return;
@@ -131,26 +161,32 @@ CRM.initRanking = function initRanking() {
     $("bulk-off").addEventListener("click", () => setAll(false));
     $("bulk-on").addEventListener("click", () => setAll(true));
 
-    list.addEventListener("change", async (e) => {
+    async function onToggle(e) {
       const box = e.target;
       const row = box.closest(".access-row");
       const note = row.querySelector(".saved");
+      const field = row.dataset.field;
       const wanted = box.checked;
       box.disabled = true;
       try {
         const r = await api(`/api/agents/${row.dataset.id}/`, {
           method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ can_view_team_stats: wanted }),
+          body: JSON.stringify({ [field]: wanted }),
         });
         if (!r.ok) throw new Error();
-        note.textContent = wanted ? "Zapisano: widzi ranking" : "Zapisano: ranking wyłączony";
+        note.textContent = field === "show_in_ranking"
+          ? (wanted ? "Zapisano: jest w rankingu" : "Zapisano: ukryty w rankingu")
+          : (wanted ? "Zapisano: widzi ranking" : "Zapisano: ranking wyłączony");
+        if (field === "show_in_ranking") load();
       } catch {
         box.checked = !wanted;
         note.textContent = "Nie udało się zapisać";
       }
       box.disabled = false;
       setTimeout(() => { note.textContent = ""; }, 2500);
-    });
+    }
+    list.addEventListener("change", onToggle);
+    $("managers-list").addEventListener("change", onToggle);
   }
 
   if (manager) initAccess();

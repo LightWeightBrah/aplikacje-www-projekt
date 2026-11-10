@@ -3,26 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Logowanie – LeadCRM</title>
+    <title>Logowanie – Solid CRM</title>
     <meta name="color-scheme" content="light dark">
-    <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=59">
+    <script>try{var t=localStorage.getItem("crm_theme")||"dark";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="dark"}</script>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=148">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=148">
 </head>
 <body class="auth-page">
     <button class="btn-ghost theme-btn floating" id="theme-btn" title="Zmień motyw (jasny / ciemny)" aria-label="Zmień motyw"></button>
     <main class="auth-card">
-        <div class="brand">Lead<span>CRM</span></div>
+        <div class="logo logo-lg"><span class="logo-mark">S</span><span class="logo-text">SOLID<b>CRM</b></span></div>
         <h1>Zaloguj się</h1>
-        <p class="muted">Panel agentów i managerów zespołu sprzedaży.</p>
+        <p class="muted">Dzwonienie, follow-upy i oferty w jednym miejscu.</p>
         <form id="login-form" novalidate>
             <label>Login<input id="username" autocomplete="username" required autofocus></label>
             <label>Hasło<input id="password" type="password" autocomplete="current-password" required></label>
             <p id="login-error" class="form-error" role="alert" hidden></p>
             <button class="btn btn-primary btn-block" type="submit">Zaloguj</button>
         </form>
-        <p class="muted small">Konta demo: agent1, agent2, manager1 (hasło: demo12345)</p>
+        {% if show_demo %}<p class="muted small">Konta demo: agent1, agent2, manager1 (hasło: demo12345)</p>{% endif %}
     </main>
-    <script src="{% static 'crm/js/app.js' %}?v=59"></script>
+    <script src="{% static 'crm/js/app.js' %}?v=148"></script>
     <script>CRM.initLogin();</script>
 </body>
 </html>

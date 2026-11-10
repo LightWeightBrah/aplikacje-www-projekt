@@ -1,10 +1,11 @@
 {% extends "crm/app_base.html" %}
-{% block title %}Dashboard – LeadCRM{% endblock %}
+{% load static %}
+{% block title %}Wyniki – Solid CRM{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block content %}
 <header class="page-head">
     <div>
-        <h1 id="greeting">Dashboard</h1>
+        <h1 id="greeting">Wyniki</h1>
         <p class="muted" id="subtitle">Ładowanie danych…</p>
     </div>
     <div class="period">
@@ -28,6 +29,17 @@
 </header>
 <p id="page-error" class="form-error" hidden></p>
 <section class="kpis" id="kpis"></section>
+<section class="card minutes-card" id="minutes-card" hidden>
+    <h2>Moje minuty rozmów dziś <small class="muted">godzina po godzinie</small></h2>
+    <div class="mn-sum" id="minutes-sum"></div>
+    <div class="mn-chart" id="minutes-chart" aria-label="Minuty rozmów w każdej godzinie"></div>
+    <p class="card-desc" id="minutes-note"></p>
+</section>
+<section class="card" id="agents-card" hidden>
+    <h2>Wyniki agentów <small class="muted" id="agents-period"></small></h2>
+    <p class="card-desc">Każda osoba w wybranym okresie. Kliknij nagłówek kolumny, żeby ułożyć tabelę. „Rozmów na 1 sprzedaż” = ile średnio trzeba zadzwonić, żeby sprzedać (mniej = lepiej). Ostatni wiersz to cały zespół.</p>
+    <div class="table-wrap"><table class="table agents-table" id="agents"></table></div>
+</section>
 <section class="grid-2 wide-first">
     <div class="card"><h2>Wyniki rozmów <small class="muted" id="outcomes-period"></small></h2>
         <p class="card-desc">Czym zakończyło się każde zadzwonienie w wybranym okresie. Do jednego klienta można dzwonić kilka razy – każda rozmowa liczy się osobno.</p><div id="outcomes"></div></div>
@@ -44,9 +56,6 @@
         <p class="card-desc">Ilu klientów ma dziś dany status. Każdy klient liczy się raz, niezależnie od wybranego okresu i liczby rozmów.</p><div id="funnel"></div></div>
     <div class="card"><h2 id="daily-title">Rozmowy dzień po dniu</h2><div id="daily" class="chart"></div></div>
 </section>
-<section class="card" id="agents-card" hidden>
-    <h2>Wyniki agentów <small class="muted" id="agents-period"></small></h2>
-    <div class="table-wrap"><table class="table" id="agents"></table></div>
-</section>
 {% endblock %}
-{% block scripts %}<script>CRM.initDashboard();</script>{% endblock %}
+{% block scripts %}<script src="{% static 'crm/js/minutes.js' %}?v=148"></script>
+<script>CRM.initDashboard();CRM.initMinutes();</script>{% endblock %}

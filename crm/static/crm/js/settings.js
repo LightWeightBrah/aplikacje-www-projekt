@@ -11,19 +11,25 @@ CRM.initSettings = function initSettings() {
 
   /* base: jednostka, w której API trzyma wartość (min / h / d / count); units: jednostki do wyboru w formularzu */
   const GROUPS = [
+    { title: "Cel minut rozmów", intro: "Ile minut rozmów powinien mieć agent na każdą godzinę pracy. Widać to w „Dzwonieniu”, „Wynikach” i „Obecności”.", fields: [
+      { key: "goal_minutes_per_hour", label: "Cel dla całego zespołu", base: "count", suffix: "min na godzinę pracy", hint: "Np. 20 = przy 4 h pracy powinno być 1 h 20 min rozmów. Komuś można ustawić inny cel: Zarządzanie → Użytkownicy → „Edytuj” przy tej osobie." },
+    ] },
     { title: "Ile prób ma agent", intro: "Ile razy agent może nie dodzwonić się do nowego leada, zanim lead wróci do wspólnej puli.", fields: [
       { key: "max_attempts_per_agent", label: "Limit prób jednego agenta", base: "count", suffix: "prób", hint: "Po tylu nieodebranych telefonach lead wraca do puli i trafia do innego agenta." },
       { key: "unreachable_after_agents", label: "Kiedy lead jest nieosiągalny", base: "count", suffix: "agentów", hint: "Gdy tylu różnych agentów nie dodzwoni się do leada, trafia on do nieosiągalnych i przestaje krążyć." },
     ] },
-    { title: "Ponowna próba po nieodebraniu", intro: "System sam proponuje agentowi termin kolejnej próby (agent może go zmienić jednym kliknięciem).", fields: [
+    { title: "Nowa firma nie odebrała", intro: "Dotyczy firm, z którymi nikt jeszcze nie rozmawiał (pierwsze telefony z bazy). Gdy nikt nie odbierze, system sam ustawia kolejną próbę za tyle, ile wpiszesz niżej. Agent może wybrać inny termin.", fields: [
       { key: "retry_after_first_minutes", label: "Po 1. nieodebranym telefonie", base: "min", units: ["min", "h", "d"], hint: "Ludzie często oddzwaniają lub odbierają przy kolejnej próbie tego samego dnia." },
       { key: "retry_after_second_minutes", label: "Po 2. nieodebranym telefonie", base: "min", units: ["min", "h", "d"], hint: "Najlepiej inny dzień niż poprzednia próba." },
       { key: "retry_after_next_minutes", label: "Po kolejnych nieodebranych", base: "min", units: ["min", "h", "d"], hint: "Dotyczy 3. i dalszych prób (jeśli limit prób jest wyższy niż 3)." },
-      { key: "work_start_hour", label: "Dzień pracy zaczyna się o", base: "count", suffix: ":00", hint: "Termin wypadający przed tą godziną przesuwa się na jej początek." },
-      { key: "work_end_hour", label: "Dzień pracy kończy się o", base: "count", suffix: ":00", hint: "Termin wypadający po tej godzinie przesuwa się na początek następnego dnia." },
     ] },
-    { title: "Umówione oddzwonienia", intro: "Dotyczy leadów, którym obiecano kontakt (oddzwonić, zainteresowany).", fields: [
-      { key: "callback_retry_minutes", label: "Gdy klient nie odebrał w umówionym terminie", base: "min", units: ["min", "h"], hint: "Za tyle system ustawia ponowną próbę, żeby lead nie został zaległy w nieskończoność." },
+    { title: "Dni i godziny pracy", intro: "Terminy proponowane przez system i podpowiedzi przy dzwonieniu (np. „Jutro 10:00”) wypadają tylko w te dni i godziny.", fields: [
+      { key: "work_start_hour", label: "Dzień pracy zaczyna się o", base: "count", suffix: ":00", hint: "Termin wypadający przed tą godziną przesuwa się na jej początek." },
+      { key: "work_end_hour", label: "Dzień pracy kończy się o", base: "count", suffix: ":00", hint: "Termin wypadający po tej godzinie przesuwa się na następny dzień pracy." },
+      { key: "work_days", label: "Dni pracy", type: "days", hint: "Np. w piątek po pracy system zaproponuje poniedziałek, a przy pracujących sobotach – sobotę." },
+    ] },
+    { title: "Klient nie odebrał w umówionym terminie", intro: "Dotyczy klientów, z którymi agent już rozmawiał i umówił telefon (oddzwonić, zainteresowany, po wysłanej ofercie), a klient o tej godzinie nie odebrał. Taki klient zostaje u agenta.", fields: [
+      { key: "callback_retry_steps", label: "Kolejne próby po nieodebranym umówionym telefonie", type: "steps", hint: "Po ostatniej próbie z listy kolejne są co tyle samo. Agent zawsze może sam wybrać inny termin." },
     ] },
     { title: "Zwroty do puli", intro: "Co dzieje się z leadami, którymi nikt się nie zajmuje.", fields: [
       { key: "claim_timeout_hours", label: "Nietknięty lead wraca do puli po", base: "h", units: ["h", "d"], hint: "Dotyczy leadów pobranych przez agenta, do których nie zadzwonił ani razu (uruchamia to komenda release_stale_leads)." },
@@ -31,6 +37,28 @@ CRM.initSettings = function initSettings() {
     ] },
   ];
   const FIELDS = GROUPS.flatMap((g) => g.fields);
+  const NUM_FIELDS = FIELDS.filter((f) => !f.type);
+  const DAYS = [[1, "Pon"], [2, "Wt"], [3, "Śr"], [4, "Czw"], [5, "Pt"], [6, "Sob"], [7, "Niedz"]];
+  const DAY_NAME = { 1: "pon", 2: "wt", 3: "śr", 4: "czw", 5: "pt", 6: "sob", 7: "niedz" };
+  const STEPS_MAX = 8;
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  // karta „Losowanie nowych firm” (radio w szablonie) zapisuje się razem z zasadami
+  const KEYS = FIELDS.map((f) => f.key).concat("companies_last", "sms_reminder_minutes", "sms_min_gap_minutes",
+    ...["offer", "talked", "stranger"].flatMap((k) => [`sms_${k}_enabled`, `sms_${k}_text`]),
+    "require_skip_reason", "require_refuse_reason", "quick_phrases");
+  /* Gotowe przyciski przy wynikach rozmowy (crm/phrases.py): jeden przycisk = jedna linia */
+  const PHRASE_LISTS = [
+    ["refused", "Odmowa – powody („Dlaczego odmówił?”)"],
+    ["no_answer", "Nie odebrał"], ["callback", "Oddzwonić"], ["interested", "Zainteresowany"],
+    ["offer", "Wyślij ofertę"], ["sold", "Sprzedane"], ["wrong_number", "Zły numer"],
+    ["skip_never", "Pomiń firmę – nie dzwonić więcej (np. firma nie istnieje)"],
+    ["skip_lost", "Pomiń firmę – zamknij jak po odmowie (np. ma już T-Mobile)"],
+  ];
+  const phraseLines = (text) => {
+    const seen = new Set();
+    return String(text || "").split("\n").map((l) => l.replace(/\s+/g, " ").trim())
+      .filter((l) => l && !seen.has(l.toLowerCase()) && seen.add(l.toLowerCase()));
+  };
   const FACTOR = { min: { min: 1, h: 60, d: 1440 }, h: { h: 1, d: 24 }, d: { d: 1 } };   // ile jednostek bazowych ma 1 jednostka z listy
   const UNIT_LABEL = { min: "min", h: "godz.", d: "dni" };
 
@@ -45,8 +73,35 @@ CRM.initSettings = function initSettings() {
     }
     return f.units[0];
   }
+  const STEP_UNITS = ["min", "h", "d"];
+  function stepHtml(minutes, i) {
+    const f = { base: "min", units: STEP_UNITS };
+    const unit = Number.isFinite(minutes) && minutes > 0 ? bestUnit(f, minutes) : "min", k = FACTOR.min[unit];
+    const opts = STEP_UNITS.map((u) => `<option value="${u}"${u === unit ? " selected" : ""}>${UNIT_LABEL[u]}</option>`).join("");
+    return `<li class="step"><span class="step-n">${i + 1}. za</span>
+      <input type="number" class="select" data-step min="0" step="1" inputmode="numeric" value="${Number.isFinite(minutes) ? minutes / k : ""}" aria-label="${i + 1}. próba za">
+      <select class="select" data-step-unit aria-label="Jednostka">${opts}</select>
+      <button type="button" class="step-del" data-step-del aria-label="Usuń ${i + 1}. próbę" title="Usuń tę próbę">×</button></li>`;
+  }
+  function paintSteps(list) {
+    const box = $("r-callback_retry_steps");
+    box.innerHTML = list.map(stepHtml).join("");
+    box.querySelectorAll("[data-step-del]").forEach((b) => { b.disabled = list.length <= 1; });
+    $("step-add").disabled = list.length >= STEPS_MAX;
+  }
   function fieldHtml(f) {
     const v = saved[f.key];
+    if (f.type === "days") {
+      const on = new Set(String(v || "12345"));
+      return `<div class="rule rule-span2"><span class="rule-label" id="l-${f.key}">${esc(f.label)}</span>
+        <div class="day-chips" role="group" aria-labelledby="l-${f.key}">${DAYS.map(([n, l]) => `<label class="day-chip"><input type="checkbox" data-day="${n}"${on.has(String(n)) ? " checked" : ""}><span>${l}</span></label>`).join("")}</div>
+        <small class="muted">${esc(f.hint)}</small><small class="form-error" id="e-${f.key}" hidden></small></div>`;
+    }
+    if (f.type === "steps") {
+      return `<div class="rule rule-wide"><span class="rule-label">${esc(f.label)}</span>
+        <div class="steps-row"><ol class="steps" id="r-${f.key}"></ol><button type="button" class="btn-mini" id="step-add">+ Dodaj próbę</button></div>
+        <small class="muted">${esc(f.hint)}</small><small class="form-error" id="e-${f.key}" hidden></small></div>`;
+    }
     if (f.base === "count") {
       return `<div class="rule"><label for="r-${f.key}">${esc(f.label)}</label>
         <div class="rule-input"><input id="r-${f.key}" data-key="${f.key}" type="number" class="select" min="0" step="1" inputmode="numeric" value="${v}"> <span class="muted">${esc(f.suffix)}</span></div>
@@ -62,20 +117,133 @@ CRM.initSettings = function initSettings() {
   function render() {
     $("rules-groups").innerHTML = GROUPS.map((g) => `<section class="card rules-group"><h2>${esc(g.title)}</h2>
       <p class="muted small">${esc(g.intro)}</p><div class="rules-grid">${g.fields.map(fieldHtml).join("")}</div></section>`).join("");
+    paintSteps(saved.callback_retry_steps && saved.callback_retry_steps.length ? saved.callback_retry_steps : [15, 60, 120, 1440]);
+    const draw = document.querySelector(`input[name="draw"][value="${saved.companies_last ? "last" : "random"}"]`);
+    if (draw) draw.checked = true;
+    const m = Number(saved.sms_reminder_minutes) || 60, u = m % 1440 === 0 ? "d" : m % 60 === 0 ? "h" : "min";
+    $("sms-minutes-u").value = u; $("sms-minutes-n").value = m / FACTOR.min[u];
+    $("sms-gap").value = saved.sms_min_gap_minutes;
+    $("sms-kinds").innerHTML = SMS_KINDS.map(smsKindHtml).join("");
+    $("sms-test-kind").innerHTML = SMS_KINDS.map((k) => `<option value="${k.key}">${esc(k.title)}</option>`).join("");
+    $("req-skip").checked = !!saved.require_skip_reason;
+    $("req-refuse").checked = !!saved.require_refuse_reason;
+    const q = saved.quick_phrases || {};
+    $("phrase-lists").innerHTML = PHRASE_LISTS.map(([k, label]) => `<div class="field phrase-list"><label for="ph-${k}">${esc(label)}</label>
+      <textarea id="ph-${k}" class="select" rows="${Math.max(3, Math.min(8, (q[k] || []).length + 1))}" data-phrases="${k}">${esc((q[k] || []).join("\n"))}</textarea></div>`).join("");
     readForm(); refresh();
   }
+
+  /* Trzy rodzaje SMS-ów (crm/sms.py → kind_for): każdy z włącznikiem i własną treścią */
+  const SMS_KINDS = [
+    { key: "offer", title: "Po wysłanej ofercie", who: "Klient z wynikiem „Oferta”: wyliczenie ma już w skrzynce, więc SMS do niego nawiązuje." },
+    { key: "talked", title: "Po rozmowie", who: "Zainteresowany albo „oddzwonić” po rozmowie, w której agent powiedział, kto i w jakiej sprawie dzwoni." },
+    { key: "stranger", title: "Umówiony tylko termin", who: "Klient powiedział tylko „proszę zadzwonić później” i nie wie jeszcze, w jakiej sprawie dzwonimy. Domyślnie wyłączone: SMS od obcego numeru może skończyć się zablokowaniem numeru albo „proszę nie dzwonić”. Bez nazwy T-Mobile i bez sprzedaży." },
+  ];
+  function smsKindHtml(k) {
+    return `<div class="sms-kind" data-kind="${k.key}">
+      <label class="check"><input type="checkbox" id="sms-${k.key}-on"${saved[`sms_${k.key}_enabled`] ? " checked" : ""}> <span><strong>${esc(k.title)}</strong><small class="muted">${esc(k.who)}</small></span></label>
+      <textarea id="sms-${k.key}-text" class="select" rows="3" maxlength="320" aria-label="Treść SMS-a: ${esc(k.title)}">${esc(saved[`sms_${k.key}_text`] || "")}</textarea>
+      <small class="form-error" id="e-sms_${k.key}_text" hidden></small>
+      <div class="sms-preview"><p id="sms-${k.key}-preview"></p><span class="muted small" id="sms-${k.key}-count"></span></div></div>`;
+  }
+  /* Podgląd SMS-a jak w crm/sms.py → render_sms (przykład: agent Julian, telefon jutro o 14:00) */
+  const SMS_SAMPLE = { imie: "Julian", kiedy: "jutro o 14:00", Kiedy: "Jutro o 14:00", godzina: "14:00", data: "" };
+  const smsRender = (tpl) => (tpl || "").replace(/\{(\w+)\}/g, (all, k) => (k in SMS_SAMPLE ? SMS_SAMPLE[k] : all)).replace(/\s+/g, " ").trim();
+  function smsPreview() {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    SMS_SAMPLE.data = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+    SMS_KINDS.forEach((k) => {
+      const text = smsRender($(`sms-${k.key}-text`).value);
+      $(`sms-${k.key}-preview`).textContent = text || "(pusta treść)";
+      // z polskimi znakami 1 SMS = 70 znaków, dłuższy dzieli się po 67 (bez polskich: 160 / 153)
+      const gsm = /^[\x20-\x7E\n]*$/.test(text), n = text.length;
+      const parts = n <= (gsm ? 160 : 70) ? 1 : Math.ceil(n / (gsm ? 153 : 67));
+      $(`sms-${k.key}-count`).textContent = `${n} znaków = ${parts} ${parts === 1 ? "SMS" : parts < 5 ? "SMS-y" : "SMS-ów"} (w abonamencie bez limitu bez znaczenia)`;
+      document.querySelector(`.sms-kind[data-kind="${k.key}"]`).classList.toggle("is-off", !$(`sms-${k.key}-on`).checked);
+    });
+  }
+
+  /* Próbny SMS: z telefonu managera na wpisany numer, po potwierdzeniu; potem sprawdzamy, czy wyszedł */
+  let testTimer = null;
+  function testMsg(text, ok) { const el = $("sms-test-msg"); el.textContent = text; el.className = "small " + (ok === false ? "form-error" : ok ? "ok-text" : "muted"); }
+  async function sendTest() {
+    const phone = $("sms-test-phone").value.trim(), kind = SMS_KINDS.find((k) => k.key === $("sms-test-kind").value);
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 9) { testMsg("Wpisz cały numer telefonu (9 cyfr albo z +48).", false); $("sms-test-phone").focus(); return; }
+    const tpl = $(`sms-${kind.key}-text`).value.trim();
+    if (!tpl) { testMsg("Treść tego SMS-a jest pusta.", false); return; }
+    // termin w próbnym SMS-ie = teraz + „ile wcześniej” (tak liczy serwer), więc pokazujemy dokładnie to, co pójdzie
+    const mins = Number.isFinite(current.sms_reminder_minutes) ? current.sms_reminder_minutes : 60;
+    const at = new Date(Date.now() + mins * 60000), now = new Date();
+    const hm = `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
+    const days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+    const WD = ["w niedzielę", "w poniedziałek", "we wtorek", "w środę", "w czwartek", "w piątek", "w sobotę"];
+    const when = days <= 0 ? `dziś o ${hm}` : days === 1 ? `jutro o ${hm}` : days < 7 ? `${WD[at.getDay()]} o ${hm}`
+      : `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")} o ${hm}`;
+    const real = { ...SMS_SAMPLE, imie: (me.full_name || me.username || SMS_SAMPLE.imie).split(" ")[0], kiedy: when, Kiedy: when[0].toUpperCase() + when.slice(1), godzina: hm,
+      data: `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}` };
+    const text = tpl.replace(/\{(\w+)\}/g, (all, k) => (k in real ? real[k] : all)).replace(/\s+/g, " ").trim();
+    if (!confirm(`Wysłać próbny SMS na numer ${phone}?\n\nPójdzie z Twojego telefonu (dialer), jak zwykły SMS (termin w przykładzie: ${when}):\n\n„${text}”`)) return;
+    const btn = $("sms-test-send"); btn.disabled = true; clearTimeout(testTimer);
+    try {
+      const r = await api("/api/settings/test-sms/", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, text: tpl, minutes: current.sms_reminder_minutes }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { testMsg(d.detail || d.phone || d.text || "Nie udało się zlecić SMS-a.", false); return; }
+      testMsg(d.online ? "Zlecone – Twój telefon wyśle SMS za kilka sekund…" : "Zlecone, ale Twój telefon nie jest teraz połączony z CRM. SMS wyjdzie, gdy włączysz dialer (najpóźniej w ciągu 10 minut).");
+      watchTest(d.id, 0);
+    } catch { testMsg("Brak połączenia z serwerem.", false); } finally { btn.disabled = false; }
+  }
+  function watchTest(id, n) {
+    testTimer = setTimeout(async () => {
+      try {
+        const r = await api(`/api/settings/test-sms/${id}/`), d = await r.json();
+        if (d.state === "sent") return testMsg("✓ Próbny SMS wysłany z Twojego telefonu.", true);
+        if (d.state === "failed") return testMsg(`SMS nie wyszedł: ${d.error || "telefon zgłosił błąd"}.`, false);
+        if (d.state === "expired") return testMsg("Telefon nie odebrał zlecenia w ciągu 10 minut – SMS anulowany.", false);
+      } catch { /* spróbujemy za chwilę */ }
+      if (n < 200) watchTest(id, n + 1);
+    }, 3000);
+  }
+  $("sms-test-send").addEventListener("click", sendTest);
+  $("sms-test-phone").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendTest(); } });
 
   function unitOf(f) {
     const sel = document.querySelector(`[data-unit-for="${f.key}"]`);
     return sel ? sel.value : (f.units ? f.units[0] : null);
   }
   /* Wartości z formularza przeliczone na jednostki bazowe API */
+  function readSteps() {
+    return [...document.querySelectorAll("#r-callback_retry_steps .step")].map((li) => {
+      const raw = li.querySelector("[data-step]").value.trim(), n = raw === "" ? NaN : Number(raw);
+      return n * FACTOR.min[li.querySelector("[data-step-unit]").value];
+    });
+  }
   function readForm() {
-    FIELDS.forEach((f) => {
+    current.work_days = [...document.querySelectorAll("[data-day]:checked")].map((c) => c.dataset.day).join("");
+    current.callback_retry_steps = readSteps();
+    NUM_FIELDS.forEach((f) => {
       const raw = $("r-" + f.key).value.trim();
       const n = raw === "" ? NaN : Number(raw);
       current[f.key] = f.base === "count" ? n : n * (FACTOR[f.base][unitOf(f)] || 1);
     });
+    const draw = document.querySelector('input[name="draw"]:checked');
+    current.companies_last = draw ? draw.value === "last" : saved.companies_last;
+    const smsN = $("sms-minutes-n").value.trim();
+    current.sms_reminder_minutes = smsN === "" ? NaN : Number(smsN) * FACTOR.min[$("sms-minutes-u").value];
+    const gap = $("sms-gap").value.trim();
+    current.sms_min_gap_minutes = gap === "" ? NaN : Number(gap);
+    SMS_KINDS.forEach((k) => {
+      current[`sms_${k.key}_enabled`] = $(`sms-${k.key}-on`).checked;
+      current[`sms_${k.key}_text`] = $(`sms-${k.key}-text`).value.trim();
+    });
+    current.require_skip_reason = $("req-skip").checked;
+    current.require_refuse_reason = $("req-refuse").checked;
+    // ta sama kolejność kluczy co z serwera (inaczej porównanie „czy zmieniono” zawsze widzi zmianę)
+    const q = {};
+    Object.keys(saved.quick_phrases || {}).forEach((k) => { const t = $("ph-" + k); q[k] = t ? phraseLines(t.value) : saved.quick_phrases[k]; });
+    current.quick_phrases = q;
+    smsPreview();
   }
   const dur = (minutes) => {
     if (minutes % 1440 === 0) { const d = minutes / 1440; return d === 1 ? "1 dzień" : `${d} dni`; }
@@ -83,27 +251,52 @@ CRM.initSettings = function initSettings() {
     return `${minutes} min`;
   };
   const hours = (h) => (h % 24 === 0 ? dur(h * 60) : `${h} godz.`);
+  /* „pon–pt”, „pon–sob”, „pon, śr, pt” */
+  function daysText(str) {
+    const d = [...new Set(String(str || ""))].map(Number).filter((n) => n >= 1 && n <= 7).sort((a, b) => a - b);
+    if (!d.length) return "brak dni";
+    const contiguous = d.every((n, i) => i === 0 || n === d[i - 1] + 1);
+    return contiguous && d.length > 2 ? `${DAY_NAME[d[0]]}–${DAY_NAME[d[d.length - 1]]}` : d.map((n) => DAY_NAME[n]).join(", ");
+  }
+  function stepsText(steps) {
+    const parts = steps.map((m, i) => (i === 0 ? `za <b>${dur(m)}</b>` : `potem za <b>${dur(m)}</b>`));
+    return `${parts.join(", ")}, a dalej co <b>${dur(steps[steps.length - 1])}</b>`;
+  }
+  /* 1 próbę, 2–4 próby, 5+ prób (12–14 też „prób”) */
+  const tries = (n) => (n === 1 ? "próbę" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "próby" : "prób");
+  const allOk = (r) => NUM_FIELDS.every((f) => Number.isFinite(r[f.key]))
+    && r.callback_retry_steps.length > 0 && r.callback_retry_steps.every(Number.isFinite);
+  function smsSummary(r) {
+    const on = SMS_KINDS.filter((k) => r[`sms_${k.key}_enabled`]).map((k) => k.title.toLowerCase());
+    if (!on.length) return `SMS z przypomnieniem przed umówionym telefonem jest <b>wyłączony</b>.`;
+    if (!Number.isFinite(r.sms_reminder_minutes) || !Number.isFinite(r.sms_min_gap_minutes)) return "Uzupełnij czasy SMS-ów liczbami.";
+    return `SMS z przypomnieniem idzie <b>${dur(r.sms_reminder_minutes)} przed</b> umówionym telefonem (${on.join(", ")}), z telefonu agenta, gdy jest włączony; na ten sam numer najwyżej co <b>${dur(r.sms_min_gap_minutes)}</b>.`;
+  }
   function summary(r) {
-    const ok = FIELDS.every((f) => Number.isFinite(r[f.key]));
-    if (!ok) return ["Uzupełnij wszystkie pola liczbami."];
+    if (!allOk(r)) return ["Uzupełnij wszystkie pola liczbami."];
     return [
-      `Agent ma <b>${r.max_attempts_per_agent}</b> ${r.max_attempts_per_agent === 1 ? "próbę" : "próby"} dodzwonienia do nowego leada. Po ${r.max_attempts_per_agent}. nieodebranym telefonie lead wraca do puli.`,
-      `Po 1. nieodebraniu system proponuje ponowną próbę za <b>${dur(r.retry_after_first_minutes)}</b>, po 2. za <b>${dur(r.retry_after_second_minutes)}</b>, po kolejnych za <b>${dur(r.retry_after_next_minutes)}</b> (zawsze między ${r.work_start_hour}:00 a ${r.work_end_hour}:00).`,
+      `Cel: <b>${r.goal_minutes_per_hour} min rozmów na każdą godzinę pracy</b> (przy 8 h pracy: ${CRM.talk(r.goal_minutes_per_hour * 8)}), chyba że ktoś ma własny cel.`,
+      `Agent ma <b>${r.max_attempts_per_agent}</b> ${tries(r.max_attempts_per_agent)} dodzwonienia do nowego leada. Po ${r.max_attempts_per_agent}. nieodebranym telefonie lead wraca do puli.`,
+      `Nowa firma nie odebrała: po 1. razie system proponuje ponowną próbę za <b>${dur(r.retry_after_first_minutes)}</b>, po 2. za <b>${dur(r.retry_after_second_minutes)}</b>, po kolejnych za <b>${dur(r.retry_after_next_minutes)}</b> (zawsze w dni pracy: <b>${daysText(r.work_days)}</b>, ${r.work_start_hour}:00–${r.work_end_hour}:00).`,
       `Kolejne próby wypadają o <b>różnych porach dnia</b>: najpierw rano, w środku dnia i po południu, a potem system wybiera godziny jak najdalsze od tych, o których już dzwoniono.`,
-      `Gdy klient nie odbierze w umówionym terminie, ponowna próba jest za <b>${dur(r.callback_retry_minutes)}</b>.`,
+      `Klient, z którym jest umówiony telefon, nie odebrał: system ponawia próbę ${stepsText(r.callback_retry_steps)}`.replace(/([^.])$/, "$1."),
       `Gdy <b>${r.unreachable_after_agents}</b> różnych agentów nie dodzwoni się, lead trafia do nieosiągalnych; wraca do obiegu po <b>${dur(r.unreachable_cooldown_days * 1440)}</b>.`,
       `Lead, do którego agent nie zadzwonił w ciągu <b>${hours(r.claim_timeout_hours)}</b> od pobrania, wraca do puli.`,
+      r.companies_last ? `Nowe firmy: <b>najpierw jednoosobowe</b>, spółki dopiero, gdy jednoosobowych zabraknie.` : `Nowe firmy losowane są <b>wszystkie razem</b> (jednoosobowe i spółki).`,
+      smsSummary(r),
+      `Powód przy „Pomiń firmę”: <b>${r.require_skip_reason ? "wymagany" : "opcjonalny"}</b>, przy „Odmowa”: <b>${r.require_refuse_reason ? "wymagany" : "opcjonalny"}</b>.`,
     ];
   }
-  const dirty = () => FIELDS.some((f) => current[f.key] !== saved[f.key]);
+  const dirty = () => KEYS.some((k) => !same(current[k], saved[k]));
   function refresh() {
     $("rules-summary").innerHTML = summary(current).map((t) => `<li>${t}</li>`).join("");
     $("rules-save").disabled = !dirty();
     $("rules-undo").disabled = !dirty();
+    $("rules-bar").classList.toggle("dirty", dirty());
   }
   function meta() {
     const when = saved.updated_at ? new Date(saved.updated_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-    $("rules-meta").textContent = saved.updated_by_name ? `Ostatnia zmiana: ${saved.updated_by_name}, ${when}` : "Ustawienia domyślne – jeszcze nie zmieniane.";
+    $("rules-meta").textContent = saved.updated_by_name ? `Ostatnia zmiana zasad: ${saved.updated_by_name}, ${when}` : "Zasady domyślne – jeszcze nie zmieniane.";
   }
   function showErrors(data) {
     let general = "";
@@ -118,12 +311,23 @@ CRM.initSettings = function initSettings() {
   $("rules-form").addEventListener("input", () => { readForm(); showErrors({}); refresh(); });
   $("rules-form").addEventListener("change", () => { readForm(); refresh(); });
   $("rules-undo").addEventListener("click", () => { showErrors({}); render(); });
+  /* „+ Dodaj próbę” i „×” przy próbie po nieodebranym umówionym terminie */
+  $("rules-form").addEventListener("click", (e) => {
+    const del = e.target.closest("[data-step-del]"), add = e.target.closest("#step-add");
+    if (!del && !add) return;
+    const list = readSteps();
+    if (del) list.splice([...document.querySelectorAll("#r-callback_retry_steps .step")].indexOf(del.closest(".step")), 1);
+    if (add && list.length < STEPS_MAX) list.push(Number.isFinite(list[list.length - 1]) ? list[list.length - 1] : 60);
+    paintSteps(list); readForm(); refresh();
+    if (add) { const inputs = document.querySelectorAll("#r-callback_retry_steps [data-step]"); inputs[inputs.length - 1].focus(); }
+  });
   $("rules-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     readForm();
-    if (!FIELDS.every((f) => Number.isFinite(current[f.key]))) { showErrors({ _: "Uzupełnij wszystkie pola liczbami." }); return; }
+    if (!allOk(current)) { showErrors({ _: "Uzupełnij wszystkie pola liczbami." }); return; }
+    if (!current.work_days) { showErrors({ work_days: "Zaznacz co najmniej jeden dzień pracy." }); return; }
     const body = {};
-    FIELDS.forEach((f) => { if (current[f.key] !== saved[f.key]) body[f.key] = current[f.key]; });
+    KEYS.forEach((k) => { if (!same(current[k], saved[k])) body[k] = current[k]; });
     const btn = $("rules-save"); btn.disabled = true;
     try {
       const r = await api("/api/settings/", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -134,7 +338,7 @@ CRM.initSettings = function initSettings() {
     } catch { showErrors({ _: "Brak połączenia z serwerem. Spróbuj ponownie." }); refresh(); }
   });
   $("rules-reset").addEventListener("click", async () => {
-    if (!confirm("Przywrócić ustawienia domyślne (3 próby, ponowna próba po 2 godz. / 1 dniu / 2 dniach itd.)?")) return;
+    if (!confirm("Przywrócić ustawienia domyślne (cel 15 min rozmów na godzinę, 5 prób, ponowna próba po 2 godz. / 1 dniu / 2 dniach, praca pon–pt 9–17, po nieodebranym terminie: 15 min, 1 h, 2 h, 1 dzień)?")) return;
     try {
       const r = await api("/api/settings/reset/", { method: "POST" });
       if (!r.ok) { showErrors({ _: "Nie udało się przywrócić ustawień." }); return; }

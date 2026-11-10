@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Solid Dialer</string>
+    <string name="recorder_label">Solid Dialer – nagrywanie rozmów</string>
+    <string name="recorder_description">Pozwala Solid Dialerowi nagrywać rozmowy wybrane z firmowego CRM (Android wymaga do tego usługi ułatwień dostępu). Usługa nie czyta niczego z ekranu i nie steruje telefonem. Nagrania trafiają do CRM firmy; nagrywanie włącza i wyłącza manager.</string>
+</resources>

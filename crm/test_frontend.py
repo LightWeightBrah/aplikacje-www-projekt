@@ -1,5 +1,6 @@
 from rest_framework import status
 
+from .models import Lead
 from .tests import CrmTestBase
 
 
@@ -115,6 +116,11 @@ class FrontendPagesTests(CrmTestBase):
 
     def test_login_has_theme_button(self):
         self.assertContains(self.client.get("/crm/login/"), 'id="theme-btn"')
+
+    # Bez wyboru w menu konta wszyscy dostają ciemny motyw (logowanie i strony CRM)
+    def test_dark_theme_is_default(self):
+        for url in ("/crm/login/", "/crm/"):
+            self.assertContains(self.client.get(url), 'localStorage.getItem("crm_theme")||"dark"')
 
     def test_dashboard_has_user_menu_with_theme_choice(self):
         r = self.client.get("/crm/")
@@ -281,6 +287,21 @@ class TransferInfoTests(CrmTestBase):
         self.assertEqual(detail["assignments"][0]["from_agent_name"], "agent1")
         self.assertEqual(detail["assignments"][0]["reason"], "urlop")
 
+    # Karta przypomnienia u nowego agenta: „Przepisany od Jan Kowalski” (imię i nazwisko) i kiedy
+    def test_due_reminder_shows_previous_agent_full_name(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.agent1.first_name, self.agent1.last_name = "Jan", "Kowalski"
+        self.agent1.save()
+        lead = self.make_lead(owner=self.agent1, status=Lead.Status.CALLBACK,
+                              next_contact_at=timezone.now() - timedelta(minutes=30))
+        self.api(self.manager).post(f"/api/leads/{lead.id}/assign/", {"agent": self.agent2.id}, format="json")
+        data = self.api(self.agent2).get("/api/my-leads/due/").data
+        self.assertEqual(data["overdue"][0]["transferred_from"], "Jan Kowalski")
+        self.assertIsNotNone(data["overdue"][0]["transferred_at"])
+
     def test_lead_taken_from_pool_has_no_transfer(self):
         lead = self.make_lead()
         self.api(self.manager).post(
@@ -288,6 +309,15 @@ class TransferInfoTests(CrmTestBase):
         )
         row = self.api(self.agent1).get("/api/my-leads/").data["results"][0]
         self.assertIsNone(row["transferred_from"])
+        self.assertIsNone(row["transferred_at"])
+
+    # „Dzwonienie” pobiera wszystkich swoich klientów jednym zapytaniem (?page_size=), domyślnie dalej 20
+    def test_my_leads_page_size(self):
+        for i in range(25):
+            self.make_lead(owner=self.agent1, phone=f"55520{i:04d}")
+        client = self.api(self.agent1)
+        self.assertEqual(len(client.get("/api/my-leads/").data["results"]), 20)
+        self.assertEqual(len(client.get("/api/my-leads/?page_size=500").data["results"]), 25)
 
 
 class RankingPageTests(CrmTestBase):

@@ -19,7 +19,8 @@ const WHEN = (() => {
     const s = String(raw).toLowerCase().trim().replace(/\s+/g, " ");
     if (!s) return null;
 
-    const rel = s.match(/^za (\d+) ?(min|m|godz|g|h|dni|dzie|d|tyg|t)\S*$/);
+    // „za 2 min” i samo „2 min” / „2h” / „3 dni” – to samo
+    const rel = s.match(/^(?:za )?(\d+) ?(min|m|godz|g|h|dni|dzie|d|tyg|t)\S*$/);
     if (rel) {
       const n = Number(rel[1]), u = rel[2][0];
       if (u === "m") return new Date(now.getTime() + n * 60000);

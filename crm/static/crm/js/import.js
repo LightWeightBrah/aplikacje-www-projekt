@@ -17,7 +17,7 @@ CRM.initImport = function initImport() {
     $("drop-title").textContent = f ? f.name : "Wybierz plik .xlsx albo upuść go tutaj";
     $("drop-hint").textContent = f
       ? (f.size / 1024).toFixed(0) + " KB · kliknij, żeby wybrać inny"
-      : "Pierwszy arkusz, pierwszy wiersz = nagłówki. Max 5 MB i 5000 wierszy.";
+      : "Pierwszy arkusz. Max 5 MB i 5000 wierszy.";
     zone.classList.toggle("has-file", !!f);
   }
   function showImportError(msg) {
@@ -40,7 +40,7 @@ CRM.initImport = function initImport() {
   /* Produkty do listy wyboru (nie blokuje importu, gdy się nie uda). */
   (async () => {
     try {
-      let url = "/api/products/", items = [];
+      let url = "/api/products/?page_size=500", items = [];
       while (url) {
         const r = await api(url);
         if (!r.ok) return;
@@ -52,6 +52,17 @@ CRM.initImport = function initImport() {
       $("product").innerHTML = `<option value="">Bez produktu</option>` +
         items.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
     } catch { /* lista produktów jest opcjonalna */ }
+  })();
+
+  /* Agenci do wyboru „Dla kogo jest ta baza” */
+  (async () => {
+    try {
+      const r = await api("/api/agents/");
+      if (!r.ok) return;
+      const agents = (await r.json()).filter((a) => a.role === "agent");
+      $("assigned-to").insertAdjacentHTML("beforeend",
+        agents.map((a) => `<option value="${a.id}">${esc(a.full_name || a.username)}</option>`).join(""));
+    } catch { /* bez listy baza trafi do wspólnej puli */ }
   })();
 
   /* Błędy walidacji DRF ({file: [...]}) albo {detail: "..."} zamieniamy na tekst. */
@@ -77,10 +88,16 @@ CRM.initImport = function initImport() {
       ["Zaimportowane", d.created ?? 0],
       ["Duplikaty", (d.duplicates || []).length],
       ["Błędy", (d.errors || []).length],
+      ["Poprawione", (d.warnings || []).length],
     ].map(([l, v]) => `<span>${esc(l)} <b>${v}</b></span>`).join("");
+    const sel = $("assigned-to"), who = sel.value ? sel.options[sel.selectedIndex].textContent : "";
     $("result-batch").innerHTML = d.batch
-      ? `Utworzono bazę <b>${esc(d.batch.name)}</b>. Leady są w puli: przypiszesz je w <a href="/crm/manager/">panelu managera</a>.`
+      ? `Utworzono bazę <b>${esc(d.batch.name)}</b>${d.layout === "ceidg" ? " (rozpoznano układ bazy z CEIDG)" : ""}. ` +
+        (who ? `Baza jest dla agenta <b>${esc(who)}</b>: dostanie te firmy przyciskiem „Daj kolejnego leada”.` : `Leady są we wspólnej puli dla wszystkich agentów.`)
       : "";
+    const warns = d.warnings || [];
+    $("result-warnings").hidden = !warns.length;
+    $("warnings-table").innerHTML = warns.length ? issuesTable(warns, [["Wiersz", "row"], ["Co poprawiono", "message"]]) : "";
     const dups = d.duplicates || [], errs = d.errors || [];
     $("result-dups").hidden = !dups.length;
     $("dups-table").innerHTML = dups.length
@@ -99,6 +116,7 @@ CRM.initImport = function initImport() {
     body.append("file", file);
     if ($("batch-name").value.trim()) body.append("name", $("batch-name").value.trim());
     if ($("product").value) body.append("product", $("product").value);
+    if ($("assigned-to").value) body.append("assigned_to", $("assigned-to").value);
     const btn = $("import-btn");
     btn.disabled = true; btn.textContent = "Importuję…";
     try {
@@ -106,7 +124,7 @@ CRM.initImport = function initImport() {
       let data = {};
       try { data = await r.json(); } catch { /* odpowiedź bez JSON */ }
       if (r.status === 201) {
-        showResult(data);
+        showResult(data); loadBatches();
         input.value = ""; setFile(null); $("batch-name").value = "";
       } else if (r.status === 400 && "total_rows" in data) {
         showResult(data);  // nic nie zaimportowano, ale raport pokazuje dlaczego
@@ -118,6 +136,52 @@ CRM.initImport = function initImport() {
     }
     btn.disabled = false; btn.textContent = "Importuj";
   });
+
+  /* Wgrane bazy + „Usuń tę bazę” (usuwa tylko firmy, do których nikt nie dzwonił) */
+  async function loadBatches() {
+    let rows = [];
+    try { const r = await api("/api/batches/overview/"); if (r.ok) rows = await r.json(); } catch { return; }
+    $("batches-empty").hidden = rows.length > 0;
+    $("batches-table").hidden = !rows.length;
+    const day = (s) => new Date(s).toLocaleDateString("pl-PL");
+    $("batches-table").innerHTML = rows.length ? `<thead><tr><th>Baza</th><th>Wgrana</th><th>Dla kogo</th><th>Firm</th><th>Jeszcze bez telefonu</th><th></th></tr></thead><tbody>` +
+      rows.map((b) => `<tr><td><b>${esc(b.name)}</b></td><td>${day(b.created_at)}</td><td>${esc(b.assigned_to_name || "Wspólna pula")}</td>
+        <td>${b.total}</td><td>${b.untouched}</td>
+        <td><button type="button" class="btn-mini" data-del="${b.id}" data-name="${esc(b.name)}" data-total="${b.total}" data-fresh="${b.untouched}">Usuń tę bazę</button></td></tr>`).join("") + "</tbody>" : "";
+  }
+  /* Okno „Usuń tę bazę”: trzeba wpisać USUŃ (bez polskich liter też działa: USUN) */
+  const firms = (n) => `${n} ${n === 1 ? "firma" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "firmy" : "firm"}`;
+  const delDlg = $("del-dialog");
+  let delId = null;
+  const wordOk = () => ["USUŃ", "USUN"].includes($("del-word").value.trim().toUpperCase());
+  $("batches-table").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-del]"); if (!b) return;
+    const fresh = +b.dataset.fresh, kept = +b.dataset.total - fresh;
+    delId = b.dataset.del;
+    $("del-name").textContent = b.dataset.name;
+    $("del-fresh").textContent = firms(fresh);
+    $("del-kept").textContent = firms(kept);
+    $("del-kept-row").hidden = !kept;
+    $("del-word").value = ""; $("del-ok").disabled = true; $("del-error").hidden = true;
+    delDlg.showModal(); $("del-word").focus();
+  });
+  $("del-word").addEventListener("input", () => { $("del-ok").disabled = !wordOk(); });
+  $("del-cancel").addEventListener("click", () => delDlg.close());
+  $("del-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!wordOk() || !delId) return;
+    $("del-ok").disabled = true;
+    try {
+      const r = await api(`/api/batches/${delId}/`, { method: "DELETE" });
+      if (!r.ok) throw new Error("Nie udało się usunąć bazy (" + r.status + ").");
+      const d = await r.json();
+      delDlg.close();
+      $("batches-msg").textContent = `Usunięto bazę „${d.name}”: ${firms(d.removed)}${d.kept ? `, ${firms(d.kept)} z historią zostaje w CRM` : ""}.`;
+      $("batches-msg").hidden = false;
+      loadBatches();
+    } catch (ex) { $("del-error").textContent = ex.message; $("del-error").hidden = false; $("del-ok").disabled = false; }
+  });
+  loadBatches();
 
   $("export-all").addEventListener("click", async () => {
     const btn = $("export-all");

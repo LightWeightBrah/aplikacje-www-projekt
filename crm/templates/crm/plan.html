@@ -1,10 +1,16 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Plan dnia – LeadCRM{% endblock %}
+{% block title %}Kalendarz – Solid CRM{% endblock %}
 {% block nav_plan %}active{% endblock %}
 {% block content %}
 <header class="page-head">
     <div>
+        <div class="cal-tabs-row"><div class="cal-tabs"><a href="/crm/plan/" class="active">Dzień</a><a href="/crm/calendar/">Miesiąc</a></div>
+            <div class="cal-filter" role="group" aria-label="Co pokazywać">
+            <button type="button" data-calf="important" title="Oferty, zainteresowani i oddzwonienia umówione z klientem – bez automatycznych ponownych prób">Tylko umówione</button>
+            <button type="button" data-calf="all" title="Także ponowne próby po „Nie odebrał” (ustawiane automatycznie)">Wszystko</button>
+        </div>
+        </div>
         <h1>Plan dnia</h1>
         <p class="muted" id="subtitle">Ładowanie…</p>
     </div>
@@ -21,7 +27,7 @@
 <p id="page-error" class="form-error" hidden></p>
 
 <section class="card" id="overdue-card" hidden>
-    <h2 class="late">Zaległe <small class="muted" id="overdue-count"></small></h2>
+    <h2 class="late">Zaległe <span class="count-badge" id="overdue-count"></span></h2>
     <p class="card-desc">Termin tych kontaktów już minął, zadzwoń do nich w pierwszej kolejności.</p>
     <div id="overdue-list" class="plan-list"></div>
 </section>
@@ -32,5 +38,5 @@
 </section>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=59"></script>
+{% block scripts %}<script src="{% static 'crm/js/plan.js' %}?v=148"></script>
 <script>CRM.initPlan();</script>{% endblock %}

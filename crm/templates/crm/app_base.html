@@ -3,70 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}LeadCRM{% endblock %}</title>
+    <title>{% block title %}Solid CRM{% endblock %}</title>
     <meta name="color-scheme" content="light dark">
-    <script>try{var t=localStorage.getItem("crm_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
-    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=59">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232456d6'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='17' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+    {# motyw: domyślnie jasny (jak CRM-y, do których przywykł zespół); „auto” = jak w systemie #}
+    <script>try{var t=localStorage.getItem("crm_theme")||"dark";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="dark"}</script>
+    {# wielkość tekstu wybrana przez agenta (menu profilu): 1 = standardowa #}
+    <script>try{var z=parseFloat(localStorage.getItem("crm_text_size"));if(z>=0.8&&z<=1.5&&z!==1)document.documentElement.style.setProperty("--ts",z)}catch(e){}</script>
+    {# zanim cokolwiek się narysuje: rola (menu bez mignięcia) i ukrycie treści do czasu wczytania danych (app.js zdejmuje klasę; awaryjnie po 4 s) #}
+    <script>(function(d){d.classList.add("crm-loading");setTimeout(function(){d.classList.remove("crm-loading","crm-loading-slow")},4000);try{var u=JSON.parse(localStorage.getItem("crm_user")||"null");if(u){d.dataset.role=u.role;if(u.role!=="manager"&&u.can_view_team===false)d.dataset.noteam="1"}}catch(e){}})(document.documentElement)</script>
+    <link rel="stylesheet" href="{% static 'crm/css/app.css' %}?v=148">
+    <link rel="stylesheet" href="{% static 'crm/css/solid.css' %}?v=148">
+    {% block head %}{% endblock %}
 </head>
-<body>
-<div class="shell">
-    <aside class="sidebar">
-        <div class="brand">Lead<span>CRM</span></div>
-        <nav>
-            <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
-            <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Moja kolejka</a>
-            <a href="{% url 'crm:plan' %}" class="{% block nav_plan %}{% endblock %}">Plan dnia<span class="nav-badge" id="plan-badge" hidden></span></a>
-            <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
-            <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Panel managera</a>
-            <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport</a>
-            <a href="{% url 'crm:products' %}" data-manager-only class="{% block nav_products %}{% endblock %}">Produkty</a>
-            <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
-            <a href="{% url 'crm:settings' %}" data-manager-only class="{% block nav_settings %}{% endblock %}">Ustawienia</a>
-            <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
-        </nav>
-        <div class="user-menu">
-            <div class="popover" id="user-popover" hidden>
-                <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
-                <div class="pop-label">Zdjęcie profilowe</div>
-                <div class="avatar-row">
-                    <span class="avatar avatar-lg" id="pop-avatar">?</span>
-                    <div class="avatar-actions">
-                        <button type="button" class="btn-mini" id="avatar-change">Zmień zdjęcie</button>
-                        <button type="button" class="btn-mini ghost" id="avatar-remove" hidden>Usuń</button>
-                    </div>
-                    <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
-                </div>
-                <small class="avatar-msg" id="avatar-msg" role="status" hidden></small>
-                <div class="pop-label">Motyw</div>
-                <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
-                    <button type="button" data-theme-choice="light">Jasny</button>
-                    <button type="button" data-theme-choice="dark">Ciemny</button>
-                    <button type="button" data-theme-choice="auto">Auto</button>
-                </div>
-                <button type="button" class="pop-item" id="notif-open">Powiadomienia i widok…</button>
-                <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
-                <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
-            </div>
-            <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
-                <span class="avatar" id="user-avatar">?</span>
-                <span class="who"><strong id="user-name">…</strong><small id="user-role"></small></span>
-                <span class="chev" aria-hidden="true">&#8963;</span>
-            </button>
-        </div>
-    </aside>
-    <main class="content">
-        <div class="topbar">
-            <div class="gsearch" id="gsearch" role="search">
-                <svg class="gs-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" id="gsearch-input" placeholder="Szukaj leada: numer telefonu, NIP lub nazwisko" autocomplete="off" spellcheck="false" aria-label="Szukaj leada po numerze telefonu, NIP lub nazwisku">
-                <kbd class="gs-key" aria-hidden="true">/</kbd>
-                <button type="button" class="gs-clear" id="gsearch-clear" aria-label="Wyczyść wyszukiwanie">&times;</button>
-                <span class="gs-enter" aria-hidden="true">Enter: otwórz w kolejce</span>
+<body class="{% block body_class %}{% endblock %}">
+<header class="topnav">
+    <a class="logo" href="{% url 'crm:queue' %}" aria-label="Solid CRM – dzwonienie"><span class="logo-mark">S</span><span class="logo-text">SOLID<b>CRM</b></span></a>
+    <nav class="mainnav" aria-label="Menu główne">
+        <a href="{% url 'crm:queue' %}" class="{% block nav_queue %}{% endblock %}">Dzwonienie</a>
+        <a href="{% url 'crm:plan' %}" class="{% block nav_plan %}{% endblock %}">Kalendarz<span class="nav-badge" id="plan-badge" hidden></span></a>
+        <a href="{% url 'crm:dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">Wyniki</a>
+        <a href="{% url 'crm:ranking' %}" data-team-only class="{% block nav_ranking %}{% endblock %}">Ranking</a>
+        <a href="{% url 'crm:manager' %}" data-manager-only class="{% block nav_manager %}{% endblock %}">Zespół</a>
+        <a href="{% url 'crm:reports' %}" data-manager-only class="{% block nav_reports %}{% endblock %}">Raporty</a>
+        <div class="nav-more" data-manager-only>
+            <button type="button" class="nav-more-btn" id="nav-more-btn" aria-haspopup="true" aria-expanded="false">Zarządzanie <span aria-hidden="true">▾</span></button>
+            <div class="nav-more-menu" id="nav-more-menu" hidden>
+                <a href="{% url 'crm:import' %}" data-manager-only class="{% block nav_import %}{% endblock %}">Import / eksport baz</a>
+                <a href="{% url 'crm:products' %}" data-manager-only class="{% block nav_products %}{% endblock %}">Taryfy i produkty</a>
+                <a href="{% url 'crm:users' %}" data-manager-only class="{% block nav_users %}{% endblock %}">Użytkownicy</a>
+                <a href="{% url 'crm:settings' %}" data-manager-only class="{% block nav_settings %}{% endblock %}">Ustawienia i oferty</a>
+                <a href="/api/docs/" target="_blank" rel="noopener">Dokumentacja API</a>
             </div>
         </div>
-        {% block content %}{% endblock %}
-    </main>
-</div>
+    </nav>
+    <div class="gsearch" id="gsearch" role="search">
+        <svg class="gs-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="gsearch-input" placeholder="Szukaj: numer, NIP albo firma" autocomplete="off" spellcheck="false" aria-label="Szukaj klienta po numerze telefonu, NIP albo nazwie firmy">
+        <kbd class="gs-key" aria-hidden="true">/</kbd>
+        <button type="button" class="gs-clear" id="gsearch-clear" aria-label="Wyczyść wyszukiwanie">&times;</button>
+        <span class="gs-enter" aria-hidden="true">Enter: otwórz</span>
+    </div>
+    <div class="user-menu">
+        <button type="button" class="user-chip" id="user-btn" aria-haspopup="true" aria-expanded="false">
+            <span class="avatar" id="user-avatar">?</span>
+            <span class="who"><strong id="user-name">…</strong><small id="user-role"></small></span>
+            <span class="chev" aria-hidden="true">▾</span>
+        </button>
+        <div class="popover" id="user-popover" hidden>
+            <div class="pop-head"><strong id="pop-name"></strong><small id="pop-role"></small></div>
+            <div class="pop-label">Zdjęcie profilowe</div>
+            <div class="avatar-row">
+                <span class="avatar avatar-lg" id="pop-avatar">?</span>
+                <div class="avatar-actions">
+                    <button type="button" class="btn-mini" id="avatar-change">Zmień zdjęcie</button>
+                    <button type="button" class="btn-mini ghost" id="avatar-remove" hidden>Usuń</button>
+                </div>
+                <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
+            <small class="avatar-msg" id="avatar-msg" role="status" hidden></small>
+            <div class="pop-label">Motyw</div>
+            <div class="seg" id="theme-seg" role="group" aria-label="Motyw">
+                <button type="button" data-theme-choice="light">Jasny</button>
+                <button type="button" data-theme-choice="dark">Ciemny</button>
+                <button type="button" data-theme-choice="auto">Auto</button>
+            </div>
+            <div class="pop-label">Wielkość tekstu</div>
+            <div class="seg seg-6" id="text-seg" role="group" aria-label="Wielkość tekstu">
+                <button type="button" data-text-size="0.85" title="Najmniejsza" style="font-size:.7rem">A</button>
+                <button type="button" data-text-size="0.92" title="Mniejsza" style="font-size:.78rem">A</button>
+                <button type="button" data-text-size="1" title="Standardowa" style="font-size:.86rem">A</button>
+                <button type="button" data-text-size="1.1" title="Większa" style="font-size:.95rem">A</button>
+                <button type="button" data-text-size="1.2" title="Duża" style="font-size:1.05rem">A</button>
+                <button type="button" data-text-size="1.35" title="Bardzo duża" style="font-size:1.18rem">A</button>
+            </div>
+            <button type="button" class="pop-item" id="dialer-open">Telefon (dialer)…</button>
+            <button type="button" class="pop-item" data-self-open>Wyślij na mój telefon…</button>
+            <button type="button" class="pop-item" id="notif-open">Moje ustawienia…</button>
+            <button type="button" class="pop-item" id="change-pw-btn">Zmień hasło</button>
+            <button type="button" class="pop-item" id="logout-btn">Wyloguj</button>
+        </div>
+    </div>
+</header>
+{% comment %}
+Górny pasek gotowy od pierwszego narysowania (bez mignięć przy przechodzeniu między zakładkami):
+   imię, rola i zdjęcie z pamięci przeglądarki, plakietka kalendarza, „Zarządzanie” podświetlone,
+   „/” w wyszukiwarce schowane, gdy agent wyłączył klawisze. app.js i tak to potem odświeża.
+   Skrypt stoi PO całym pasku: przeglądarka może narysować stronę w trakcie wczytywania
+   tylko w miejscu skryptu, więc pasek nigdy nie pokaże się „w kawałkach”.
+   Kliknięcie zakładki od razu ją podświetla i pokazuje pasek wczytywania (widać, że kliknięcie
+   zadziałało, także gdy poprzednia strona jeszcze się wczytuje).
+{% endcomment %}
+<script>(function(){var $=function(i){return document.getElementById(i)};try{
+var n=+localStorage.getItem("crm_plan_badge");if(n>0){$("plan-badge").textContent=n;$("plan-badge").hidden=false}
+var u=JSON.parse(localStorage.getItem("crm_user")||"null");
+if(u&&u.full_name){$("user-name").textContent=u.full_name;$("user-role").textContent=u.role==="manager"?"Manager":u.role==="agent"?"Agent":"";
+["user-avatar","pop-avatar"].forEach(function(id){var a=$(id);if(!a)return;if(u.avatar&&/^data:image\//.test(u.avatar)){a.style.backgroundImage='url("'+u.avatar+'")';a.textContent="";a.classList.add("has-img")}else{a.textContent=u.full_name.charAt(0).toUpperCase()}});
+var c=JSON.parse(localStorage.getItem("crm_rem_cfg_"+u.username)||"{}");if(c&&c.keys===false)document.body.classList.add("no-keys")}
+}catch(e){}
+if(document.querySelector("#nav-more-menu a.active"))$("nav-more-btn").classList.add("active");
+var was=[].slice.call(document.querySelectorAll(".mainnav a.active, .nav-more-btn.active"));
+document.querySelector(".topnav").addEventListener("click",function(e){var a=e.target.closest(".mainnav a[href], .logo");
+if(!a||e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||a.target==="_blank")return;
+document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(function(x){x.classList.remove("active")});
+if(a.closest(".nav-more-menu")){$("nav-more-btn").classList.add("active");$("nav-more-menu").hidden=true}else if(!a.classList.contains("logo"))a.classList.add("active");
+document.documentElement.classList.add("nav-going")});
+/* powrót przyciskiem „Wstecz” (strona z pamięci przeglądarki): zakładki jak były, bez paska wczytywania */
+addEventListener("pageshow",function(e){if(!e.persisted)return;document.documentElement.classList.remove("nav-going");
+document.querySelectorAll(".mainnav a.active, .nav-more-btn.active").forEach(function(x){x.classList.remove("active")});was.forEach(function(x){x.classList.add("active")})})})()</script>
+<main class="content {% block content_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+</main>
 <dialog id="pw-dialog" class="dialog">
     <form id="pw-form" novalidate>
         <h2 id="pw-title">Zmiana hasła</h2>
@@ -83,7 +130,13 @@
 </dialog>
 <dialog id="notif-dialog" class="dialog">
     <form id="notif-form" method="dialog" novalidate>
-        <h2>Powiadomienia i widok</h2>
+        <h2>Moje ustawienia</h2>
+        <label class="check"><input type="checkbox" id="notif-autodial"> <span><strong>Sam dzwoń do następnego klienta</strong><small class="muted">Po „Zapisz i dalej” telefon sam wybierze numer kolejnego klienta. Możesz wtedy kliknąć „Wstrzymaj”. Działa tylko z połączonym telefonem (Solid Dialer).</small></span></label>
+        <div class="field sub-field" id="autodial-delay-field">Dzwoń po
+            <div class="lead-row">
+                <input type="number" id="notif-autodial-sec" class="select" min="1" max="60" step="1" inputmode="numeric" aria-label="Sekundy"> <span>s od zapisania wyniku</span>
+            </div>
+        </div>
         <label class="check"><input type="checkbox" id="notif-enabled"> <span><strong>Przypomnienia na ekranie</strong><small class="muted">Karta w rogu ekranu, gdy zbliża się termin kontaktu albo już minął.</small></span></label>
         <div class="field">Powiadom mnie przed terminem
             <div class="lead-row">
@@ -92,23 +145,118 @@
             </div>
             <small class="muted">Zaległe kontakty przypominają się zawsze od razu.</small>
         </div>
+        <button type="button" class="btn btn-secondary" id="notif-sample">Pokaż przykładowe przypomnienie w CRM</button>
         <label class="check"><input type="checkbox" id="notif-sound"> <span><strong>Dźwięk</strong><small class="muted">Krótki sygnał przy nowym przypomnieniu.</small></span></label>
         <div class="field">Powiadomienia przeglądarki
             <button type="button" class="btn btn-secondary" id="notif-btn">Powiadomienia przeglądarki</button>
             <button type="button" class="btn-mini notif-test" id="notif-test" hidden>Wyślij powiadomienie testowe</button>
             <small class="avatar-msg" id="notif-msg" role="status" hidden></small>
         </div>
-        <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Pasek dnia nad kolejką</strong><small class="muted">Ile kontaktów wykonano dziś i ile jeszcze czeka.</small></span></label>
-        <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Plan dnia” zostaje, żeby żaden termin Ci nie umknął.</p>
+        <details class="view-prefs">
+            <summary><strong>Karty z telefonu (Solid Dialer)</strong><small class="muted">Kto dzwoni, „klient już dostępny”, nieodebrane od klientów. Kliknij, żeby zmienić.</small></summary>
+            <div class="view-prefs-body">
+                <label class="check"><input type="checkbox" id="pref-ring"> <span><strong>„Dzwoni do Ciebie”</strong><small class="muted">Gdy klient z CRM dzwoni na telefon do pracy: karta z nazwą firmy i „Otwórz kartę”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-available"> <span><strong>„Klient już dostępny – możesz dzwonić”</strong><small class="muted">Sieć przysłała SMS, że numer klienta znów jest dostępny. Tylko klienci z umówionym oddzwonieniem, zainteresowani i po ofercie.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-missed"> <span><strong>„Klient dzwonił – nieodebrane”</strong><small class="muted">Klient z CRM dzwonił, a Ty nie odebrałeś. Karta znika, gdy oddzwonisz.</small></span></label>
+            </div>
+        </details>
+        <label class="check"><input type="checkbox" id="notif-undo"> <span><strong>Pasek „Cofnij” po zapisie</strong><small class="muted">Przez 10 sekund po zapisaniu wyniku możesz cofnąć pomyłkę. Wyłącz, jeśli Ci przeszkadza.</small></span></label>
+        <label class="check"><input type="checkbox" id="notif-keys"> <span><strong>Skróty klawiszowe</strong><small class="muted">Jeden klawisz zamiast klikania. Wyłącz, jeśli przypadkiem w coś wciskasz.</small></span></label>
+        <details class="keys-help">
+            <summary>Jakie są skróty?</summary>
+            <dl>
+                <dt><kbd>N</kbd></dt><dd>następny klient</dd>
+                <dt><kbd>Z</kbd></dt><dd>zadzwoń do klienta</dd>
+                <dt><kbd>X</kbd></dt><dd>rozłącz (gdy telefon dzwoni; można wyłączyć w „Wygląd ekranu”)</dd>
+                <dt><kbd>1</kbd>–<kbd>8</kbd></dt><dd>wynik rozmowy (Nie odebrał … Pomiń firmę)</dd>
+                <dt><kbd>Enter</kbd></dt><dd>zapisz i weź następnego</dd>
+                <dt><kbd>Esc</kbd></dt><dd>wyczyść wybrany wynik</dd>
+                <dt><kbd>/</kbd></dt><dd>szukaj klienta (numer, NIP albo firma) – działa na każdej stronie</dd>
+            </dl>
+            <small class="muted">Skróty nie działają, gdy piszesz w polu tekstowym.</small>
+        </details>
+        <details class="view-prefs">
+            <summary><strong>Wygląd ekranu „Dzwonienie”</strong><small class="muted">Co widać na ekranie: panel „Dziś”, cel minut, liczniki, stan telefonu. Kliknij, żeby zmienić.</small></summary>
+            <div class="view-prefs-body">
+                <small class="muted">Wyłącz to, co Cię rozprasza. Liczy się dalej wszystko tak samo, chowa się tylko napis.</small>
+                <label class="check"><input type="checkbox" id="notif-daybar"> <span><strong>Panel „Dziś” przy dzwonieniu</strong><small class="muted">Liczby dnia, minuty rozmów i informacje zespołu po prawej stronie.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-goal"> <span><strong>Cel minut w panelu „Dziś”</strong><small class="muted">Prawa kolumna: zdanie „Dziś powinno być … min rozmów (pracujesz od …)”, pasek „Ta godzina” i słupki godzin.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-base"> <span><strong>Ile zostało w bazie</strong><small class="muted">Lewa kolumna, pod kafelkami: „Twoja baza – zostało 80 z 80” i „Wspólna pula zespołu”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-footer"> <span><strong>Liczniki na dolnym pasku</strong><small class="muted">Dół ekranu, po prawej: „Dziś: 10 tel. · 0 min rozmów · ta godzina 0 min / 15 min”.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-hangup"> <span><strong>Przycisk „Rozłącz”</strong><small class="muted">Czerwony przycisk obok numeru klienta, gdy telefon dzwoni (np. poczta głosowa). Wyłączony – wygląd jak dawniej, rozłączasz na telefonie.</small></span></label>
+                <label class="check sub-field"><input type="checkbox" id="pref-hangup-key"> <span><strong>Klawisz X = Rozłącz</strong><small class="muted">Działa, gdy przycisk „Rozłącz” jest widoczny i skróty klawiszowe są włączone.</small></span></label>
+                <label class="check sub-field"><input type="checkbox" id="pref-hangup-toast"> <span><strong>Komunikat „Rozłączono połączenie”</strong><small class="muted">Zielony dymek w prawym dolnym rogu po rozłączeniu. Napis „Rozłączono” na dolnym pasku zostaje.</small></span></label>
+                <label class="check"><input type="checkbox" id="pref-phone"> <span><strong>Stan telefonu na dolnym pasku</strong><small class="muted">Kropka i napis w lewym dolnym rogu („Telefon połączony”, „Bez telefonu…”). Gdy telefon właśnie dzwoni, napis i tak się pokaże.</small></span></label>
+            </div>
+        </details>
+        <div class="field">Samouczek<button type="button" class="btn btn-secondary" id="tour-again">Pokaż samouczek jeszcze raz</button><small class="muted">Krótkie oprowadzenie po ekranie „Dzwonienie”.</small></div>
+        <p class="muted small">Wyłączenie przypomnień ukrywa karty, dźwięk i powiadomienia przeglądarki, ale licznik przy „Kalendarz” zostaje, żeby żaden termin Ci nie umknął.</p>
         <div class="dialog-actions"><button type="submit" class="btn btn-primary" id="notif-close">Gotowe</button></div>
     </form>
 </dialog>
+<dialog id="dialer-dialog" class="dialog">
+    <form method="dialog" novalidate>
+        <h2>Telefon do dzwonienia</h2>
+        <p class="muted small" id="dialer-intro">Połącz swój telefon z aplikacją Solid Dialer: wtedy przycisk „Zadzwoń” w CRM sam wybierze numer na telefonie, a CRM policzy minuty rozmów.</p>
+        <div class="dialer-state" id="dialer-state">Sprawdzam…</div>
+        <button type="button" class="btn btn-secondary dialer-pause-btn" id="dialer-pause" hidden title="Np. gdy jesteś w domu, a telefon z dialerem został w pracy. Parowanie zostaje.">Wyłącz dzwonienie przez telefon</button>
+        <div class="dialer-code" id="dialer-code" hidden></div>
+        <ol class="small dialer-steps">
+            <li>Na telefonie otwórz <b>{{ request.scheme }}://{{ request.get_host }}/crm/dialer.apk</b> i zainstaluj <b>Solid Dialer</b>. Telefon zapyta o zgodę na instalację spoza Sklepu Play – zezwól.</li>
+            <li>Kliknij niżej „Pokaż kod parowania”.</li>
+            <li>W aplikacji wpisz adres CRM i ten kod.</li>
+        </ol>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="dialer-unpair" hidden>Odłącz telefon</button>
+            <button type="button" class="btn btn-secondary" id="dialer-code-btn">Pokaż kod parowania</button>
+            <button type="submit" class="btn btn-primary">Gotowe</button>
+        </div>
+    </form>
+</dialog>
+<dialog id="self-dialog" class="dialog">
+    <form id="self-form" novalidate>
+        <h2>Wyślij na mój telefon</h2>
+        <p class="muted small">Tekst albo plik z komputera idzie SMS-em na Twój prywatny numer – wysyła go telefon z Solid Dialer (jak zwykły SMS z abonamentu). Plik dostaniesz jako link, ważny 24 godziny.</p>
+        <p class="form-error" id="self-nophone" hidden>Najpierw połącz telefon z Solid Dialer (menu konta → Telefon).</p>
+        <label class="field">Mój prywatny numer<input id="self-phone" class="select" maxlength="30" inputmode="tel" autocomplete="off" placeholder="np. 600 100 200"></label>
+        <label class="field">Tekst<textarea id="self-text" class="select" rows="4" maxlength="600" placeholder="np. adres klienta, numer, notatka"></textarea></label>
+        <div class="field">Plik (opcjonalnie, do 10 MB)
+            <div class="self-file-row"><label class="btn btn-secondary self-file-btn">Wybierz plik<input type="file" id="self-file" hidden></label><span class="muted small" id="self-file-name"></span></div>
+        </div>
+        <p class="form-error" id="self-error" hidden></p>
+        <p class="small" id="self-state" role="status"></p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" id="self-cancel">Zamknij</button>
+            <button type="submit" class="btn btn-primary" id="self-ok">Wyślij SMS</button>
+        </div>
+    </form>
+</dialog>
 <div id="reminders" class="reminders" aria-live="polite"></div>
-<script src="{% static 'crm/js/app.js' %}?v=59"></script>
-<script src="{% static 'crm/js/contact.js' %}?v=59"></script>
-<script src="{% static 'crm/js/reminders.js' %}?v=59"></script>
-<script src="{% static 'crm/js/search.js' %}?v=59"></script>
-<script>CRM.initShell();CRM.initReminders();CRM.initSearch();</script>
+{% comment %}
+Zakładki otwierają się szybciej: Chrome pobiera w tle sam plik strony (prefetch), zanim agent kliknie.
+Zakładki w górnym menu – po najechaniu kursorem („eager”), pozostałe linki po chwili trzymania kursora
+(„moderate”). NIE „prerender”: przy szybkim klikaniu w czasie wczytywania innej strony Chrome zamykał
+całą kartę (sprawdzone u Juliana 09.11.2026 – po wyłączeniu wstępnego wczytywania problem znikał).
+{% endcomment %}
+<script type="speculationrules">
+{"prefetch": [
+ {"where": {"and": [{"href_matches": "/crm/*"}, {"selector_matches": ".topnav a"},
+   {"not": {"href_matches": "/crm/login/*"}}, {"not": {"href_matches": "/crm/activate/*"}},
+   {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
+  "eagerness": "eager"},
+ {"where": {"and": [{"href_matches": "/crm/*"}, {"not": {"selector_matches": ".topnav a"}},
+   {"not": {"href_matches": "/crm/login/*"}}, {"not": {"href_matches": "/crm/activate/*"}},
+   {"not": {"href_matches": "/crm/dialer.apk"}}, {"not": {"href_matches": "/crm/sw.js"}},
+   {"not": {"selector_matches": "[download], [target=_blank], [data-no-prerender]"}}]},
+  "eagerness": "moderate"}]}
+</script>
+<script src="{% static 'crm/js/app.js' %}?v=148"></script>
+<script src="{% static 'crm/js/contact.js' %}?v=148"></script>
+<script src="{% static 'crm/js/reminders.js' %}?v=148"></script>
+<script src="{% static 'crm/js/search.js' %}?v=148"></script>
+<script src="{% static 'crm/js/tour.js' %}?v=148"></script>
+<script src="{% static 'crm/js/live.js' %}?v=148"></script>
+<script>CRM.initShell();CRM.initReminders();CRM.initSearch();CRM.initTour();CRM.initPhone();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

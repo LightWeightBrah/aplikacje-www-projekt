@@ -1,6 +1,6 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Ranking – LeadCRM{% endblock %}
+{% block title %}Ranking – Solid CRM{% endblock %}
 {% block nav_ranking %}active{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -31,12 +31,20 @@
 </div>
 
 <div id="ranking-area">
-    <div class="tabs" id="tabs" role="tablist">
-        <button type="button" role="tab" data-sort="sold" aria-selected="true">Sprzedane</button>
-        <button type="button" role="tab" data-sort="revenue" aria-selected="false">Przychód</button>
-        <button type="button" role="tab" data-sort="calls" aria-selected="false">Rozmowy</button>
-        <button type="button" role="tab" data-sort="interested" aria-selected="false">Zainteresowani</button>
+    <div class="rank-groups" id="tabs">
+        <div class="rank-group"><span class="rg-label">Aktywność – na to masz wpływ każdego dnia</span>
+            <div class="tabs" role="tablist" aria-label="Ranking aktywności">
+                <button type="button" role="tab" data-sort="minutes" aria-selected="true">Minuty rozmów</button>
+                <button type="button" role="tab" data-sort="calls" aria-selected="false">Rozmowy</button>
+                <button type="button" role="tab" data-sort="interested" aria-selected="false">Zainteresowani</button>
+            </div></div>
+        <div class="rank-group"><span class="rg-label">Sprzedaż</span>
+            <div class="tabs" role="tablist" aria-label="Ranking sprzedaży">
+                <button type="button" role="tab" data-sort="sold" aria-selected="false">Sprzedane</button>
+                <button type="button" role="tab" data-sort="commission" aria-selected="false">Prowizja</button>
+            </div></div>
     </div>
+    <section class="podium" id="podium" aria-label="Najlepsi"></section>
     <section class="card">
         <p class="champion" id="champion" aria-live="polite"></p>
         <div class="table-wrap"><table class="table rank-table" id="rank-table"></table></div>
@@ -55,7 +63,13 @@
     <p id="access-msg" class="small muted" aria-live="polite"></p>
     <p class="card-desc">Wyłącz podgląd np. nowym agentom, żeby nie porównywali się od razu z doświadczonymi. Wyłączony agent nadal widzi własne wyniki, a inni nadal widzą jego w rankingu.</p>
     <div id="access-list"></div>
+    <div id="managers-block" hidden>
+        <h3 class="access-sub">Managerowie w rankingu</h3>
+        <p class="card-desc">Manager, który sam dzwoni, jest w rankingu jak agent. Wyłącz, jeśli dany manager nie dzwoni – wtedy nie zajmuje miejsca w rankingu.</p>
+        <div id="managers-list"></div>
+    </div>
 </section>
+<dialog class="dialog photo-dialog" id="photo-dialog"><form method="dialog"><div class="photo-big" id="photo-big"></div><strong id="photo-name"></strong><div class="dialog-actions"><button type="submit" class="btn btn-primary">Zamknij</button></div></form></dialog>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=59"></script>
+{% block scripts %}<script src="{% static 'crm/js/ranking.js' %}?v=148"></script>
 <script>CRM.initRanking();</script>{% endblock %}

@@ -37,8 +37,10 @@ CRM.initPlan = function initPlan() {
     return h < 24 ? "za " + h + " h" + (m % 60 ? " " + (m % 60) + " min" : "") : "";
   }
 
+  const KIND = { callback: "Oddzwonić", interested: "Zainteresowany", offer: "Follow-up oferty", new: "Ponowna próba" };
   function item(l, opts = {}) {
-    const company = l.company_name ? `<span class="muted"> · ${esc(l.company_name)}</span>` : "";
+    // nazwa firmy jest tytułem; osoba kontaktowa (jeśli znana) obok
+    const company = l.contact_name && l.company_name ? `<span class="muted"> · ${esc(l.contact_name)}</span>` : "";
     const date = opts.withDate ? `<span class="plan-date">${shortDay(l.next_contact_at)}</span>` : "";
     let sub = "";
     const retry = l.status === "new" && !!l.owner;   // ponowna próba (z leadem jeszcze nikt nie rozmawiał): termin minął, ale to nie zaległość wobec klienta
@@ -52,18 +54,33 @@ CRM.initPlan = function initPlan() {
         : `<span class="try-chip" title="Po ${maxTries} nieodebranych próbach lead wraca do puli">Nie odbiera · ${tries} z ${maxTries}</span>`)
       : chip(l.status);
     const last = CRM.lastContact(l, me.id);
-    return `<article class="plan-item${opts.next ? " is-next" : ""}${opts.passed ? (retry ? " is-retry" : " is-passed") : ""}" data-href="/crm/queue/?lead=${l.id}">
+    // kolor jak w Dzwonieniu: oferty i zainteresowani = zielony, oddzwonienia = bursztyn
+    const seg = l.status === "offer" || l.status === "interested" ? " seg-offer" : l.status === "callback" ? " seg-callback" : "";
+    return `<article class="plan-item${seg}${opts.next ? " is-next" : ""}${opts.passed ? (retry ? " is-retry" : " is-passed") : ""}" data-href="/crm/queue/?lead=${l.id}">
       <div class="plan-time">${date}<span class="plan-hour">${hhmm(l.next_contact_at)}</span>${sub}</div>
       <div class="plan-body">
-        <div class="plan-title"><strong>${esc(l.contact_name)}</strong>${company}${l.product_name ? `<span class="muted small"> · ${esc(l.product_name)}</span>` : ""}</div>
-        <div class="plan-callrow"><a class="plan-phone" href="tel:${esc(l.phone.replace(/[^\d+]/g, ""))}">${esc(l.phone)}</a>${CRM.copyButton(l.phone)}${tryChip}${l.missed_calls > 0 ? `<span class="missed-chip">Nie odebrał w terminie${l.missed_calls > 1 ? " ×" + l.missed_calls : ""}</span>` : ""}</div>
-        ${l.next_contact_note ? `<div class="plan-note">${ICON_NOTE}<span><em>Sprawa:</em> ${esc(l.next_contact_note)}</span></div>` : ""}
+        <div class="plan-title"><strong>${esc(CRM.leadTitle(l))}</strong>${company}${l.product_name ? `<span class="muted small"> · ${esc(l.product_name)}</span>` : ""}</div>
+        ${l.next_contact_note ? `<div class="plan-topic">${ICON_NOTE}<span><em>${esc(KIND[l.status] || "Sprawa")}:</em> ${esc(l.next_contact_note)}</span></div>` : ""}
+        <div class="plan-callrow"><a class="plan-phone" href="tel:${esc(l.phone.replace(/[^\d+]/g, ""))}" data-lead="${l.id}">${esc(l.phone)}</a>${CRM.copyButton(l.phone)}${tryChip}${l.missed_calls > 0 ? `<span class="missed-chip">Nie odebrał w terminie${l.missed_calls > 1 ? " ×" + l.missed_calls : ""}</span>` : ""}</div>
         ${last || l.attempts_count ? `<div class="plan-hist">${last}${l.attempts_count ? `<small class="muted">Prób dotąd: <b>${l.attempts_count}</b></small>` : ""}</div>` : ""}
       </div>
-      <a class="plan-go" href="/crm/queue/?lead=${l.id}" aria-label="Otwórz leada ${esc(l.contact_name)}" title="Otwórz leada"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
+      <a class="plan-go" href="/crm/queue/?lead=${l.id}" aria-label="Otwórz leada ${esc(CRM.leadTitle(l))}" title="Otwórz leada"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
     </article>`;
   }
 
+  /* „Tylko umówione” (domyślnie) chowa automatyczne ponowne próby po „Nie odebrał”; wybór pamięta przeglądarka */
+  const CAL_KEY = "crm_cal_show_all";
+  let showAll = false;
+  try { showAll = localStorage.getItem(CAL_KEY) === "1"; } catch { /* brak dostępu */ }
+  function paintFilter() { document.querySelectorAll("[data-calf]").forEach((b) => b.setAttribute("aria-pressed", String((b.dataset.calf === "all") === showAll))); }
+  function wireFilter(reload) {
+    paintFilter();
+    document.querySelectorAll("[data-calf]").forEach((b) => b.addEventListener("click", () => {
+      showAll = b.dataset.calf === "all";
+      try { localStorage.setItem(CAL_KEY, showAll ? "1" : "0"); } catch { /* brak dostępu */ }
+      paintFilter(); reload();
+    }));
+  }
   let lastData = null;
   const painted = {};
   /* przerysowujemy tylko, gdy coś się zmieniło (odświeżanie co sekundę nie ma migotać ani gubić najechania myszką) */
@@ -74,15 +91,20 @@ CRM.initPlan = function initPlan() {
     lastData = d;
     const isToday = d.date === today();
     const now = Date.now();
-    const all = d.overdue || [], sched = d.scheduled || [];
-    // zaległe z wcześniejszych dni: oddzwonienia obiecane klientowi (czerwone) osobno od ponownych prób (spokojne)
-    const overdue = all.filter((l) => !isRetry(l)), retries = all.filter(isRetry);
+    const keep = (l) => showAll || !isRetry(l);
+    const all = (d.overdue || []).filter(keep), sched = (d.scheduled || []).filter(keep);
+    const hiddenN = (d.overdue || []).length + (d.scheduled || []).length - all.length - sched.length;
+    // zaległe = wszystkie obiecane klientowi kontakty, których termin minął (z wcześniejszych dni i dziś) – razem,
+    // ponowne próby po „Nie odebrał” osobno (spokojne)
+    const passed = (l) => isToday && new Date(l.next_contact_at).getTime() < now;
+    const overdue = [...all.filter((l) => !isRetry(l)), ...sched.filter((l) => passed(l) && !isRetry(l))];
+    const retries = all.filter(isRetry);
     $("overdue-card").hidden = !overdue.length;
-    $("overdue-count").textContent = overdue.length ? `(${overdue.length})` : "";
+    $("overdue-count").textContent = overdue.length ? String(overdue.length) : "";
+    $("overdue-count").title = overdue.length ? `${overdue.length} ${overdue.length === 1 ? "zaległy kontakt" : "zaległe kontakty"}` : "";
     paint("overdue-list", overdue.map((l) => item(l, { withDate: true, passed: true })).join(""));
 
-    const passed = (l) => isToday && new Date(l.next_contact_at).getTime() < now;
-    const nowList = [...retries, ...sched.filter(passed)], later = sched.filter((l) => !passed(l));
+    const nowList = [...retries, ...sched.filter((l) => passed(l) && isRetry(l))], later = sched.filter((l) => !passed(l));
     const nextId = isToday && later.length ? later[0].id : null;
     let html = "";
     if (isToday && nowList.length) {
@@ -94,9 +116,14 @@ CRM.initPlan = function initPlan() {
       html += later.map((l) => item(l, { today: isToday, next: l.id === nextId })).join("");
     }
     if (!isToday) html = sched.map((l) => item(l, {})).join("");
+    if (hiddenN) html += `<p class="muted small plan-hidden">Ukryte ponowne próby po „Nie odebrał”: <b>${hiddenN}</b> – zobaczysz je w „Wszystko” (u góry), a „Następny klient” i tak je poda.</p>`;
+    const movedUp = isToday && sched.some((l) => passed(l) && !isRetry(l));
+    if (!html && movedUp) html = `<p class="muted">Dzisiejsze terminy, które już minęły, są wyżej w „Zaległe”. Na resztę dnia nic więcej nie jest umówione.</p>`;
     paint("plan-list", html || `<p class="muted">Na ten dzień nie masz zaplanowanych kontaktów. Nowych klientów weźmiesz w <a href="/crm/queue/">kolejce</a>.</p>`);
 
-    $("day-title").textContent = (isToday ? "Dziś" : longDay(d.date)) + ` · zaplanowane: ${sched.length}`;
+    // terminy, które już minęły, są w „Zaległe” – tu liczymy tylko to, co jeszcze zostało na ten dzień
+    const leftToday = isToday ? nowList.length + later.length : sched.length;
+    $("day-title").textContent = (isToday ? "Dziś" : longDay(d.date)) + ` · zaplanowane: ${leftToday}`;
     $("subtitle").textContent = longDay(d.date) +
       (isToday && overdue.length ? ` · zaległych: ${overdue.length}` : "") +
       (isToday && (retries.length || sched.some(passed)) ? ` · do ponowienia: ${retries.length + sched.filter((l) => passed(l) && isRetry(l)).length}` : "");
@@ -121,6 +148,7 @@ CRM.initPlan = function initPlan() {
     if (row && !e.target.closest("a, button")) location.href = row.dataset.href;
   }));
 
+  wireFilter(() => { if (lastData) render(lastData); });
   const shift = (n) => { const d = fromIso(day); d.setDate(d.getDate() + n); day = iso(d); load(); };
   $("day-prev").addEventListener("click", () => shift(-1));
   $("day-next").addEventListener("click", () => shift(1));
@@ -134,10 +162,10 @@ CRM.initPlan = function initPlan() {
       const r = await api("/api/my-leads/calendar/");
       if (!r.ok) throw new Error("Nie udało się pobrać kalendarza (" + r.status + ").");
       const url = URL.createObjectURL(await r.blob());
-      const a = Object.assign(document.createElement("a"), { href: url, download: "leadcrm.ics" });
+      const a = Object.assign(document.createElement("a"), { href: url, download: "solidcrm-kalendarz.ics" });
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      toast("Pobrano leadcrm.ics: otwórz plik, żeby dodać terminy do kalendarza.");
+      toast("Pobrano plik kalendarza. Google Calendar: Ustawienia → Importuj i eksportuj → wybierz plik → Importuj.");
     } catch (ex) { toast(ex.message, true); }
     btn.disabled = false;
   });

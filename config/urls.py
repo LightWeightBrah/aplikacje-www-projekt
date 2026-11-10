@@ -3,7 +3,16 @@ from django.urls import include, path
 from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from crm.me_view import MeAvatarView, MePasswordView, MeView
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+
+class LoginView(TokenObtainPairView):
+    """Logowanie z limitem prób z jednego adresu IP – nikt z zewnątrz nie zgadnie hasła „na siłę”."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
 
 urlpatterns = [
     path("", RedirectView.as_view(url="/crm/")),  # goły adres serwera prowadzi do aplikacji
@@ -13,7 +22,7 @@ urlpatterns = [
     path("api/me/", MeView.as_view()),
     path("api/me/password/", MePasswordView.as_view()),
     path("api/me/avatar/", MeAvatarView.as_view()),
-    path("api/token/", TokenObtainPairView.as_view()),
+    path("api/token/", LoginView.as_view()),
     path("api/token/refresh/", TokenRefreshView.as_view()),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema")),

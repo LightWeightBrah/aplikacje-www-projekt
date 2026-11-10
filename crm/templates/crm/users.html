@@ -1,6 +1,6 @@
 {% extends "crm/app_base.html" %}
 {% load static %}
-{% block title %}Użytkownicy – LeadCRM{% endblock %}
+{% block title %}Użytkownicy – Solid CRM{% endblock %}
 {% block nav_users %}active{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -75,6 +75,10 @@
             </select>
             <small class="muted" id="edit-role-hint"></small>
         </label>
+        <label class="field">Cel: minut rozmów na godzinę pracy
+            <input id="edit-goal" class="select" type="number" min="1" max="60" step="1" inputmode="numeric">
+            <small class="muted">Puste = taki sam cel jak cały zespół (ustawiasz go w „Ustawieniach i ofertach”). Wpisz liczbę, żeby ta osoba miała własny cel, np. 20 = przy 4 h pracy powinno być 1 h 20 min rozmów.</small>
+        </label>
         <p class="form-error" id="edit-error" hidden></p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" id="edit-cancel">Anuluj</button>
@@ -145,5 +149,5 @@
 </dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 {% endblock %}
-{% block scripts %}<script src="{% static 'crm/js/users.js' %}?v=59"></script>
+{% block scripts %}<script src="{% static 'crm/js/users.js' %}?v=148"></script>
 <script>CRM.initUsers();</script>{% endblock %}

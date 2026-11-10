@@ -262,3 +262,66 @@ class DemoSalesTests(CrmTestBase):
         self.assertTrue(SaleItem.objects.exists())
         data = self.api(self.manager).get("/api/stats/?days=1").data
         self.assertGreater(Decimal(data["revenue"]), Decimal("0"))
+
+
+class ProductDeleteTests(SalesBase):
+    """Usuwanie produktu dodanego przez pomyłkę (Taryfy i produkty → „Usuń”)."""
+
+    def test_manager_deletes_unused_product(self):
+        r = self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_agent_cannot_delete(self):
+        r = self.api(self.agent1).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_sold_product_is_kept_and_manager_is_told_to_switch_it_off(self):
+        lead = self.make_lead(owner=self.agent1)
+        self.assertEqual(self.sell(self.agent1, lead, [(self.sim, 1)]).status_code, 201)
+        r = self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("Wyłącz", r.data["detail"])
+        self.assertTrue(Product.objects.filter(pk=self.sim.pk).exists())
+
+    def test_lead_interested_in_deleted_product_keeps_working(self):
+        lead = self.make_lead(owner=self.agent1, product=self.sim)
+        self.api(self.manager).delete(f"/api/products/{self.sim.id}/")
+        lead.refresh_from_db()
+        self.assertIsNone(lead.product)
+
+
+
+class ProductClearTests(SalesBase):
+    """„Wyczyść wszystkie”: nieużywane znikają, sprzedawane tylko się wyłączają, wzornik je przywraca."""
+
+    def test_clear_deletes_unused_and_disables_sold(self):
+        lead = self.make_lead(owner=self.agent1)
+        self.assertEqual(self.sell(self.agent1, lead, [(self.sim, 1)]).status_code, 201)
+        self.assertEqual(self.api(self.agent1).post("/api/products/clear/").status_code, status.HTTP_403_FORBIDDEN)
+        r = self.api(self.manager).post("/api/products/clear/")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual((r.data["deleted"], r.data["disabled"]), (["Internet"], ["Karta SIM"]))
+        self.assertFalse(Product.objects.filter(pk=self.internet.pk).exists())
+        self.sim.refresh_from_db()
+        self.assertFalse(self.sim.is_active)
+        self.assertEqual(SaleItem.objects.filter(product=self.sim).count(), 1)
+
+    def test_template_brings_back_disabled_tariff(self):
+        Product.objects.create(name="M", price=Decimal("99"), is_active=False)
+        Product.objects.create(name="L", price=Decimal("77"))
+        created = self.api(self.manager).post("/api/products/load-standard/").data["created"]
+        self.assertIn("M", created)
+        self.assertNotIn("L", created)
+        m = Product.objects.get(name="M")
+        self.assertEqual((m.is_active, m.price), (True, Decimal("70")))
+        self.assertEqual(Product.objects.get(name="L").price, Decimal("77"))
+
+
+class BundleSaleTests(SalesBase):
+    def test_sale_with_several_services(self):
+        lead = self.make_lead(owner=self.agent1)
+        r = self.sell(self.agent1, lead, [(self.internet, 1), (self.sim, 3)])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(SaleItem.objects.filter(activity_id=r.data["id"]).count(), 2)

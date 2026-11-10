@@ -1,978 +1,1737 @@
-/* Kolejka agenta: lista leadów (grupy wg pilności), karta rozmowy i szybki zapis wyniku. */
+/* Solid CRM – ekran „Dzwonienie”.
+   Lewa kolumna: „Następny klient” + moi klienci w segmentach (oferty, oddzwonienia, nie odebrali, nowi).
+   Środek: klient, „Zadzwoń”, wynik rozmowy (klawisze 1–8), oferta / sprzedaż / termin, dane klienta, historia.
+   Prawa kolumna: liczby dnia, minuty rozmów (cel 15 min/h), terminy na dziś, informacje zespołu.
+   Dół: pasek dialera (stan telefonu, czas połączenia). */
 (() => {
-  if (!CRM.esc || !CRM.$ || !CRM.STATUS || typeof WHEN === "undefined") {
-    document.getElementById("lead-list").textContent = "Wczytała się stara wersja strony. Odśwież ją skrótem Ctrl+F5.";
+  if (!CRM.esc || !CRM.leadTitle || typeof WHEN === "undefined") {
+    document.getElementById("lead-pane").textContent = "Wczytała się stara wersja strony. Odśwież ją (Ctrl+F5).";
     return;
   }
-  const { api, esc, STATUS, $ } = CRM;
+  const { api, esc, $ } = CRM;
+  const title = CRM.leadTitle;
   const me = CRM.currentUser() || {};
-  const SCHEDULING = ["callback", "interested", "no_answer"];
-  const REQUIRED = ["callback", "interested"];   // te wyniki wymagają terminu (sprawa jest opcjonalna)
   const { parseWhen, fmtInput, fmtLong, fmtNative } = WHEN;
-  const OUTCOMES = [
-    ["no_answer", "Nie odebrał", "Zaliczy próbę. Po wyczerpaniu limitu prób lead wraca do puli. Możesz zaplanować ponowną próbę."],
-    ["callback", "Oddzwonić", "Lead zostaje u Ciebie do wskazanego terminu."],
-    ["interested", "Zainteresowany", "Status „Zainteresowany”. Wpisz, kiedy ponownie zadzwonić (sprawa jest opcjonalna)."],
-    ["sold", "Sprzedane", "Wybierz, co klient kupił, i wpisz ilość. Wartość policzy się sama z cen w katalogu. Lead zostaje zamknięty jako wygrany i znika z Twojej kolejki."],
-    ["refused", "Odmowa", "Lead zostaje zamknięty jako przegrany."],
-    ["wrong_number", "Zły numer", "Lead zostaje zamknięty jako „Nie dzwonić”."],
-  ];
-  const OUT_LABEL = { ...Object.fromEntries(OUTCOMES.map((o) => [o[0], o[1]])), note: "Notatka" };
-  const CLOSED = ["won", "lost", "do_not_call", "unreachable"];
-  const GROUPS = ["Zaległe – oddzwoń teraz", "Dziś", "Ponowne próby – jeszcze nie odebrali", "Zaplanowane", "Do pierwszego telefonu", "Bez terminu"];
-  const fmt = (iso) => (iso ? new Date(iso).toLocaleString("pl-PL",
-    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–");
-  const chip = (code) => { const [l, c] = STATUS[code] || [code, "#64748b"]; return `<span class="chip" style="--c:${c}">${esc(l)}</span>`; };
-  const cache = { companies: {}, products: {} };
-  let leads = [], selectedId = null, outcome = null, resetForm = null, current = null, lastListHtml = "", savedNote = "", rules = { max_attempts_per_agent: 3 }, autoRetry = false;
-  /* Katalog produktów do formularza sprzedaży (odświeżany co minutę przy otwieraniu leada) */
-  let products = [], productsAt = 0;
-  async function loadProducts() {
-    if (Date.now() - productsAt < 60000) return;
-    try {
-      products = (await CRM.fetchAll("/api/products/?is_active=true")).filter((x) => x.is_active);
-      productsAt = Date.now();
-    } catch { /* bez katalogu sprzedaż zapisze się bez wartości, a serwer podpowie, jeśli jednak jest wymagana */ }
-  }
-  const OUT_COLOR = { no_answer: "#64748b", callback: "#f59e0b", interested: "#4f46e5", sold: "#22c55e",
-    refused: "#ef4444", wrong_number: "#a855f7", note: "#94a3b8" };
-  const MISSED_WINDOW_MS = 5 * 60000;
-  /* Umówiony kontakt, którego termin minął albo właśnie nadszedł (nieodebrany telefon liczy się wtedy jako „nie w terminie”) */
-  const isDue = (l) => !!l && !!l.next_contact_at && new Date(l.next_contact_at).getTime() <= Date.now() + MISSED_WINDOW_MS;
-  const PROMISED = ["callback", "interested", "offer"];
-  /* Umówiony kontakt (obiecany klientowi), którego termin minął lub właśnie nadszedł; zwykła ponowna próba po nieodebraniu się nie liczy */
-  const isMissable = (l) => isDue(l) && PROMISED.includes(l.status);
-  const isFresh = (l) => !!l && l.status === "new" && !!l.owner;   // nikt jeszcze z tym leadem nie rozmawiał
-  const triesOf = (l) => (l && l.owner_no_answers) || 0;
-  const maxTries = () => rules.max_attempts_per_agent || 3;
-  const isLastTry = (l) => isFresh(l) && triesOf(l) + 1 >= maxTries();
-  const raz = (n) => (n === 1 ? "raz" : "razy");
-  /* Plakietka statusu: „Nowy” rozbijamy na „jeszcze nie dzwoniłeś” i „nie odbiera – próba N z M”, żeby było widać, na czym stoi lead */
-  function statusChip(l) {
-    if (!isFresh(l)) return chip(l.status);
-    const n = triesOf(l);
-    return n === 0
-      ? `<span class="try-chip fresh" title="Nikt jeszcze nie dzwonił do tego leada">Nowy · nie dzwoniłeś</span>`
-      : `<span class="try-chip" title="Jeszcze z nim nie rozmawiałeś. Po ${maxTries()} nieodebranych próbach lead wraca do puli.">Nie odbiera · ${n} z ${maxTries()}</span>`;
-  }
-  const longDate = (d) => d.toLocaleString("pl-PL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-  const missedChip = (l) => (l.missed_calls > 0 ? `<span class="missed-chip">Nie odebrał w terminie${l.missed_calls > 1 ? " ×" + l.missed_calls : ""}</span>` : "");
-  const ICON_NOTE = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
-  const refreshReminders = () => { if (CRM.refreshReminders) CRM.refreshReminders(); };
-  const plOverdue = (n) => (n === 1 ? "kontakt do wykonania" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "kontakty do wykonania" : "kontaktów do wykonania");
-  /* Inni zaległi (najstarszy pierwszy): „Zapisz i weź kolejnego” najpierw prowadzi do nich, dopiero potem do puli */
-  /* Inne kontakty z minionym terminem: najpierw obiecane oddzwonienia, potem ponowne próby (najstarsze pierwsze) */
-  const otherOverdue = (leadId) => leads
-    .filter((l) => l.id !== leadId && l.next_contact_at && new Date(l.next_contact_at) < new Date())
-    .sort((a, b) => (isFresh(a) - isFresh(b)) || (new Date(a.next_contact_at) - new Date(b.next_contact_at)));
 
+  /* ---------- słowniki ---------- */
+  const SEG = {
+    offer: { label: "Oferty", long: "Oferty i zainteresowani", color: "var(--seg-offer)", icon: "€" },
+    callback: { label: "Oddzwonienia", long: "Umówione oddzwonienia", color: "var(--seg-callback)", icon: "↺" },
+    retry: { label: "Nie odebrali", long: "Nie odebrali – ponowna próba", color: "var(--seg-retry)", icon: "…" },
+    new: { label: "Nowi", long: "Nowi – pierwszy telefon", color: "var(--seg-new)", icon: "+" },
+  };
+  const SEG_ORDER = ["offer", "callback", "retry", "new"];
+  const OUTCOMES = [
+    { key: "no_answer", n: 1, label: "Nie odebrał", hint: "ponowna próba sama", color: "#475569" },
+    { key: "refused", n: 2, label: "Odmowa", hint: "zamyka klienta", color: "#dc2626" },
+    { key: "callback", n: 3, label: "Oddzwonić", hint: "umów termin", color: "#d97706" },
+    { key: "interested", n: 4, label: "Zainteresowany", hint: "oferta później", color: "#0d9488" },
+    { key: "offer", n: 5, label: "Wyślij ofertę", hint: "oferta + follow-up", color: "#0f766e" },
+    { key: "sold", n: 6, label: "Sprzedane", hint: "zapisz umowę", color: "#15803d" },
+    { key: "wrong_number", n: 7, label: "Zły numer", hint: "nie dzwonić", color: "#78716c" },
+    { key: "skipped", n: 8, label: "Pomiń firmę", hint: "bez dzwonienia", color: "#57534e" },
+  ];
+  const OUT_LABEL = { ...Object.fromEntries(OUTCOMES.map((o) => [o.key, o.label])), offer: "Wysłana oferta", note: "Notatka", skipped: "Pominięty" };
+  const OUT_COLOR = { ...Object.fromEntries(OUTCOMES.map((o) => [o.key, o.color])), note: "#94a3b8" };
+  const SKIP_LABEL = Object.fromEntries(CRM.SKIP_REASONS);
+  /* Powody odmowy i wzory komentarzy: listy ustawia manager („Ustawienia i oferty”), tu tylko zapas na start */
+  let REFUSE_CHIPS = ["Ma umowę w innej sieci", "Za drogo", "Nie jest zainteresowany", "Nie decyduje o tym", "Prosi o brak kontaktu"];
+  // „Pomiń firmę”: najpierw powody „nie dzwonić więcej”, potem „zamknięty” (listy też ustawia manager)
+  let SKIP_CHIPS = ["Firma nie istnieje / zawieszona", "Brak numeru / numer stacjonarny", "Duplikat", "Już jest w T-Mobile", "Inny powód"];
+  let reqSkip = false, reqRefuse = false;   // czy powód pominięcia / odmowy jest wymagany (domyślnie nie)
+  /* Wyniki, po których była rozmowa: tylko przy nich pytamy o sieć klienta */
+  const TALKED = ["callback", "interested", "offer", "sold", "refused"];
+  /* Wzory komentarzy pasujące do wybranego wyniku (klik dopisuje do komentarza) */
+  let PHRASES = {
+    no_answer: ["Poczta głosowa", "Zajęte", "Odrzucił połączenie", "Sygnał, nikt nie odbiera"],
+    callback: ["Zajęty, prosił później", "Decyduje szef / wspólnik", "Sekretariat – połączyć z decydującym", "W trasie, oddzwonić", "Na urlopie"],
+    interested: ["Poda e-mail później", "Musi porozmawiać ze wspólnikiem", "Sprawdzi obecną umowę", "Umowa kończy się za kilka miesięcy", "Chce ofertę na więcej numerów"],
+    offer: ["Porównuje z obecną umową", "Decyzja po rozmowie ze wspólnikiem", "Interesuje go też internet", "Ma ofertę konkurencji"],
+    sold: ["Przeniesienie numerów", "Nowe numery", "Umowa przez kuriera", "Klient poleca znajomych"],
+    refused: [],
+    wrong_number: ["Numer prywatny – nie firma", "Numer nieaktywny", "Inna firma pod tym numerem"],
+    skipped: [],
+  };
+  /* Spółka (sp. z o.o., S.A., sp.j., sp.k.) – rozpoznana po nazwie */
+  const isCompanyEntity = (name) => /(sp\.?\s*z\s*o\.?\s*o|spółka|spolka|s\.\s?a\.|s\.a$|sp\.\s?[jkp]\.)/i.test(name || "");
+  const CLOSED = ["won", "lost", "do_not_call", "unreachable"];
+  const DUE_SOON_MS = 2 * 60000;
+
+  const segOf = (l) => (["offer", "interested"].includes(l.status) ? "offer" : l.status === "callback" ? "callback"
+    : l.status === "new" ? (l.attempts_count ? "retry" : "new") : "closed");
+  const p2 = (n) => String(n).padStart(2, "0");
+  const hhmm = (iso) => { const d = new Date(iso); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+  const dayShort = (iso) => { const d = new Date(iso), t = new Date(), y = new Date(Date.now() - 864e5), tm = new Date(Date.now() + 864e5);
+    if (d.toDateString() === t.toDateString()) return "dziś"; if (d.toDateString() === y.toDateString()) return "wczoraj";
+    if (d.toDateString() === tm.toDateString()) return "jutro";
+    return d.toLocaleDateString("pl-PL", { weekday: "short", day: "numeric", month: "numeric" }).replace(".,", ","); };
+  const when = (iso) => `${dayShort(iso)} ${hhmm(iso)}`;
   function rel(iso) {
-    const m = Math.floor(new Date(iso) / 60000) - Math.floor(Date.now() / 60000), a = Math.abs(m);   // po granicach minut zegara: wszystkie wpisy zmieniają się razem
-    if (a === 0) return "teraz";
-    const t = a < 60 ? `${a} min` : a < 1440 ? `${Math.round(a / 60)} h` : Math.round(a / 1440) === 1 ? "1 dzień" : `${Math.round(a / 1440)} dni`;
+    const m = Math.round((new Date(iso) - Date.now()) / 60000), a = Math.abs(m);
+    if (a < 1) return "teraz";
+    const t = a < 60 ? `${a} min` : a < 1440 ? `${Math.round(a / 60)} h` : `${Math.round(a / 1440)} d`;
     return m < 0 ? `${t} temu` : `za ${t}`;
   }
-  function groupOf(l) {
-    const retry = isFresh(l) && triesOf(l) > 0;   // do tego leada już dzwoniono, ale nikt nie odebrał
-    if (!l.next_contact_at) return retry ? 2 : isFresh(l) ? 4 : 5;
-    const t = new Date(l.next_contact_at), now = new Date();
-    if (retry) return 2;   // ponowna próba to zadanie miękkie: nigdy „zaległe – oddzwoń teraz”
-    if (t < now) return 0;
-    return t.toDateString() === now.toDateString() ? 1 : 3;
-  }
-  /* Kolejność: grupa, w zaległych najpierw obiecane oddzwonienia, potem ponowne próby; w grupie po terminie */
-  const timeKey = (l) => (l.next_contact_at ? new Date(l.next_contact_at).getTime() : Infinity);
-  function byUrgency(a, b) {
-    const ga = groupOf(a), gb = groupOf(b);
-    if (ga !== gb) return ga - gb;
-    if (ga === 0 && isFresh(a) !== isFresh(b)) return isFresh(a) ? 1 : -1;
-    return timeKey(a) - timeKey(b);
-  }
-  async function ref(kind, id) {
-    if (!id) return null;
-    if (!(id in cache[kind])) { const r = await api(`/api/${kind}/${id}/`); cache[kind][id] = r.ok ? await r.json() : null; }
-    return cache[kind][id];
-  }
+  const few = (n) => n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20);
+  const pl = (n, one, some, many) => `${n} ${n === 1 ? one : few(n) ? some : many}`;
+  const money = CRM.money;
+  const toastEl = () => $("toast");
   let toastTimer;
   function toast(msg, isError) {
-    const t = $("toast");
-    t.textContent = msg; t.className = "toast" + (isError ? " error" : ""); t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4500);
+    const t = toastEl(); t.textContent = msg; t.className = "toast" + (isError ? " error" : ""); t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
   }
-  const errText = (d) => Object.values(d || {}).flat().map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ") || "Nie udało się zapisać.";
-
-  /* Pasek dnia nad kolejką: ile już zrobiono dziś i ile jeszcze czeka */
-  async function loadSummary() {
-    const box = $("day-bar");
-    if (!box) return;
-    box.hidden = !CRM.dayBarEnabled();
-    if (box.hidden) return;
+  const errText = (d) => (d && d.detail) || Object.values(d || {}).flat().map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ") || "Nie udało się zapisać.";
+  async function jsonReq(url, method, body) {
+    if (tourDemo) return { error: "To tylko przykład z samouczka – tu nic się nie zapisuje." };
     try {
-      const r = await api("/api/my-leads/summary/");
-      if (!r.ok) return;
-      const d = await r.json();
-      const todo = d.left_today + d.overdue + d.retries_due, total = d.done_today + todo;
-      const pct = total ? Math.round((d.done_today / total) * 100) : 0;
-      const parts = [
-        `<span title="Rozmów: ${d.talked_today}, nieodebranych: ${d.done_today - d.talked_today}"><b>${d.done_today}</b> wykonane</span>`,
-        `<span><b>${d.left_today}</b> jeszcze dziś</span>`,
-        d.overdue ? `<span class="db-late"><b>${d.overdue}</b> zaległe</span>` : "",
-        d.retries_due ? `<span class="db-retry" title="Ponowne próby leadów, z którymi jeszcze nie rozmawiałeś"><b>${d.retries_due}</b> do ponowienia</span>` : "",
-      ].filter(Boolean).join('<span class="db-sep">·</span>');
-      box.innerHTML = `<div class="db-text"><span class="db-label">Dziś</span>${parts}</div>
-        <div class="db-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Postęp dnia"><i style="width:${pct}%"></i></div>`;
-    } catch { /* pasek jest dodatkiem: brak danych nie przeszkadza w pracy */ }
+      const r = await api(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      return r.ok ? { data, status: r.status } : { error: errText(data), status: r.status, data };
+    } catch { return { error: "Brak połączenia z serwerem. Spróbuj ponownie." }; }
   }
-  document.addEventListener("crm:view", loadSummary);   // agent włączył / wyłączył pasek w oknie „Powiadomienia i widok”
 
+  /* ---------- stan ---------- */
+  let tourDemo = false;
+  let leads = [], current = null, segFilter = "all", tab = "todo", summary = null, history = [];
+  let plans = [], config = { default_term: 36, promo_label: "6 miesięcy gratis", mode: "forward", forward_name: "", forward_email: "" };
+  let dialer = { online: false, paired: false, call: null };
+  let form = null;   // stan formularza wyniku: { outcome, ... }
+
+  /* ================= LEWA KOLUMNA ================= */
   async function loadLeads() {
-    let url = "/api/my-leads/", all = [];
-    for (let i = 0; i < 5 && url; i++) {
-      const d = await (await api(url)).json();
-      all = all.concat(d.results);
+    let url = "/api/my-leads/?page_size=500", all = [];
+    for (let i = 0; i < 10 && url; i++) {
+      const r = await api(url); if (!r.ok) break;
+      const d = await r.json(); all = all.concat(d.results);
       url = d.next ? d.next.replace(location.origin, "") : null;
     }
-    leads = all.filter((l) => !CLOSED.includes(l.status)).sort(byUrgency);
+    leads = all.filter((l) => !CLOSED.includes(l.status));
     renderList();
-    loadSummary();
   }
+  const dueAt = (l) => (l.next_contact_at ? new Date(l.next_contact_at).getTime() : null);
+  const isDue = (l) => { const t = dueAt(l); return segOf(l) === "new" ? true : t !== null && t <= Date.now() + (segOf(l) === "retry" ? 0 : DUE_SOON_MS); };
+  const isLate = (l) => { const t = dueAt(l); return t !== null && t < Date.now() - 60000 && ["offer", "callback"].includes(segOf(l)); };
+  function sortKey(l) { return [isDue(l) ? 0 : 1, SEG_ORDER.indexOf(segOf(l)), dueAt(l) ?? Infinity]; }
+  const cmp = (a, b) => { const x = sortKey(a), y = sortKey(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; };
 
-  /* Jeden wiersz listy; extra = dodatkowa linia (np. „Pasuje numer telefonu”) pod numerem */
-  function leadItem(l, g, extra = "") {
-    const when = l.next_contact_at ? `<small class="when${g === 0 ? " late" : g === 2 && new Date(l.next_contact_at) < new Date() ? " soft" : ""}" title="${fmt(l.next_contact_at)}">${rel(l.next_contact_at)} · ${fmt(l.next_contact_at)}</small>` : "";
-    const overdue = g === 0;   // obiecany kontakt, którego termin minął
-    const retryDue = isFresh(l) && !!l.next_contact_at && new Date(l.next_contact_at) <= Date.now();   // ponowna próba, na którą już pora
-    return `<button type="button" class="lead-item${l.id === selectedId ? " active" : ""}${retryDue ? " retry-due" : ""}${overdue ? " promise-late" : ""}" data-id="${l.id}">
-        <div><strong>${esc(l.contact_name)}</strong>${statusChip(l)}</div><small>${esc(l.phone)}</small>${retryDue ? `<small class="retry-now">Czas na ponowną próbę</small>` : ""}${CRM.lastContact(l, me.id)}${extra}${l.transferred_from ? `<small class="transfer">↪ przepisany od ${esc(l.transferred_from)}</small>` : ""}${when}${l.next_contact_note ? `<small class="why" title="Sprawa">${ICON_NOTE}<span>${esc(l.next_contact_note)}</span></small>` : ""}${l.missed_calls > 0 ? `<small>${missedChip(l)}</small>` : ""}</button>`;
+  function itemHtml(l) {
+    const s = segOf(l), t = l.next_contact_at;
+    const whenCls = isLate(l) ? " late" : t && dueAt(l) - Date.now() < 3600e3 && dueAt(l) > Date.now() ? " soon" : "";
+    const whenTxt = t ? (isDue(l) ? (isLate(l) ? rel(t).replace(" temu", " spóźn.") : "teraz") : when(t)) : s === "new" ? "nowy" : "";
+    const sub = [l.phone, l.company_city].filter(Boolean).map(esc).join(" · ");
+    return `<button type="button" class="w-item${current && current.id === l.id ? " active" : ""}" data-id="${l.id}" style="--c:${SEG[s] ? SEG[s].color : "var(--line)"}">
+      <span class="wi-top"><strong>${esc(title(l))}</strong><span class="wi-when${whenCls}">${esc(whenTxt)}</span></span>
+      <span class="wi-sub">${sub}${s === "retry" ? ` · nie odebrał ${l.owner_no_answers || l.attempts_count}×` : ""}${l.last_offer_at && l.status !== "offer" ? ` · <span class="wi-offer">oferta wysłana</span>` : ""}</span>
+      ${l.next_contact_note ? `<span class="wi-topic">${esc(l.next_contact_note)}</span>` : ""}</button>`;
   }
-
   function renderList() {
-    const heading = $("lead-count").closest("h2");
-    if (heading) heading.hidden = found !== null;
-    if (found !== null) { renderFound(); return; }
+    const box = $("lead-list");
+    if (tab === "hist") { renderHistory(); return; }
+    if (tab === "sms") { renderSms(); return; }
+    const list = leads.filter((l) => segFilter === "all" || segOf(l) === segFilter).sort(cmp);
     $("lead-count").textContent = leads.length ? `(${leads.length})` : "";
-    if (!leads.length) { lastListHtml = ""; $("lead-list").innerHTML = `<p class="muted">Brak aktywnych leadów. Kliknij „Daj kolejnego leada”.</p>`; return; }
-    leads.sort(byUrgency);   // pilność zmienia się z czasem (termin mija), więc sortujemy przy każdym rysowaniu
-    let html = "", last = -1;
-    leads.forEach((l) => {
-      const g = groupOf(l);
-      if (g !== last) { html += `<h3 class="grp g${g}">${GROUPS[g]}</h3>`; last = g; }
-      html += leadItem(l, g);
-    });
-    if (html !== lastListHtml) { lastListHtml = html; $("lead-list").innerHTML = html; }   // bez migotania, gdy nic się nie zmieniło
-  }
-
-  /* ---------- wyszukiwarka z góry strony: lista zawęża się do wyników, najlepszy otwiera się sam ---------- */
-  let found = null, foundQ = "", searchSeq = 0;   // found = null: zwykła kolejka
-  function renderFound() {
-    let html = `<div class="found-bar"><span>Wyniki dla „${esc(foundQ)}”: <b>${found.length}</b></span><button type="button" class="found-clear" id="found-clear">Cała kolejka</button></div>`;
-    if (!found.length) html += `<p class="muted">Brak wyników.</p>`;
-    found.forEach((l) => { html += leadItem(l, groupOf(l), `<small class="found-line">${CRM.searchMatch(l, foundQ)}</small>`); });
-    if (html !== lastListHtml) { lastListHtml = html; $("lead-list").innerHTML = html; }
-  }
-  function matchBanner(id) {
-    const i = found === null ? -1 : found.findIndex((x) => x.id === id);
-    if (i < 0) return "";
-    return `<div class="match-banner">${CRM.searchMatch(found[i], foundQ)}
-      ${found.length > 1 ? `<span class="match-n">Wynik ${i + 1} z ${found.length}</span>` : ""}
-      <button type="button" class="found-clear" id="banner-clear">Zamknij wyszukiwanie</button></div>`;
-  }
-  const searchWrap = () => $("gsearch");
-  function clearSearch() {
-    found = null; foundQ = ""; searchSeq++;
-    const input = $("gsearch-input");
-    if (input) input.value = "";
-    if (searchWrap()) searchWrap().classList.remove("loading");
-    renderList();
-  }
-  async function doSearch(text) {
-    const query = (text || "").trim();
-    if (query.length < 2) { if (found !== null) { found = null; foundQ = ""; renderList(); } return; }
-    if (/^[\d\s+\-().]+$/.test(query) && query.replace(/\D/g, "").length < 3) return;   // za mało cyfr, czekamy na kolejne
-    const mine = ++searchSeq;
-    if (searchWrap()) searchWrap().classList.add("loading");
-    let data;
-    try {
-      const r = await api("/api/leads/lookup/?q=" + encodeURIComponent(query));
-      if (!r.ok) throw new Error();
-      data = await r.json();
-    } catch {
-      if (mine === searchSeq) { if (searchWrap()) searchWrap().classList.remove("loading"); toast("Nie udało się wyszukać. Spróbuj ponownie.", true); }
+    if (!list.length) {
+      box.innerHTML = `<p class="w-empty">${segFilter === "all" ? "Nie masz jeszcze klientów w pracy. Kliknij „Następny klient”." : "Nikogo w tej grupie."}</p>`;
       return;
     }
-    if (mine !== searchSeq) return;   // w międzyczasie wpisano coś nowego
-    if (searchWrap()) searchWrap().classList.remove("loading");
-    found = data; foundQ = query;
-    if (data.length) { await select(data[0].id); return; }   // najlepsze dopasowanie (dokładne są pierwsze) otwiera się od razu
-    selectedId = null; current = null; renderList();
-    $("lead-pane").innerHTML = `<div class="card empty"><h2>Nie znaleziono leada</h2>
-      <p class="muted">Nic nie pasuje do „${esc(query)}”. Szukam po numerze telefonu, NIP, KRS, nazwisku, firmie i e-mailu.</p></div>`;
+    const groups = [["Do zrobienia teraz", list.filter(isDue)], ["Później", list.filter((l) => !isDue(l))]];
+    box.innerHTML = groups.filter(([, g]) => g.length).map(([name, g]) =>
+      `<div class="w-group${name.startsWith("Do") && g.some(isLate) ? " late" : ""}">${name} · ${g.length}</div>${g.map(itemHtml).join("")}`).join("");
   }
-  document.addEventListener("crm:search", (e) => { e.preventDefault(); doSearch(e.detail && e.detail.q); });   // preventDefault = „obsłużone w kolejce”
-
-  function updatePreview() {
-    const v = $("cb-at").value.trim(), pv = $("cb-preview");
-    if (!v) { pv.textContent = "np. jutro 9:30 · 25.10 10:23 · pon 8 · za 2h"; pv.className = "hint"; return; }
-    const d = parseWhen(v);
-    if (!d) { pv.textContent = "Nie rozumiem. Spróbuj np. „jutro 9:30”, „25.10 10:23”, „pon 8”, „za 2h”."; pv.className = "hint bad"; return; }
-    const past = d < new Date();
-    pv.textContent = (past ? "Ten termin już minął: " : "") + fmtLong(d);
-    pv.className = "hint " + (past ? "bad" : "ok");
+  function renderHistory() {
+    const box = $("lead-list");
+    if (!history.length) { box.innerHTML = `<p class="w-empty">Dziś jeszcze nic nie zapisano.</p>`; return; }
+    box.innerHTML = history.map((a) => `<button type="button" class="w-item hist" data-id="${a.lead}" style="--c:${OUT_COLOR[a.outcome] || "#64748b"}">
+      <span class="wi-top"><strong>${esc(a.lead_name || "Klient #" + a.lead)}</strong><span class="wi-when">${hhmm(a.created_at)}</span></span>
+      <span class="wi-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}${a.call_seconds ? ` · ${Math.round(a.call_seconds / 60)} min` : ""}</span>
+      ${a.note ? `<span class="wi-sub">${esc(a.note)}</span>` : ""}</button>`).join("");
   }
-  const atNine = (days) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(9, 0, 0, 0); return d; };
-  const PRESETS = [["Za 30 min", () => new Date(Date.now() + 1800e3)], ["Za godzinę", () => new Date(Date.now() + 3600e3)], ["Jutro 9:00", () => atNine(1)],
-    ["Za 3 dni", () => atNine(3)], ["Za tydzień", () => atNine(7)]];
-
-  function emptyPane() {
-    selectedId = null; renderList();
-    $("lead-pane").innerHTML = `<div class="card empty"><h2>Wybierz leada z listy</h2>
-      <p class="muted">albo pobierz następnego z puli przyciskiem „Daj kolejnego leada”.</p></div>`;
-  }
-
-  /* Otwarty lead ma być widoczny w kolumnie po lewej (lista przewija się do niego) */
-  function keepActiveVisible() {
-    const el = document.querySelector("#lead-list .lead-item.active"), box = $("lead-list").closest(".list-card");
-    if (!el || !box) return;
-    const e = el.getBoundingClientRect(), b = box.getBoundingClientRect();
-    if (e.top < b.top + 8) box.scrollTop -= b.top + 8 - e.top;
-    else if (e.bottom > b.bottom - 8) box.scrollTop += e.bottom - b.bottom + 8;
-  }
-  async function select(id) {
-    selectedId = id; renderList(); keepActiveVisible();
-    const r = await api(`/api/leads/${id}/`);
-    if (!r.ok) { toast("Nie udało się wczytać leada.", true); return; }
-    const d = await r.json();
-    const [company, product] = await Promise.all([ref("companies", d.company), ref("products", d.product), loadProducts()]);
-    outcome = null; current = d; autoRetry = false;
-    renderCard(d, company, product);
-  }
-
-  /* Otwarcie leada z zewnątrz (karta przypomnienia, powiadomienie) bez przeładowania strony */
-  CRM.openLead = async (id) => {
-    clearSearch();
-    if (!leads.some((l) => l.id === id)) await loadLeads();
-    await select(id);
-    window.scrollTo({ top: 0, behavior: "auto" });
-    return !!current && current.id === id;
-  };
-
-  /* Historia: najpierw godzina, potem wynik i kto dzwonił, notatka pod spodem; wpisy pogrupowane dniami */
-  const HIST_SHORT = 6;
-  function dayLabel(iso) {
-    const d = new Date(iso), now = new Date(), yest = new Date(now.getTime() - 86400000);
-    if (d.toDateString() === now.toDateString()) return "Dziś";
-    if (d.toDateString() === yest.toDateString()) return "Wczoraj";
-    return d.toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" });
-  }
-  const spanText = (m) => (m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}` : `${Math.floor(m / 1440)} d`);
-  /* Data z dniem tygodnia: „pt 31.10, 09:00” */
-  const wd = (iso) => { const d = new Date(iso); return `${d.toLocaleDateString("pl-PL", { weekday: "short" }).replace(".", "")} ${d.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })}, ${d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`; };
-  const sameMinute = (x, y) => Math.abs(new Date(x) - new Date(y)) < 60000;
-  /* Co dalej po tym kontakcie: jedna wyraźna linia (nowy termin, ponowna próba albo zamknięcie leada) */
-  const CLOSING = { sold: "Lead zamknięty: sprzedane", refused: "Lead zamknięty: odmowa", wrong_number: "Lead zamknięty: zły numer" };
-  function nextStep(a) {
-    if (CLOSING[a.outcome]) return `<div class="h-next closed">${CLOSING[a.outcome]}</div>`;
-    if (!a.rescheduled_to) return "";
-    const label = a.outcome === "no_answer" ? "Ponowna próba" : "Następny kontakt";
-    let tag = "";
-    if (a.outcome !== "no_answer" && a.planned_at) {
-      tag = sameMinute(a.planned_at, a.rescheduled_to)
-        ? `<span class="h-tag same">termin bez zmian</span>`
-        : `<span class="h-tag">termin zmieniony (był ${esc(wd(a.planned_at))})</span>`;
+  /* ---------- SMS-y od klientów (telefon z Solid Dialer 1.3+): podgląd na komputerze ---------- */
+  let smsList = null;
+  const SMS_KIND = { client: "SMS od klienta", available: "Numer już dostępny", info: "Wiadomość od sieci" };
+  /* „Od klientów” (domyślnie) chowa automatyczne wiadomości od sieci („numer już dostępny” itp.) – wybór pamięta przeglądarka */
+  let smsAll = false;
+  try { smsAll = localStorage.getItem("crm_sms_all") === "1"; } catch { /* brak dostępu */ }
+  function renderSms() {
+    const box = $("lead-list");
+    if (smsList === null) { box.innerHTML = `<p class="w-empty">Wczytuję…</p>`; return; }
+    const shown = smsAll ? smsList : smsList.filter((s) => s.kind === "client");
+    const hidden = smsList.length - shown.length;
+    const head = `<div class="w-sms-filter" role="group" aria-label="Które SMS-y"><button type="button" data-sms-all="0" aria-pressed="${!smsAll}">Od klientów</button><button type="button" data-sms-all="1" aria-pressed="${smsAll}">Wszystkie${hidden ? ` (+${hidden} od sieci)` : ""}</button></div>`;
+    if (!shown.length) {
+      box.innerHTML = head + `<p class="w-empty">${smsList.length ? "Brak SMS-ów od klientów. Wiadomości od sieci (np. „numer już dostępny”) zobaczysz w „Wszystkie”." : "Brak SMS-ów od klientów. Tu pojawią się SMS-y, które klienci wyślą na Twój telefon z Solid Dialer (np. e-mail), i wiadomości od sieci, że numer klienta jest już dostępny. Prywatnych SMS-ów CRM nie zapisuje."}</p>`;
+      return;
     }
-    return `<div class="h-next">${label}: <b>${esc(wd(a.rescheduled_to))}</b> ${tag}</div>`;
+    box.innerHTML = head + shown.map((s) => `<div class="w-item sms ${s.kind}${s.seen ? "" : " unseen"}" style="--c:${s.kind === "available" ? "#22c55e" : s.kind === "client" ? "var(--brand)" : "#64748b"}">
+      <button type="button" class="w-sms-open" data-id="${s.lead}"><span class="wi-top"><strong>${esc(s.name)}</strong><span class="wi-when">${esc(dayShort(s.received_at))} ${hhmm(s.received_at)}</span></span>
+      <span class="wi-out">${SMS_KIND[s.kind] || "SMS"}</span>
+      <span class="wi-sub w-sms-text">${esc(s.text)}</span></button>
+      ${s.email ? `<button type="button" class="btn-mini" data-sms-mail="${s.lead}" data-mail="${esc(s.email)}">Zapisz e-mail ${esc(s.email)} w karcie</button>` : ""}</div>`).join("");
   }
-  /* Czy kontakt odbył się w umówionym terminie: pokazujemy tylko, gdy różnica jest zauważalna (≥ 5 min) */
-  function punctuality(a) {
-    if (!a.planned_at || a.outcome === "note") return "";
-    /* Tylko termin obiecany klientowi (wcześniejszy wpis „Oddzwonić” / „Zainteresowany” z tym terminem). Ponowne próby po nieodebraniu ustawia system, więc nie są „spóźnione”. */
-    const promised = ((current && current.activities) || []).some((b) => (b.outcome === "callback" || b.outcome === "interested")
-      && b.rescheduled_to && sameMinute(b.rescheduled_to, a.planned_at) && new Date(b.created_at) < new Date(a.created_at));
-    if (!promised) return "";
-    const diff = Math.round((new Date(a.created_at) - new Date(a.planned_at)) / 60000);
-    if (Math.abs(diff) < 5) return "";
-    return diff > 0 ? `<div class="h-punct late">Spóźniony kontakt: ${spanText(diff)} po umówionym terminie (${esc(wd(a.planned_at))})</div>` : "";   // wcześniejszy telefon nie jest problemem, więc go nie pokazujemy
+  async function loadSms() {
+    try {
+      const r = await api("/api/phone/sms/"); if (!r.ok) return;
+      smsList = (await r.json()).results || [];
+      if (tab === "sms") renderSms();
+      if (smsList.some((s) => !s.seen && s.kind === "client")) {
+        await jsonReq("/api/phone/sms/", "POST", { all: true });
+        paintSmsBadge(0);
+      }
+    } catch { /* bez SMS-ów */ }
   }
-  /* Numer kontaktu z leadem (1 = pierwszy), liczony od najstarszego; notatki nie mają numeru */
-  let histNums = new Map();
-  function numberCalls(acts) {
-    histNums = new Map();
+  function paintSmsBadge(n) { const b = $("sms-badge"); if (b) { b.textContent = n ? String(n) : ""; b.hidden = !n; } }
+  document.addEventListener("crm:phone", (e) => {
+    const n = e.detail.sms_unseen || 0;
+    if (tab === "sms" && n) loadSms(); else paintSmsBadge(n);
+  });
+  async function loadHistory() {
+    try {
+      const r = await api(`/api/activities/?agent=${me.id}&ordering=-created_at`);
+      if (!r.ok) return;
+      const d = await r.json(), today = new Date().toDateString();
+      history = (d.results || d).filter((a) => new Date(a.created_at).toDateString() === today);
+      if (tab === "hist") renderHistory();
+    } catch { /* lista historii jest dodatkiem */ }
+  }
+  function renderSegs() {
+    const c = (summary && summary.counts) || {};
+    const total = SEG_ORDER.reduce((s, k) => s + ((c[k] && c[k].total) || 0), 0);
+    $("segs").innerHTML = `<button type="button" class="w-seg all" data-seg="all" aria-pressed="${segFilter === "all"}"><span>Wszyscy moi klienci</span><b>${leads.length || total}</b></button>` +
+      SEG_ORDER.filter((k) => k !== "new").concat(["new"]).map((k) => {
+        const n = c[k] || { total: 0, due: 0 };
+        const due = k !== "new" && n.due ? `<small>${n.due} teraz</small>` : "";
+        return `<button type="button" class="w-seg" data-seg="${k}" style="--c:${SEG[k].color}" aria-pressed="${segFilter === k}" title="${esc(SEG[k].long)}"><span>${esc(SEG[k].label)}</span><b>${n.total}${due}</b></button>`;
+      }).join("");
+  }
+  function renderNextHint() {
+    const c = (summary && summary.counts) || {};
+    const hint = $("next-hint");
+    const parts = [];
+    if (c.offer && c.offer.due) parts.push(`<b>${pl(c.offer.due, "follow-up oferty", "follow-upy ofert", "follow-upów ofert")}</b>`);
+    if (c.callback && c.callback.due) parts.push(`<b>${pl(c.callback.due, "oddzwonienie", "oddzwonienia", "oddzwonień")}</b>`);
+    if (c.retry && c.retry.due) parts.push(`${pl(c.retry.due, "ponowna próba", "ponowne próby", "ponownych prób")}`);
+    hint.innerHTML = parts.length ? `Najpierw: ${parts.join(", ")}` : "Teraz: nowa firma z Twojej bazy";
+  }
+  /* Ile jeszcze firm do obdzwonienia: własna baza (pasek postępu) i wspólna pula zespołu */
+  const showPart = (part) => !CRM.showPart || CRM.showPart(part);   // „Moje ustawienia”: drobne napisy można schować
+  function renderBase() {
+    const b = summary && summary.base, box = $("base-progress");
+    if (!b || !showPart("base")) { box.hidden = true; return; }
+    box.hidden = false;
+    const fmt = (n) => Number(n || 0).toLocaleString("pl-PL");
+    const own = b.total ? `<div class="bp-text"><span>Twoja baza</span><b>zostało ${fmt(b.left)} z ${fmt(b.total)}</b></div>
+      <div class="bp-track"><i style="width:${Math.round((b.done / b.total) * 100)}%"></i></div>
+      <small>${b.left ? `${pl(b.left, "firma czeka", "firmy czekają", "firm czeka")} na pierwszy telefon` : "Baza obdzwoniona: nowi przyjdą ze wspólnej puli"}</small>` : "";
+    const pool = `<div class="bp-text bp-pool"><span>Wspólna pula zespołu</span><b>${fmt(b.pool_left)} ${b.pool_left === 1 ? "firma" : few(b.pool_left || 0) ? "firmy" : "firm"}</b></div>`;
+    box.innerHTML = own + pool + (!b.left && !b.pool_left ? `<small class="bp-empty">Nowych firm już nie ma – poproś managera o nową bazę.</small>` : "");
+  }
+  let summaryOpened = false;
+  async function loadSummary() {
+    try {
+      // pierwsze wczytanie = agent otworzył „Dzwonienie” (liczy się jako praca); odświeżanie w tle – nie
+      const r = await api("/api/work/summary/" + (summaryOpened ? "" : "?open=1"));
+      summaryOpened = true;
+      if (!r.ok) return;
+      summary = await r.json();
+      renderSegs(); renderNextHint(); renderBase(); renderSide(); renderDialbar();
+    } catch { /* liczniki są dodatkiem */ }
+  }
+
+  /* ================= PRAWA KOLUMNA ================= */
+  let dayPlan = [], announcements = [];
+  async function loadSideData() {
+    try {
+      const [s, a] = await Promise.all([api("/api/my-leads/schedule/"), api("/api/announcements/")]);
+      if (s.ok) { const d = await s.json(); dayPlan = [...d.overdue, ...d.scheduled]; }
+      if (a.ok) announcements = await a.json();
+      renderSide();
+    } catch { /* panel boczny jest dodatkiem */ }
+  }
+  function renderSide() {
+    const side = $("side");
+    const show = !CRM.dayBarEnabled || CRM.dayBarEnabled();
+    side.hidden = !show; $("work").classList.toggle("no-side", !show);
+    if (!show || !summary) return;
+    const t = summary.today, goal = t.goal_minutes_per_hour;
+    const hourNow = new Date().getHours();
+    const hours = t.minutes_by_hour.filter((h) => (h.hour >= 8 && h.hour <= 18) || h.minutes > 0);
+    const pctHour = Math.min(100, Math.round((t.minutes_this_hour / goal) * 100));
+    const minutesBlock = !showPart("goal") ? "" : t.dialer_used || t.minutes_today
+      ? `<div class="w-goal"><div class="g-top"><span>Ta godzina</span><b>${CRM.talk(t.minutes_this_hour)} / ${goal} min</b></div>
+          <div class="g-track"><i class="${t.minutes_this_hour >= goal ? "ok" : ""}" style="width:${pctHour}%"></i></div>
+          <div class="w-hours" aria-label="Minuty rozmów w godzinach">${hours.map((h) => `<div class="${h.hour === hourNow ? "now" : ""}" title="${h.hour}:00 – ${CRM.talk(h.minutes)}${h.hour === hourNow ? " (teraz)" : ""}"><i class="${h.minutes === 0 ? "zero" : h.minutes < goal ? "low" : ""}" style="height:${Math.max(4, Math.min(100, (h.minutes / goal) * 100))}%"></i><small>${h.hour}</small></div>`).join("")}</div>
+          <p class="w-goal-note">Dziś: <b class="${t.day_goal && t.minutes_today >= t.day_goal ? "ok" : ""}">${CRM.talk(t.minutes_today)}</b> rozmów, powinno być <b>${CRM.talk(t.day_goal)}</b>${workdayText()}. Cel: ${goal} min na każdą godzinę pracy.</p></div>`
+      : `<p class="w-goal-note">Dziś powinno być <b>${CRM.talk(t.day_goal)}</b> rozmów${workdayText()} – cel ${goal} min na każdą godzinę pracy. Minuty policzą się same, gdy połączysz telefon z aplikacją Solid Dialer.</p>`;
+    const plan = dayPlan.slice().sort((a, b) => new Date(a.next_contact_at) - new Date(b.next_contact_at));
+    side.innerHTML = `<div class="w-panel"><div class="w-side-head"><h3>Dziś</h3></div>
+        <div class="w-stats">
+          <div class="w-stat"><b>${t.calls}</b><span>telefonów</span></div>
+          <div class="w-stat"><b>${t.talks}</b><span>rozmów</span></div>
+          <div class="w-stat"><b>${t.offers}</b><span>ofert</span></div>
+          <div class="w-stat wide"><span>Sprzedane: <b style="color:var(--ink)">${t.sold}</b></span><span>prowizja <b>${money(t.commission)}</b></span></div>
+        </div>${minutesBlock}</div>
+      <div class="w-panel"><h3>Terminy na dziś (${plan.length})</h3>
+        ${plan.length ? `<ul class="w-day">${plan.map((l) => { const s = segOf(l), late = new Date(l.next_contact_at) < new Date();
+          return `<li><button type="button" data-id="${l.id}" style="--c:${SEG[s] ? SEG[s].color : "var(--line)"}"><b class="${late && s !== "retry" ? "late" : ""}">${hhmm(l.next_contact_at)}</b><span>${esc(title(l))}</span></button></li>`; }).join("")}</ul>`
+          : `<p class="w-goal-note">Na dziś nic nie jest umówione.</p>`}
+        <p class="w-goal-note"><a href="/crm/calendar/">Cały kalendarz →</a></p></div>
+      ${announcements.length ? `<div class="w-panel"><h3>Solid info</h3>${announcements.map((a) =>
+        `<div class="w-info-item${a.pinned ? " pinned" : ""}"><strong>${esc(a.title)}</strong>${a.body ? `<p>${esc(a.body)}</p>` : ""}</div>`).join("")}</div>` : ""}`;
+  }
+  /* „ (pracujesz od 9:12, 3 h 20 min)” – z dnia pracy zapisanego przez serwer */
+  function workdayText() {
+    const w = summary && summary.workday;
+    if (!w || !w.started_at) return "";
+    const m = w.worked_minutes, h = Math.floor(m / 60), r = m % 60;
+    // długie wyjścia (od 45 min) nie liczą się do pracy – krótkie przerwy tak
+    const short = (w.break_minutes || 0) - (w.away_minutes || 0);
+    const br = (short > 0 ? `, w tym przerwy ${CRM.talk(short)}` : "") + (w.away_minutes ? `; poza pracą ${CRM.talk(w.away_minutes)} – nie liczy się` : "");
+    return ` (${w.ended_at ? "praca" : "pracujesz"} od ${hhmm(w.started_at)}${w.ended_at ? ` do ${hhmm(w.ended_at)}` : ""}: ${h ? `${h} h ` : ""}${r} min${br})`;
+  }
+  document.addEventListener("crm:view", () => { renderSide(); renderBase(); renderDialbar(); });
+
+  /* ================= DIALER (pasek na dole) ================= */
+  let callTimer = null, callStart = null;
+  async function loadDialer() {
+    try { const r = await api("/api/dialer/status/"); if (r.ok) dialer = await r.json(); } catch { /* brak sieci */ }
+    renderDialbar();
+  }
+  function renderDialbar() {
+    $("db-dot").className = "db-dot" + (dialer.online ? " on" : "");
+    const call = dialer.call;
+    let state = dialer.online ? "Telefon połączony – gotowy do pracy" : dialer.paused ? "Dzwonienie przez telefon wyłączone (menu konta → Telefon)" : dialer.paired ? "Telefon nie odpowiada (otwórz Solid Dialer)" : "Bez telefonu: „Zadzwoń” otworzy wybieranie numeru";
+    if (call && call.state === "pending") state = `Czekam na telefon: ${call.phone}`;
+    if (call && call.state === "dialing") state = call.hangup ? `Rozłączam: ${call.phone}…` : `Dzwonię: ${call.phone}`;
+    if (call && call.state === "done" && call.hangup) state = `Rozłączono: ${call.phone}`;
+    $("db-state").textContent = state;
+    // „Moje ustawienia”: kropkę i napis o stanie telefonu można schować (połączony, bez telefonu, nie odpowiada);
+    // „Dzwonię…” / „Czekam na telefon” zostają, a przycisk „Połącz telefon” jest zawsze
+    const quiet = !(call && (call.state === "dialing" || call.state === "pending")) && !showPart("phone");
+    $("db-state").hidden = quiet; $("db-dot").hidden = quiet;
+    $("db-setup").hidden = dialer.online;
+    $("db-setup").textContent = dialer.paired ? "Telefon" : "Połącz telefon";
+    const dialing = call && (call.state === "dialing" || call.state === "pending");
+    $("db-timer").hidden = !dialing;
+    // „Rozłącz” (np. poczta głosowa): telefon z dialerem 1.4+ kończy połączenie
+    const hangOn = showPart("hangupBtn");   // „Moje ustawienia” → „Przycisk „Rozłącz””
+    const hb = $("db-hangup"); if (hb) { hb.hidden = !hangOn || !(call && call.state === "dialing"); hb.disabled = !!call && !!call.hangup; }
+    const ch = $("hangup-btn"); if (ch) ch.hidden = !hangOn || !(call && call.state === "dialing" && current && call.lead === current.id);
+    const hk = document.querySelector("[data-hangup-kbd]"); if (hk) hk.hidden = !showPart("hangupKey");
+    if (dialing && !callTimer) { callStart = Date.now(); callTimer = setInterval(tick, 1000); tick(); }
+    if (!dialing && callTimer) { clearInterval(callTimer); callTimer = null; }
+    const t = summary && summary.today;
+    $("db-min").textContent = t && showPart("footer") ? `Dziś: ${t.calls} tel. · ${CRM.talk(t.minutes_today)} rozmów · ta godzina ${CRM.talk(t.minutes_this_hour)} / ${t.goal_minutes_per_hour} min` : "";
+    const btn = $("call-btn");
+    if (btn) { btn.classList.toggle("busy", !!dialing); btn.querySelector("span").textContent = dialing ? "Dzwonię…" : "Zadzwoń"; }
+  }
+  function tick() { const s = Math.floor((Date.now() - callStart) / 1000); $("db-timer").textContent = `${p2(Math.floor(s / 60))}:${p2(s % 60)}`; }
+  $("db-setup").addEventListener("click", () => { const b = $("dialer-open"); if (b) b.click(); });
+  let dialerPoll = null;
+  function pollDialerSoon() {
+    clearInterval(dialerPoll);
     let n = 0;
-    acts.slice().reverse().forEach((a) => { if (a.outcome !== "note") histNums.set(a.id, ++n); });
-  }
-  const HIST_FILTERS = { all: () => true, talked: (a) => a.outcome !== "note" && a.outcome !== "no_answer", noans: (a) => a.outcome === "no_answer", notes: (a) => a.outcome === "note" };
-  function histStats(acts) {
-    const talked = acts.filter(HIST_FILTERS.talked).length, noans = acts.filter(HIST_FILTERS.noans).length;
-    const first = acts.length ? acts[acts.length - 1].created_at : null;
-    return { talked, noans, calls: talked + noans, first, last: acts[0] || null };
-  }
-  /* Jeden wpis historii; ten sam wygląd w panelu „Ostatnie kontakty” i w pełnej historii */
-  const noteHtml = (a) => (a.note ? `<p class="h-note">${esc(a.note)}</p>` : "");
-  function contactRow(a, whenHtml) {
-    const who = a.agent_name ? (a.agent === me.id ? "Ty" : esc(a.agent_name)) : "–";
-    const num = histNums.get(a.id);
-    return `<li class="h-row" style="--oc:${OUT_COLOR[a.outcome] || "#64748b"}"><div class="h-when">${whenHtml}</div>
-      <div class="h-main"><div class="h-head"><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="who">${who}</span>${a.agent === me.id ? `<button type="button" class="h-edit" data-aid="${a.id}">${a.note ? "Popraw komentarz" : "Dodaj komentarz"}</button>` : ""}${num ? `<span class="h-n" title="Który to kontakt z tym leadem">kontakt ${num}</span>` : ""}</div>
-      <div class="h-notebox">${noteHtml(a)}</div>${CRM.saleHtml(a)}${nextStep(a)}${punctuality(a)}</div></li>`;
-  }
-  const hhmm = (iso) => new Date(iso).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-  function historyHtml(acts, all, filter = "all") {
-    const list = acts.filter(HIST_FILTERS[filter] || HIST_FILTERS.all);
-    if (!list.length) return `<li class="muted">${acts.length ? "Brak wpisów tego rodzaju." : "Brak historii kontaktów."}</li>`;
-    const shown = all ? list : list.slice(0, HIST_SHORT);
-    let html = "", lastDay = "";
-    shown.forEach((a) => {
-      const day = dayLabel(a.created_at);
-      if (day !== lastDay) { html += `<li class="h-day" role="presentation">${esc(day)}</li>`; lastDay = day; }
-      html += contactRow(a, `<b>${hhmm(a.created_at)}</b>`);
-    });
-    return html;
-  }
-  /* Krótki dzień + godzina: „dziś 22:01”, „wczoraj 14:10”, „23.10, 10:05” */
-  function shortWhen(iso) {
-    const d = new Date(iso), t = hhmm(iso), day = dayLabel(iso);
-    return day === "Dziś" ? `dziś ${t}` : day === "Wczoraj" ? `wczoraj ${t}` : `${d.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })}, ${t}`;
-  }
-  const whenCell = (iso) => { const d = dayLabel(iso), day = d === "Dziś" ? "dziś" : d === "Wczoraj" ? "wczoraj" : wd(iso).replace(/, .*/, ""); return `<b>${hhmm(iso)}</b><small>${esc(day)}</small>`; };
-  const plKontakt = (n) => (n === 1 ? "kontakt" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "kontakty" : "kontaktów");
-  /* Podsumowanie w trzech kafelkach: ile było kontaktów, jaki był ostatni, od kiedy trwa */
-  function summaryTiles(acts) {
-    const st = histStats(acts), last = st.last;
-    const calls = st.calls ? `<b>${st.calls} ${plKontakt(st.calls)}</b><small>${st.talked} ${st.talked === 1 ? "rozmowa" : "rozmowy"} · ${st.noans} nieodebr.</small>` : `<b>0 kontaktów</b><small>jeszcze nie dzwoniono</small>`;
-    return `<div class="h-tiles">
-      <div><span>Dotychczas</span>${calls}</div>
-      <div><span>Ostatni kontakt</span><b>${esc(shortWhen(last.created_at))}</b><small>${esc(OUT_LABEL[last.outcome] || last.outcome)}</small></div>
-      <div><span>Pierwszy kontakt</span><b>${esc(wd(st.first).replace(/, .*/, ""))}</b><small>${esc(dayLabel(st.first) === "Dziś" ? "dziś" : spanText(Math.max(1, Math.round((Date.now() - new Date(st.first)) / 60000))) + " temu")}</small></div></div>`;
-  }
-  /* Panel pod terminem: podsumowanie + 3 ostatnie kontakty, bez zjeżdżania na dół strony */
-  const RECENT_N = 3;
-  function recentPanel(d) {
-    const acts = d.activities;
-    if (!acts.length) return `<section class="recent"><span class="nc-label">Ostatnie kontakty</span><p class="muted small">To pierwszy kontakt z tym leadem.</p></section>`;
-    const items = acts.slice(0, RECENT_N).map((a) => contactRow(a, whenCell(a.created_at))).join("");
-    return `<section class="recent"><div class="recent-head"><span class="nc-label">Ostatnie kontakty</span>${acts.length > RECENT_N ? `<button type="button" class="link-btn" id="recent-all">Pełna historia (${acts.length}) &darr;</button>` : ""}</div>
-      ${summaryTiles(acts)}<ul class="history rc-list">${items}</ul></section>`;
-  }
-
-  /* Pas „jeszcze z nim nie rozmawiałeś”: widać, ile prób zostało i co się stanie po ostatniej */
-  function freshNote(d) {
-    if (!isFresh(d)) return "";
-    const n = triesOf(d), max = maxTries();
-    if (n === 0) return `<div class="fresh-note"><b>Nowy lead.</b> Nikt jeszcze z nim nie rozmawiał. Masz <b>${max}</b> ${max === 1 ? "próbę" : "próby"} dodzwonienia; jeśli nie odbierze, system sam ustawi ponowną próbę.</div>`;
-    const left = max - n;
-    return `<div class="fresh-note retry"><b>Jeszcze z nim nie rozmawiałeś.</b> Nie odebrał ${n} ${raz(n)} z ${max} dozwolonych prób. ${left <= 1 ? "<b>To ostatnia próba:</b> jeśli znów nie odbierze, lead wróci do wspólnej puli." : `Po ${max}. nieodebranym telefonie lead wróci do wspólnej puli.`}</div>`;
-  }
-
-  /* ---------- pasek leada przy przewijaniu, widoczność formularza, poprawianie wpisów ---------- */
-  let miniObs = null, repaintHistory = () => {};
-  const topOffset = () => { const t = document.querySelector(".topbar"); return t ? t.offsetHeight : 0; };
-  const caseInner = (d) => `<span class="nc-why-ic">${ICON_NOTE}</span><div class="case-body"><span class="nc-why-l">Sprawa do omówienia</span>${d.next_contact_note ? `<span class="nc-why-t">${esc(d.next_contact_note)}</span>` : `<span class="nc-why-t nc-none">Nie wpisano</span>`}</div><button type="button" class="link-btn case-edit" id="case-edit">${d.next_contact_note ? "Zmień" : "Dodaj"}</button>`;
-  function lastNoteHtml(d) {
-    const n = d.activities.find((a) => a.note);
-    if (!n) return "";
-    const who = n.agent === me.id ? "Ty" : esc(n.agent_name || "–");
-    return `<div class="nc-section nc-last"><span class="nc-label">Ostatni komentarz · ${who} · ${fmt(n.created_at)}</span><div class="nc-text">${esc(n.note)}</div></div>`;
-  }
-  const miniBar = (d, company, tel) => `<div class="lead-mini-wrap"><div class="lead-mini" id="lead-mini" aria-hidden="true">
-      <div class="lm-id"><div class="lm-name"><strong>${esc(d.contact_name)}</strong>${company ? `<span>${esc(company.name)}</span>` : ""}</div><div class="lm-case" id="lm-case">${d.next_contact_note ? "Sprawa: " + esc(d.next_contact_note) : ""}</div></div>
-      <a class="lm-phone" href="tel:${tel}" tabindex="-1">${esc(d.phone)}</a>${CRM.copyButton(d.phone)}${statusChip(d)}</div></div>`;
-  function wireMini() {
-    if (miniObs) miniObs.disconnect();
-    const mini = $("lead-mini"), head = document.querySelector("#lead-pane .lead-head");
-    if (!mini || !head || !("IntersectionObserver" in window)) return;
-    const off = topOffset();
-    document.documentElement.style.setProperty("--topbar-h", off + "px");
-    miniObs = new IntersectionObserver(([e]) => mini.classList.toggle("show", !e.isIntersecting && e.boundingClientRect.top < off),
-      { rootMargin: `-${off}px 0px 0px 0px` });
-    miniObs.observe(head);
-  }
-  /* Po wyborze wyniku formularz ma być w całości na ekranie (pod paskiem leada), a nie zjeżdżać do przycisku zapisu */
-  function ensureFormVisible(form) {
-    const top = topOffset() + 76, r = form.getBoundingClientRect();
-    if (r.top >= top && r.bottom <= window.innerHeight - 8) return;
-    window.scrollTo({ top: window.scrollY + r.top - top, behavior: "smooth" });
-  }
-  /* Małe okienko edycji w miejscu: Enter zapisuje, Esc anuluje (zdarzenia nie wychodzą do skrótów formularza) */
-  function inlineEdit(host, value, opts, onSave) {
-    const before = host.innerHTML;
-    host.innerHTML = `<div class="ie">${opts.multiline ? '<textarea class="ie-field" rows="2"></textarea>' : '<input class="ie-field">'}
-      <p class="form-error ie-err" hidden></p>
-      <div class="ie-actions"><button type="button" class="btn btn-primary ie-save">Zapisz</button><button type="button" class="link-btn ie-cancel">Anuluj</button><span class="ie-hint">Enter zapisuje · Esc anuluje${opts.multiline ? " · Shift+Enter = nowa linia" : ""}</span></div></div>`;
-    const f = host.querySelector(".ie-field"), err = host.querySelector(".ie-err"), save = host.querySelector(".ie-save");
-    f.value = value; f.maxLength = opts.maxlength; f.placeholder = opts.placeholder || "";
-    f.focus(); f.setSelectionRange(f.value.length, f.value.length);
-    const cancel = () => { host.innerHTML = before; };
-    let busy = false;
-    const doSave = async () => {
-      if (busy) return;
-      const v = f.value.trim();
-      if (opts.required && !v) { err.textContent = opts.required; err.hidden = false; return; }
-      busy = true; save.disabled = true; err.hidden = true;
-      const msg = await onSave(v);
-      if (msg) { err.textContent = msg; err.hidden = false; busy = false; save.disabled = false; }
-    };
-    save.addEventListener("click", doSave);
-    host.querySelector(".ie-cancel").addEventListener("click", cancel);
-    f.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Escape") { e.preventDefault(); cancel(); }
-      else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSave(); }
-    });
-  }
-  const patchJson = async (url, body) => {
-    let r;
-    try { r = await api(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch { return { error: "Brak połączenia z serwerem. Spróbuj ponownie." }; }
-    if (!r.ok) return { error: errText(await r.json().catch(() => ({}))) };
-    return { data: await r.json().catch(() => ({})) };
-  };
-  function wireEdits(d) {
-    $("lead-pane").onclick = (e) => {
-      const caseBtn = e.target.closest("#case-edit");
-      if (caseBtn) {
-        const host = $("case-block");
-        inlineEdit(host, d.next_contact_note || "", { maxlength: 255, placeholder: "np. wysłać porównanie ofert" }, async (v) => {
-          const r = await patchJson(`/api/leads/${d.id}/`, { next_contact_note: v });
-          if (r.error) return r.error;
-          d.next_contact_note = v;
-          host.innerHTML = caseInner(d);
-          const lm = $("lm-case"); if (lm) lm.textContent = v ? "Sprawa: " + v : "";
-          loadLeads();   // lista po lewej pokazuje sprawę pod nazwiskiem
-          return "";
-        });
-        return;
+    dialerPoll = setInterval(async () => {
+      await loadDialer(); n++;
+      const c = dialer.call;
+      if (!c || c.state === "done" || c.state === "cancelled" || n > 600) {
+        clearInterval(dialerPoll);
+        if (c && c.state === "done") {
+          const talk = `${Math.floor((c.duration_seconds || 0) / 60)} min ${(c.duration_seconds || 0) % 60} s`;
+          setCallState(c.hangup ? `<b class="w-ended">✕ Rozłączono</b> (z CRM${c.answered ? `, połączenie trwało ${talk}` : ""}). Wybierz wynik – przy poczcie głosowej „1 Nie odebrał”.`
+            : c.answered ? `Rozmowa zakończona: <b>${talk}</b>. Wybierz wynik.` : "Klient <b>nie odebrał</b>. Wybierz „1 Nie odebrał”.");
+          if (c.hangup && showPart("hangupToast")) toast("Rozłączono połączenie.");
+          if (!c.answered && current && !form && c.lead === current.id) pick("no_answer");
+          loadSummary();
+        }
       }
-      const editBtn = e.target.closest(".h-edit");
-      if (editBtn) {
-        const a = d.activities.find((x) => String(x.id) === editBtn.dataset.aid);
-        const host = editBtn.closest(".h-row").querySelector(".h-notebox");
-        if (!a || !host) return;
-        inlineEdit(host, a.note || "", { multiline: true, maxlength: 2000, placeholder: "Komentarz do tego kontaktu",
-          required: a.outcome === "note" ? "Notatka nie może być pusta." : "" }, async (v) => {
-          const r = await patchJson(`/api/activities/${a.id}/`, { note: v });
-          if (r.error) return r.error;
-          a.note = v;
-          repaintHistory();
-          const w = $("nc-last-wrap"); if (w) w.innerHTML = lastNoteHtml(d);
-          toast("Komentarz poprawiony.");
-          return "";
-        });
-      }
-    };
+    }, 2000);
   }
-
-  function renderCard(d, company, product) {
-    const tel = esc(d.phone.replace(/[^\d+]/g, ""));
-    numberCalls(d.activities);
-    const hist = historyHtml(d.activities, false, "all");
-    const st = histStats(d.activities);
-    const next = d.next_contact_at ? new Date(d.next_contact_at) : null, due = next && next < new Date();
-    const soft = isFresh(d), late = due && !soft;   // ponowna próba (nikt jeszcze nie rozmawiał) nie jest „zaległa”, tylko „do ponowienia”
-    const stateText = (isDue_) => (soft ? (isDue_ ? "Czas na ponowną próbę" : "Ponowna próba") : isDue_ ? "Zaległy kontakt" : "Następny kontakt");
-    const long = (iso) => new Date(iso).toLocaleString("pl-PL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-    const agreedLong = d.agreed_contact_at ? long(d.agreed_contact_at) : "";
-    const nextBlock = `<div class="next-card${late ? " late" : ""}${soft ? " soft" : ""}"${d.next_contact_at ? ` data-iso="${esc(d.next_contact_at)}"` : ""}>
-      ${CRM.lastContact(d, me.id) ? `<div class="nc-lastline">${CRM.lastContact(d, me.id)}</div>` : ""}
-      <div class="nc-section"><span class="nc-label nc-state">${stateText(due)}</span>
-        ${next ? `<div class="nc-time"><div class="nc-when">${esc(rel(d.next_contact_at))}</div><div class="nc-date">${esc(long(d.next_contact_at))}</div></div>
-          ${d.missed_calls > 0 && agreedLong ? `<div class="nc-missed">Umówiony kontakt (${esc(agreedLong)}) nie doszedł do skutku: nie odebrał ${d.missed_calls}×. Ponowna próba jest ustawiona wyżej.</div>` : ""}`
-          : `<div class="nc-date">Nie zaplanowano</div>`}</div>
-      <div id="nc-last-wrap">${lastNoteHtml(d)}</div>
-    </div>`;
-    const caseBlock = `<div class="nc-why case-top" id="case-block">${caseInner(d)}</div>`;
-    const mv = (d.assignments || [])[0];
-    const transfer = d.transferred_from && mv && mv.to_agent === d.owner
-      ? `<div class="transfer-note">
-        <strong>↪ Przepisany od ${esc(d.transferred_from)}</strong>
-        <span>Kiedy: ${fmt(mv.assigned_at)}</span>
-        ${mv.reason ? `<span>Powód: ${esc(mv.reason)}</span>` : ""}
-        <small>Wcześniejsze rozmowy widzisz w historii kontaktów na dole.</small></div>` : "";
-    const banner = savedNote ? `<div class="saved-banner" role="status"><span class="sb-ic">✓</span><div>${savedNote}</div></div>` : "";
-    savedNote = "";
-    $("lead-pane").innerHTML = `
-      ${miniBar(d, company, tel)}
-      ${banner}
-      ${matchBanner(d.id)}
-      ${transfer}
-      <div class="card">
-        <div class="lead-head"><div><h2 class="lead-name">${esc(d.contact_name)}</h2>
-          <p class="muted">${company ? esc(company.name) : "Brak firmy"}${product ? " · " + esc(product.name) : ""}</p></div>${statusChip(d)}</div>
-        ${caseBlock}
-        <div class="facts facts-top">
-          <div class="f-phone"><span>Telefon</span><div class="phone-row"><a class="big-phone" href="tel:${tel}">${esc(d.phone)}</a>${CRM.copyButton(d.phone)}</div></div>
-          <div class="f-mail"><span>E-mail</span>${d.email ? `<div class="phone-row"><a href="mailto:${esc(d.email)}">${esc(d.email)}</a>${CRM.copyButton(d.email, "e-mail")}</div>` : "–"}</div>
-          <div><span>NIP / KRS</span>${company ? esc(company.nip || "–") + " / " + esc(company.krs || "–") : "–"}</div>
-          <div class="f-tries" title="Liczba prób kontaktu z tym leadem"><span>Próby</span>${d.attempts_count}</div>
-        </div>
-        ${freshNote(d)}
-        ${nextBlock}
-      </div>
-      <form class="card" id="act-form" novalidate>
-        <h2>Jak poszła rozmowa?</h2>
-        <div class="outcomes" role="radiogroup">${OUTCOMES.map(([v, l], i) =>
-          `<button type="button" role="radio" data-outcome="${v}" aria-checked="false"><kbd>${i + 1}</kbd>${l}</button>`).join("")}</div>
-        <p class="hint" id="hint">Wybierz wynik (klawisze 1–6). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.</p>
-        <div id="cb-fields" hidden>
-          <div class="field"><label for="cb-at" id="cb-label">Kiedy oddzwonić</label>
-            <div class="when-row"><input id="cb-at" autocomplete="off" placeholder="np. jutro 9:30">
-              <span class="cal-wrap"><button type="button" class="icon-btn" id="cb-pick" title="Wybierz z kalendarza" aria-label="Wybierz z kalendarza"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></button><input type="datetime-local" id="cb-native" tabindex="-1" aria-hidden="true"></span></div>
-            <small class="hint" id="cb-preview"></small></div>
-          <div class="presets">${PRESETS.map(([l], i) => `<button type="button" data-preset="${i}" aria-pressed="false">${l}</button>`).join("")}</div>
-          <label><span id="cb-why-label">W jakiej sprawie</span><input id="cb-note" maxlength="255" placeholder="np. wróci z urlopu, chce wycenę"></label>
-        </div>
-        <div id="sale-fields" class="sale-box" hidden>
-          <div class="sale-head"><span>Co sprzedano</span><span>Ilość</span><span>Wartość</span><span></span></div>
-          <div id="sale-rows"></div>
-          <p class="hint" id="sale-note" hidden></p>
-          <div class="sale-foot">
-            <button type="button" class="link-btn" id="sale-add">+ Dodaj kolejny produkt</button>
-            <div class="sale-total"><span>Wartość sprzedaży</span><b id="sale-sum">0,00 zł</b></div>
-          </div>
-        </div>
-        ${CRM.phraseButtons()}
-        <label>Komentarz (opcjonalnie)<textarea id="act-note" rows="2" placeholder="Krótka notatka z rozmowy (Enter zapisuje, Shift+Enter = nowa linia)"></textarea></label>
-        <p class="form-error" id="act-error" hidden></p>
-        <div class="actions">
-          <div class="act-main">
-            <button class="btn btn-primary" type="submit" data-next="1" disabled>Zapisz i weź kolejnego</button>
-            <button class="btn btn-secondary" type="submit" disabled>Tylko zapisz</button>
-          </div>
-          <div class="act-links">
-            <button class="link-btn" type="button" id="note-only" title="Zapisuje tylko komentarz w historii. Bez wyniku rozmowy: nie liczy się jako próba i nie zmienia statusu ani terminu leada.">Tylko notatka (bez rozmowy)</button>
-            <button class="link-btn" type="button" id="reset-btn">Zacznij od nowa (Esc)</button>
-          </div>
-          <span class="enter-hint">↵ Enter zapisuje i bierze kolejnego</span>
-        </div>
-      </form>
-      <div class="card" id="hist-card"><h2>Historia kontaktów${d.activities.length ? ` <span class="muted small">(${d.activities.length})</span>` : ""}</h2>
-        ${d.activities.length ? summaryTiles(d.activities) : ""}
-        ${d.activities.length ? `<div class="h-filters" role="group" aria-label="Filtr historii">${[["all", "Wszystko", d.activities.length], ["talked", "Rozmowy", st.talked], ["noans", "Nieodebrane", st.noans], ["notes", "Notatki", d.activities.filter(HIST_FILTERS.notes).length]]
-          .filter(([k, , n]) => k === "all" || n > 0).map(([k, l, n]) => `<button type="button" data-hf="${k}" aria-pressed="${k === "all"}">${l} <small>${n}</small></button>`).join("")}</div>` : ""}
-        <ul class="history" id="hist">${hist}</ul>
-        ${d.activities.length > HIST_SHORT ? `<button type="button" class="btn-mini h-more" id="hist-more">Pokaż całą historię (${d.activities.length})</button>` : ""}</div>`;
-    window.scrollTo({ top: 0, behavior: "auto" });   // nowy lead zawsze od góry strony (pasek „Zapisano”, termin, telefon)
-    let histFilter = "all", histAll = false;
-    const paintHistory = () => {
-      $("hist").innerHTML = historyHtml(d.activities, histAll, histFilter);
-      const more = $("hist-more");
-      if (more) more.hidden = histAll || d.activities.filter(HIST_FILTERS[histFilter]).length <= HIST_SHORT;
-    };
-    const more = $("hist-more");
-    if (more) more.addEventListener("click", () => { histAll = true; paintHistory(); });
-    document.querySelectorAll("#hist-card [data-hf]").forEach((b) => b.addEventListener("click", () => {
-      histFilter = b.dataset.hf;
-      document.querySelectorAll("#hist-card [data-hf]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      paintHistory();
-    }));
-    const jump = $("recent-all");
-    if (jump) jump.addEventListener("click", () => { histAll = true; paintHistory(); $("hist-card").scrollIntoView({ behavior: "smooth", block: "start" }); });
-    repaintHistory = paintHistory;
-    wireForm(d.id);
-    wireMini();
-    wireEdits(d);
-    CRM.wirePhrases($("act-form"), $("act-note"));
-    const eh = document.querySelector("#act-form .enter-hint");
-    if (eh) {
-      const od = otherOverdue(d.id);
-      const un = leads.filter((l) => l.id !== d.id && groupOf(l) === 4);
-      eh.textContent = od.length ? `↵ Enter zapisuje i otwiera: ${od[0].contact_name} (${isFresh(od[0]) ? "ponowna próba" : "zaległy"})`
-        : un.length ? `↵ Enter zapisuje i otwiera: ${un[0].contact_name} (jeszcze bez telefonu)` : "↵ Enter zapisuje i pobiera nowego leada z puli";
+  async function hangUp() {
+    const r = await jsonReq("/api/dialer/hangup/", "POST", {});
+    if (r.error) { toast(r.error, true); return; }
+    if (dialer.call) dialer.call.hangup = true;
+    renderDialbar();
+    setCallState("Rozłączam… (telefon zakończy połączenie za 1–2 sekundy)");
+  }
+  document.addEventListener("crm:dialer", loadDialer);
+  const setCallState = (html) => { const el = $("call-state"); if (el) el.innerHTML = html; };
+  /* Samo dzwonienie po „Zapisz i dalej”: odliczanie nad numerem (ile sekund – „Moje ustawienia”, domyślnie 4),
+     „Wstrzymaj” albo Esc przerywa. Tylko z telefonem połączonym z CRM (bez niego „tel:” otwierałby okno systemu bez pytania). */
+  const autoDialSeconds = () => (CRM.autoDialSeconds ? CRM.autoDialSeconds() : 4);
+  let autoDial = null;
+  function stopAutoDial(text) {
+    if (!autoDial) return;
+    clearInterval(autoDial.timer); autoDial = null;
+    const box = document.querySelector(".w-autodial"); if (box) box.remove();
+    if (text) setCallState(text);
+  }
+  function armAutoDial() {
+    stopAutoDial();
+    if (!current || !dialer.online || tourDemo || !(CRM.autoDialEnabled && CRM.autoDialEnabled())) return;
+    if (dialer.call && ["pending", "dialing"].includes(dialer.call.state)) return;
+    const lead = current.id, wrap = document.querySelector(".w-call");
+    if (!wrap) return;
+    const total = autoDialSeconds();
+    let left = total;
+    const box = document.createElement("div");
+    box.className = "w-autodial"; box.setAttribute("role", "status");
+    box.innerHTML = `<span>Dzwonię za <b data-left>${left}</b> s…</span><button type="button" class="btn btn-secondary" data-autodial-stop>Wstrzymaj <kbd class="w-kbd">Esc</kbd></button><i style="animation-duration:${total}s"></i>`;
+    wrap.after(box);
+    box.querySelector("[data-autodial-stop]").addEventListener("click", () => stopAutoDial("Wstrzymane. Zadzwoń, kiedy będziesz gotowy."));
+    autoDial = { lead, timer: setInterval(() => {
+      if (!current || current.id !== lead || form) { stopAutoDial(); return; }
+      left -= 1;
+      const el = box.querySelector("[data-left]"); if (el) el.textContent = String(Math.max(left, 0));
+      if (left <= 0) { stopAutoDial(); callNow(); }
+    }, 1000) };
+  }
+  CRM.stopAutoDial = stopAutoDial;
+  async function callNow() {
+    stopAutoDial();
+    if (!current) return;
+    if (tourDemo) { setCallState("W samouczku nie dzwonimy naprawdę. Normalnie telefon sam wybierze numer."); return; }
+    if ((dialer.online || dialer.paired) && !dialer.paused) {
+      const r = await jsonReq("/api/dialer/call/", "POST", { lead: current.id });
+      if (r.error) { toast(r.error, true); return; }
+      dialer = { ...dialer, ...r.data }; renderDialbar();
+      setCallState(dialer.online ? "Telefon wybiera numer… Po rozmowie wybierz wynik."
+        : "Telefon nie odpowiada – otwórz Solid Dialer na telefonie. Numer wybierze się sam, gdy telefon się połączy (do 2 minut).");
+      pollDialerSoon();
+    } else {
+      location.href = "tel:" + current.phone.replace(/[^\d+]/g, "");
+      setCallState("Otwarto wybieranie numeru. Po rozmowie wybierz wynik (klawisze 1–8).");
     }
   }
 
-  async function postActivity(body) {
-    return api("/api/activities/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  /* ================= ŚRODEK: KLIENT ================= */
+  /* empty = komunikat, gdy „Następny klient” nic nie znalazł (pokazany w środku, nie w dymku nad paskiem „Cofnij”) */
+  function welcome(empty) {
+    current = null; form = null;
+    const later = leads.filter((l) => !isDue(l)).sort(cmp)[0];
+    const pane = $("lead-pane");
+    const html = empty
+      ? `<div class="w-panel w-welcome done"><h2>Na teraz wszystko zrobione ✓</h2>
+          <p>${esc(empty)}</p>
+          ${later ? `<p>Najbliższy kontakt: <b>${esc(title(later))}</b> · ${esc(when(later.next_contact_at))}. Wróci tu sam, gdy przyjdzie jego pora.</p>` : ""}
+          <p class="muted">Możesz dodać klienta z polecenia („+ Nowy kontakt” po lewej) albo zadzwonić na dowolny numer z paska na dole.</p>
+          <button type="button" class="w-next" data-next-btn>▶ Sprawdź jeszcze raz <kbd>N</kbd></button>
+          <p class="muted small w-checked" data-checked></p></div>`
+      : `<div class="w-panel w-welcome"><h2>Gotowy do dzwonienia?</h2>
+      <p>„Następny klient” sam wybierze, do kogo zadzwonić: najpierw follow-upy po ofertach, potem umówione oddzwonienia, ponowne próby, a na końcu nowe firmy z Twojej bazy.</p>
+      <button type="button" class="w-next" data-next-btn>▶ Następny klient <kbd>N</kbd></button></div>`;
+    // Ten sam komunikat co przed chwilą („Sprawdź jeszcze raz” i dalej nic): karty nie rysujemy od nowa
+    // (to mrugało), tylko dopisujemy, kiedy sprawdzono
+    if (empty && pane.dataset.welcome === html && pane.querySelector(".w-welcome.done")) {
+      const at = new Date(), line = pane.querySelector("[data-checked]");
+      if (line) line.textContent = `Sprawdzone o ${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}:${String(at.getSeconds()).padStart(2, "0")} – nadal nic nowego.`;
+      return;
+    }
+    renderList();
+    pane.innerHTML = html;
+    pane.dataset.welcome = html;
   }
-  /* Pasek „Cofnij” po zapisie: 10 s na pomyłkę (serwer przyjmuje cofnięcie do 30 s, tylko dla ostatniego wpisu leada) */
+  /* Nowy klient = karta od początku: środkowa kolumna ma własny pasek przewijania (window.scrollTo go nie rusza) */
+  function toTop() { $("lead-pane").scrollTop = 0; CRM.scrollTop(); }
+  async function openLead(id, reason, data) {
+    let lead = data;   // „Następny klient” od razu oddaje pełną kartę – bez drugiego zapytania
+    if (!lead) {
+      const r = await api(`/api/leads/${id}/`);
+      if (!r.ok) { toast("Nie udało się wczytać klienta.", true); return false; }
+      lead = await r.json();
+    }
+    current = lead; current._reason = reason || null; form = null;
+    renderCard(); renderList();
+    toTop();
+    const item = document.querySelector(`#lead-list [data-id="${id}"]`); if (item) item.scrollIntoView({ block: "nearest" });
+    return true;
+  }
+  CRM.queueCurrentId = () => (current ? current.id : null);
+  CRM.openLead = async (id) => { if (!leads.some((l) => l.id === id)) await loadLeads(); const ok = await openLead(id); CRM.scrollTop(); return ok; };
+
+  const lastOffer = (d) => (d.activities || []).find((a) => a.outcome === "offer" && a.offer);
+  const lastNote = (d) => (d.activities || []).find((a) => a.note);
+  // „Oferta M × 1, 36 mies., 70,00 zł/mies. · wysłana dziś 22:16 na …” – też gdy klient potem poprosił o oddzwonienie
+  const offerLine = (o) => `Oferta <b>${esc(o.offer.product_name)} × ${o.offer.quantity}</b>, ${o.offer.term_months} mies., <b>${money(o.offer.monthly_total)}</b>/mies. · wysłana ${esc(when(o.created_at))}${o.offer.client_email ? ` na ${esc(o.offer.client_email)}` : ""}`;
+  function reasonHtml(d) {
+    const s = segOf(d), t = d.next_contact_at, late = t && new Date(t) < Date.now() - 60000 && ["offer", "callback"].includes(s);
+    const lateTxt = late ? ` · <b style="color:var(--late)">spóźnione ${rel(t).replace(" temu", "")}</b>` : t ? ` · ${esc(when(t))}` : "";
+    let head = "", desc = "";
+    if (s === "offer") {
+      const o = lastOffer(d);
+      head = d.status === "offer" ? "Follow-up po wysłanej ofercie" : "Zainteresowany – wyślij ofertę";
+      desc = o ? offerLine(o) : "Klient chce poznać ofertę.";
+    } else if (s === "callback") {
+      const o = lastOffer(d);
+      head = o ? "Umówione oddzwonienie – klient ma już ofertę" : "Umówione oddzwonienie";
+      desc = o ? `${offerLine(o)}` : d.knows_caller ? "Klient <b>wie, że dzwonimy z ofertą T-Mobile</b>." : "<b>Nie mówiliśmy jeszcze, skąd dzwonimy</b> – zacznij od przedstawienia się.";
+    } else if (s === "retry") {
+      head = `Ponowna próba – nie odebrał ${d.owner_no_answers || d.attempts_count}×`;
+      desc = "Jeszcze z nim nie rozmawialiśmy.";
+    } else if (s === "new") { head = "Nowa firma – pierwszy telefon"; desc = "Nikt jeszcze tu nie dzwonił."; }
+    else { head = "Klient zamknięty"; desc = esc((CRM.STATUS[d.status] || [d.status])[0]); }
+    const topic = d.next_contact_note ? `<div class="wr-d"><em>Sprawa:</em> ${esc(d.next_contact_note)}</div>` : "";
+    const note = lastNote(d);
+    const noteHtml = note ? `<div class="wr-d"><em>Ostatni komentarz (${note.agent === me.id ? "Ty" : note.agent ? esc(note.agent_name || "") : "telefon"}, ${esc(when(note.created_at))}):</em> ${esc(note.note)}</div>` : "";
+    return `<div class="w-reason${late ? " late" : ""}" style="--c:${SEG[s] ? SEG[s].color : "var(--muted)"}"><span class="wr-ic">${SEG[s] ? SEG[s].icon : "•"}</span>
+      <div><div class="wr-t">${head}${lateTxt}</div><div class="wr-d">${desc}</div>${topic}${noteHtml}</div></div>`;
+  }
+  /* Najważniejsze na karcie: firma, telefon, osoba (gdy jest) i e-mail. NIP, REGON i adres – małym drukiem. */
+  const hasCompany = (d) => !!(d.company_name && d.company_name.trim());
+  function personHtml(d) {
+    if (d.contact_name && hasCompany(d)) return `<div class="w-person"><span aria-hidden="true">👤</span> ${esc(d.contact_name)}</div>`;
+    if (hasCompany(d)) return `<div class="w-person none">Osoba kontaktowa nieznana · <button type="button" class="w-link" data-edit>dopisz</button></div>`;
+    return "";
+  }
+  function factsHtml(d) {
+    const mail = d.email
+      ? `<span class="w-mail-l">E-mail</span><a class="w-mail" href="mailto:${esc(d.email)}">${esc(d.email)}</a> ${CRM.copyButton(d.email, "e-mail")}`
+      : `<span class="w-mail-l">E-mail</span><span class="w-mail none">brak</span>`;
+    return `<div class="w-mail-row">${mail}<button type="button" class="btn-mini" id="edit-data">${d.email && d.contact_name ? "Zmień dane" : "Uzupełnij dane"}</button></div>`;
+  }
+  function metaHtml(d) {
+    const parts = [];
+    if (d.company_nip) parts.push(`NIP ${esc(d.company_nip)} ${CRM.copyButton(d.company_nip, "NIP")} <button type="button" class="w-link" data-reg="${esc(d.company_nip)}" title="Kopiuje NIP i otwiera wyszukiwarkę firm">CEIDG ↗</button>`);
+    if (d.company_regon) parts.push(`REGON ${esc(d.company_regon)}`);
+    if (d.company_krs) parts.push(`KRS ${esc(d.company_krs)}`);
+    const addr = [d.company_street, [d.company_postal_code, d.company_city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    if (addr) parts.push(esc(addr));
+    return parts.length ? `<div class="w-meta">${parts.join('<span class="sep">·</span>')}</div>` : "";
+  }
+  /* „Ostatnia zmiana: Anna Nowak, dziś 14:20” – widać, kto z zespołu dopisał stałe informacje */
+  function clientByHtml(d) {
+    if (!d.client_comment_at || !(d.client_comment || "").trim()) return "";
+    const who = d.client_comment_by === me.id ? "Ty" : esc(d.client_comment_by_name || "ktoś z zespołu");
+    return `Ostatnia zmiana: <b>${who}</b>, ${esc(when(d.client_comment_at))}`;
+  }
+  function renderCard() {
+    const d = current;
+    const tel = d.phone.replace(/[^\d+]/g, "");
+    const st = CRM.STATUS[d.status] || [d.status, "#64748b"];
+    const badges = [`<span class="w-badge" style="--c:${st[1]}">${esc(st[0])}</span>`];
+    if (isCompanyEntity(d.company_name)) badges.push(`<span class="w-badge spolka" title="Spółka: zwykle trzeba trafić do osoby decyzyjnej (zarząd, właściciel)">Spółka</span>`);
+    const sentOffer = d.status !== "offer" && lastOffer(d);   // przy statusie „Oferta wysłana” mówi to już pierwsza plakietka
+    if (sentOffer) badges.push(`<span class="w-badge" style="--c:#22c55e" title="Szczegóły oferty są w pasku na górze i w historii kontaktów">Oferta wysłana ${esc(when(sentOffer.created_at))}</span>`);
+    if (d.knows_caller) badges.push(`<span class="w-badge" style="--c:var(--ok)">Wie, skąd dzwonimy</span>`);
+    if (d.transferred_from) badges.push(`<span class="w-badge moved">↪ Przepisany od ${esc(d.transferred_from)}</span>`);
+    if (d.missed_calls > 0) badges.push(`<span class="w-badge" style="--c:var(--late)">Nie odebrał w terminie ×${d.missed_calls}</span>`);
+    const closed = CLOSED.includes(d.status);
+    $("lead-pane").innerHTML = `
+      ${reasonHtml(d)}
+      <div class="w-panel">
+        <div class="w-head"><div><h1 class="w-name">${esc(title(d))}</h1>${personHtml(d)}<div class="w-badges">${badges.join("")}</div></div></div>
+        <div class="w-call">
+          <a class="w-phone" href="tel:${esc(tel)}">${esc(d.phone)}</a>
+          <button type="button" class="w-call-btn" id="call-btn"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg><span>Zadzwoń</span> <kbd class="w-kbd">Z</kbd></button>
+          <button type="button" class="w-hangup-btn" id="hangup-btn" hidden>✕ Rozłącz <kbd class="w-kbd" data-hangup-kbd>X</kbd></button>
+          ${CRM.copyButton(d.phone)}
+          ${d.phone_alt ? `<span class="w-alt">drugi numer: <a href="tel:${esc(d.phone_alt.replace(/[^\d+]/g, ""))}">${esc(d.phone_alt)}</a></span>` : ""}
+          <span class="w-call-state" id="call-state"></span>
+        </div>
+        <div class="w-facts" id="facts">${factsHtml(d)}</div>
+        ${metaHtml(d)}
+        <div class="w-info" id="client-panel">
+          <div class="w-info-head"><label for="cl-comment">Stałe informacje o kliencie</label><small class="w-info-by" id="cl-by">${clientByHtml(d)}</small><small class="w-status" id="cl-status"></small></div>
+          <textarea id="cl-comment" rows="2" maxlength="2000" placeholder="np. 3 numery w Play, umowa do marca, decyduje właściciel – widzą to wszyscy agenci">${esc(d.client_comment || "")}</textarea>
+        </div>
+        <div class="w-netbox" id="net-box">${networkHtml(d)}${contractHtml(d)}</div>
+      </div>
+      ${closed ? reopenHtml(d) : `<div class="w-panel" id="out-panel">
+        <div class="w-out-title"><h2>Jak poszła rozmowa?</h2><small>klawisze 1–8</small></div>
+        <div class="w-outs" role="radiogroup">${OUTCOMES.map((o) => `<button type="button" class="w-out" role="radio" aria-checked="false" data-out="${o.key}" style="--c:${o.color}"><kbd>${o.n}</kbd><b>${o.label}</b><small>${o.hint}</small></button>`).join("")}</div>
+        <div id="step"></div>
+        <div class="w-comment"><label for="act-note">Komentarz (opcjonalnie)</label><div class="phrases" id="phrases" role="group" aria-label="Wzory komentarzy"></div><textarea id="act-note" rows="2" placeholder="Krótko: co powiedział klient"></textarea></div>
+        <p class="w-error" id="act-error" hidden></p>
+        <div class="w-save">
+          <button type="button" class="btn btn-primary" id="save-next" disabled>Zapisz i dalej ↵</button>
+          <button type="button" class="btn btn-secondary" id="save-only" disabled>Tylko zapisz</button>
+          <button type="button" class="link-btn" id="note-only" title="Zapisuje sam komentarz w historii, bez wyniku rozmowy">Tylko notatka</button>
+          <button type="button" class="link-btn" id="reset-form">Wyczyść (Esc)</button>
+          <span class="w-save-hint" id="save-hint">Wybierz wynik rozmowy</span>
+        </div>
+      </div>`}
+      <div class="w-panel"><div class="w-sec-title"><h2>Historia kontaktów (${d.activities.length})</h2></div><ul class="w-hist" id="hist">${histHtml(d)}</ul></div>`;
+    if (!closed) { paintPhrases(null); $("act-note").addEventListener("keydown", (e) => e.stopPropagation()); $("act-note").addEventListener("input", syncChips); }
+    const rb = $("reopen-btn"); if (rb) rb.addEventListener("click", reopenLead);
+    wireClient();
+    if (!closed) { wireNetwork(); wireContract(); }
+    if (dialer.call && dialer.call.lead === d.id && dialer.call.state === "done") setCallState(dialer.call.answered ? `Ostatnia rozmowa: <b>${Math.round((dialer.call.duration_seconds || 0) / 60)} min</b>` : "Ostatnio: nie odebrał");
+    renderDialbar();
+  }
+  /* Zamknięty klient (pominięty, odmowa, zły numer): po pomyłce można go przywrócić także po 10 sekundach */
+  function reopenHtml(d) {
+    if (d.status === "won") return "";
+    return `<div class="w-panel w-reopen"><div><b>Ten klient jest zamknięty.</b> Pomyłka (np. „Pomiń firmę” zamiast oferty)? Przywróć go – wróci tam, gdzie był, i znów wybierzesz wynik rozmowy.</div>
+      <button type="button" class="btn btn-primary" id="reopen-btn">↺ Przywróć do dzwonienia</button></div>`;
+  }
+  async function reopenLead() {
+    if (!current) return;
+    const r = await jsonReq(`/api/my-leads/${current.id}/reopen/`, "POST", {});
+    if (r.error) { toast(r.error, true); return; }
+    toast("Klient przywrócony – wybierz wynik rozmowy.");
+    await loadLeads(); await openLead(current.id); loadSummary();
+  }
+  function histHtml(d) {
+    if (!d.activities.length) return `<li><span></span><span class="muted">To pierwszy kontakt z tym klientem.</span></li>`;
+    return d.activities.map((a) => {
+      const who = a.agent === me.id ? "Ty" : a.agent ? esc(a.agent_name || "–") : "telefon";
+      let extra = "";
+      if (a.offer) extra += `<div class="h-extra">Oferta <b>${esc(a.offer.product_name)} × ${a.offer.quantity}</b>, ${a.offer.term_months} mies., ${money(a.offer.monthly_total)}/mies.${a.offer.recipient ? ` → ${esc(a.offer.recipient)}` : ""}${a.offer.sent ? " (wysłana)" : ""}</div>`;
+      if (a.sale_items && a.sale_items.length) extra += `<div class="h-extra">${a.sale_items.map((i) => `${esc(i.product_name)} × ${i.quantity}${i.term_months ? `, ${i.term_months} mies.` : ""}: <b>${money(i.total)}</b>${Number(i.commission) ? ` (prowizja ${money(i.commission)})` : ""}`).join("<br>")}</div>`;
+      if (a.outcome === "skipped") extra += `<div class="h-extra">Powód: ${esc(SKIP_LABEL[a.skip_reason] || a.skip_reason || "bez powodu")}</div>`;
+      if (a.rescheduled_to) extra += `<div class="h-extra">Następny kontakt: <b>${esc(when(a.rescheduled_to))}</b></div>`;
+      if (a.call_seconds) extra += `<div class="h-extra">Rozmowa: ${Math.floor(a.call_seconds / 60)} min ${a.call_seconds % 60} s</div>`;
+      return `<li style="--c:${OUT_COLOR[a.outcome] || "#64748b"}"><div class="h-when"><b>${hhmm(a.created_at)}</b>${esc(dayShort(a.created_at))}</div>
+        <div><span class="h-out">${esc(OUT_LABEL[a.outcome] || a.outcome)}</span><span class="h-who">${who}</span>${a.note ? `<p class="h-note">${esc(a.note)}</p>` : ""}${extra}</div></li>`;
+    }).join("");
+  }
+
+  /* ---------- dane klienta: sieć, informacje (zapis od razu), edycja osoby / numeru / e-maila ---------- */
+  function wireClient() {
+    const d = current;
+    const status = (t, ok) => { const el = $("cl-status"); if (el) { el.textContent = t; el.classList.toggle("ok", !!ok); } };
+    const save = async (body) => {
+      status("Zapisuję…");
+      const r = await jsonReq(`/api/leads/${d.id}/`, "PATCH", body);
+      if (r.error) { status(r.error); return false; }
+      Object.assign(d, body); status("Zapisano ✓", true); return true;
+    };
+    CRM.saveLeadPatch = save;
+    const ta = $("cl-comment"); let timer = null, last = ta.value;
+    // pole rośnie razem z tekstem (bez suwaka w środku), żeby całą notatkę było widać od razu
+    const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; };
+    grow(); requestAnimationFrame(grow);
+    ta.addEventListener("input", grow);
+    const flush = async () => {
+      clearTimeout(timer); if (ta.value.trim() === last.trim()) return; last = ta.value;
+      if (await save({ client_comment: ta.value.trim() })) {
+        Object.assign(d, { client_comment_by: me.id, client_comment_at: new Date().toISOString() });
+        const by = $("cl-by"); if (by) by.innerHTML = clientByHtml(d);
+      }
+    };
+    ta.addEventListener("input", () => { clearTimeout(timer); status("Zapisze się za chwilę…"); timer = setTimeout(flush, 900); });
+    ta.addEventListener("blur", flush);
+    ta.addEventListener("keydown", (e) => e.stopPropagation());
+  }
+  function editData() {
+    const d = current, box = $("facts");
+    box.innerHTML = `<label class="w-field">Osoba kontaktowa<input id="ed-name" maxlength="150" placeholder="np. Pan Marek (właściciel)"></label>
+      <label class="w-field">Dodatkowy telefon (np. do szefa, druga komórka)<input id="ed-alt" maxlength="30" inputmode="tel"></label>
+      <label class="w-field">E-mail<input id="ed-mail" type="email" maxlength="254" placeholder="np. biuro@firma.pl"></label>
+      <div class="w-edit-actions"><button type="button" class="btn btn-primary" id="ed-save">Zapisz</button><button type="button" class="btn btn-secondary" id="ed-cancel">Anuluj</button></div>
+      <p class="w-error" id="ed-err" hidden></p>`;
+    $("ed-name").value = d.contact_name || ""; $("ed-alt").value = d.phone_alt || ""; $("ed-mail").value = d.email || "";
+    $("ed-name").focus();
+    const done = () => { box.innerHTML = factsHtml(d); };
+    const submit = async () => {
+      const body = { contact_name: $("ed-name").value.trim(), phone_alt: $("ed-alt").value.trim(), email: $("ed-mail").value.trim() };
+      const r = await jsonReq(`/api/leads/${d.id}/`, "PATCH", body);
+      if (r.error) { $("ed-err").textContent = r.error; $("ed-err").hidden = false; return; }
+      Object.assign(d, body); renderCard(); toast("Dane klienta zapisane."); loadLeads();
+    };
+    $("ed-save").addEventListener("click", submit); $("ed-cancel").addEventListener("click", done);
+    box.querySelectorAll("input").forEach((i) => i.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); submit(); } if (e.key === "Escape") done(); }));
+  }
+
+  /* ---------- sieć klienta: jeden wybór (zwykle klient jest w jednej sieci), pytamy tylko po rozmowie ---------- */
+  function networkHtml(d) {
+    const cur = (d.operators || "").split(",").filter(Boolean)[0] || "";
+    const closed = CLOSED.includes(d.status);
+    return `<div class="w-net"><span class="w-nb-l" title="Zapisuje się od razu; kliknij ponownie, żeby wyczyścić">Sieć</span>
+      <div class="w-net-row"><div class="w-ops" role="radiogroup" aria-label="W jakiej sieci jest teraz klient">${CRM.OPERATORS.map(([c, l]) => `<button type="button" class="w-chip${c === "tmobile" ? " tm" : ""}" role="radio" data-op="${c}" aria-checked="${c === cur}" aria-pressed="${c === cur}"${closed ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>
+      <button type="button" class="w-link" data-uke title="Kopiuje numer i otwiera stronę UKE: wklej numer (prawy przycisk myszy → Wklej) i kliknij „Znajdź”">Sprawdź w UKE ↗</button>
+      ${cur === "tmobile" && !closed ? `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>` : ""}</div></div>`;
+  }
+  function wireNetwork() {
+    document.querySelectorAll("#net-box [data-op]").forEach((b) => b.addEventListener("click", async () => {
+      const on = b.getAttribute("aria-pressed") !== "true";
+      const prev = current.operators || "";
+      document.querySelectorAll("#net-box [data-op]").forEach((x) => { const v = on && x === b; x.setAttribute("aria-pressed", String(v)); x.setAttribute("aria-checked", String(v)); });
+      const value = on ? b.dataset.op : "";
+      const ok = CRM.saveLeadPatch ? await CRM.saveLeadPatch({ operators: value }) : false;
+      if (!ok) { current.operators = prev; toast("Nie udało się zapisać sieci.", true); }
+      paintTmHint();
+    }));
+    wireNetExtras();
+  }
+  /* „Już w T-Mobile – pomiń firmę”: jeden klik zamiast szukania „8 Pomiń firmę” i powodu */
+  function paintTmHint() {
+    const box = document.querySelector("#net-box .w-net-row"); if (!box || !current) return;
+    const old = box.querySelector(".w-tm-hint"); if (old) old.remove();
+    if ((current.operators || "").split(",")[0] === "tmobile" && !CLOSED.includes(current.status)) {
+      box.insertAdjacentHTML("beforeend", `<span class="w-tm-hint">Już w T-Mobile – <button type="button" class="w-link" data-tm-skip>pomiń firmę</button></span>`);
+      wireNetExtras();
+    }
+  }
+  function wireNetExtras() {
+    const u = document.querySelector("#net-box [data-uke]");
+    if (u && !u.dataset.wired) {
+      u.dataset.wired = "1";
+      u.addEventListener("click", async () => {
+        const digits = (current.phone || "").replace(/\D/g, "").replace(/^48(?=\d{9}$)/, "");
+        try { await navigator.clipboard.writeText(digits); toast(`Skopiowano numer ${digits} – wklej go na stronie UKE i kliknij „Znajdź”.`); } catch { toast(`Numer do wklejenia: ${digits}`); }
+        window.open("https://bip.uke.gov.pl/numeracja/dostawca-uslug", "_blank", "noopener");
+      });
+    }
+    const t = document.querySelector("#net-box [data-tm-skip]");
+    if (t && !t.dataset.wired) {
+      t.dataset.wired = "1";
+      t.addEventListener("click", () => { if (!form || form.outcome !== "skipped") pick("skipped"); });
+    }
+  }
+  /* ---------- koniec umowy u obecnego operatora: miesiąc i rok (zapis od razu) ----------
+     Numer można przenieść najwcześniej 12 miesięcy przed końcem umowy (models.porting_from).
+     Przy „Odmowie” z późniejszą datą serwer sam umawia telefon na ten dzień (services.contract_callback). */
+  const MONTHS = ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzień"];
+  const MONTHS_GEN = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia", "września", "października", "listopada", "grudnia"];
+  function portingFrom(iso) {
+    if (!iso) return null;
+    const [y, m] = iso.split("-").map(Number), idx = y * 12 + (m - 1) - 11;
+    return new Date(Math.floor(idx / 12), idx % 12, 1);
+  }
+  const monthYear = (iso) => { const [y, m] = iso.split("-"); return `${m}.${y}`; };
+  function contractInfo(d) {
+    const sel = { m: $("ct-month") ? $("ct-month").value : "", y: $("ct-year") ? $("ct-year").value : "" };
+    if (d.contract_open_ended) return "Umowa bez terminu: numery można przenieść od razu.";
+    if (!d.contract_end) return sel.m && !sel.y ? "Wybierz jeszcze rok." : sel.y && !sel.m ? "Wybierz jeszcze miesiąc." : "";
+    const from = portingFrom(d.contract_end);
+    if (from <= new Date()) return "Do końca umowy zostało mniej niż 12 miesięcy: <b>numery można przenieść już teraz</b>.";
+    const date = `${from.getDate()} ${MONTHS_GEN[from.getMonth()]} ${from.getFullYear()}`;
+    return form && form.outcome === "refused"
+      ? `Po zapisie klient <b>się nie zamknie</b>: CRM sam umówi telefon na <b>${date}</b> (od wtedy można przenieść numery).`
+      : `Numery można przenieść od <b>${date}</b>. Przy wyniku „Odmowa” CRM sam umówi wtedy telefon.`;
+  }
+  function contractHtml(d) {
+    const [cy, cm] = d.contract_end ? d.contract_end.split("-").map(Number) : [0, 0];
+    const year = new Date().getFullYear(), years = [];
+    for (let y = year; y <= year + 4; y++) years.push(y);
+    if (cy && !years.includes(cy)) years.unshift(cy);
+    const closed = CLOSED.includes(d.status);
+    return `<div class="w-contract"><span class="w-nb-l" title="Do kiedy klient ma umowę u obecnego operatora – zapisuje się od razu">Umowa do</span>
+      <div class="w-ct-row"${closed ? ' inert' : ""}>
+        <select id="ct-month" class="select" aria-label="Miesiąc końca umowy"><option value="">miesiąc…</option>${MONTHS.map((n, i) => `<option value="${i + 1}"${cm === i + 1 ? " selected" : ""}>${n}</option>`).join("")}</select>
+        <select id="ct-year" class="select" aria-label="Rok końca umowy"><option value="">rok…</option>${years.map((y) => `<option value="${y}"${cy === y ? " selected" : ""}>${y}</option>`).join("")}</select>
+        <button type="button" class="w-chip" id="ct-open" aria-pressed="${!!d.contract_open_ended}">Bez terminu</button>
+        <button type="button" class="w-link" id="ct-clear"${d.contract_end || d.contract_open_ended ? "" : " hidden"}>wyczyść</button>
+      </div>
+      <p class="w-ct-info" id="ct-info">${contractInfo(d)}</p></div>`;
+  }
+  let contractSaving = null;   // zapis daty trwa: „Zapisz” poczeka, żeby serwer znał już koniec umowy
+  function wireContract() {
+    const m = $("ct-month"), y = $("ct-year"); if (!m) return;
+    const paint = () => {
+      $("ct-info").innerHTML = contractInfo(current);
+      $("ct-open").setAttribute("aria-pressed", String(!!current.contract_open_ended));
+      $("ct-clear").hidden = !(current.contract_end || current.contract_open_ended);
+    };
+    const store = async (body) => {
+      const prev = { contract_end: current.contract_end, contract_open_ended: current.contract_open_ended };
+      contractSaving = CRM.saveLeadPatch ? CRM.saveLeadPatch(body) : Promise.resolve(false);
+      const ok = await contractSaving; contractSaving = null;
+      if (!ok) { Object.assign(current, prev); toast("Nie udało się zapisać końca umowy.", true); }
+      paint();
+    };
+    const onPick = () => {
+      if (!m.value || !y.value) { paint(); return; }
+      store({ contract_end: `${y.value}-${String(m.value).padStart(2, "0")}-01`, contract_open_ended: false });
+    };
+    [m, y].forEach((el) => { el.addEventListener("change", onPick); el.addEventListener("keydown", (e) => e.stopPropagation()); });
+    $("ct-open").addEventListener("click", () => {
+      const on = !current.contract_open_ended;
+      if (on) { m.value = ""; y.value = ""; }
+      store({ contract_open_ended: on, contract_end: null });
+    });
+    $("ct-clear").addEventListener("click", () => { m.value = ""; y.value = ""; store({ contract_open_ended: false, contract_end: null }); });
+  }
+  function paintPhrases(o) {
+    const box = $("phrases"); if (!box) return;
+    const list = (o && PHRASES[o]) || [];
+    box.hidden = !list.length;
+    box.innerHTML = list.map((p) => `<button type="button" data-phrase="${esc(p)}" aria-pressed="false">${esc(p)}</button>`).join("");
+    box.querySelectorAll("[data-phrase]").forEach((b) => b.addEventListener("click", () => toggleNote(b.dataset.phrase)));
+    syncChips();
+  }
+  /* Wzory i powody odmowy działają jak przełączniki: klik dopisuje do komentarza, drugi klik usuwa.
+     Komentarz to części rozdzielone „; ” – gdy agent sam usunie tekst, przycisk się odznacza. */
+  const noteParts = () => ($("act-note") ? $("act-note").value.split(";").map((x) => x.trim()).filter(Boolean) : []);
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  function toggleNote(text) {
+    const ta = $("act-note"); if (!ta) return;
+    const parts = noteParts();
+    const i = parts.findIndex((p) => same(p, text));
+    if (i >= 0) parts.splice(i, 1); else parts.push(parts.length ? text.toLowerCase() : text);
+    if (parts.length) parts[0] = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+    ta.value = parts.join("; ");
+    syncChips();
+  }
+  function syncChips() {
+    const parts = noteParts();
+    document.querySelectorAll("#out-panel [data-phrase], #out-panel [data-refuse]").forEach((b) => {
+      const t = b.dataset.phrase || b.dataset.refuse;
+      b.setAttribute("aria-pressed", String(parts.some((p) => same(p, t))));
+    });
+  }
+
+  /* ================= WYNIK ROZMOWY ================= */
+  const atHour = (days, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d; };
+  /* Dni pracy z ustawień managera (1 = pon … 7 = niedz.); domyślnie pon–pt. Dzień wolny w podpowiedziach jest pomijany. */
+  let workDays = new Set([1, 2, 3, 4, 5]);
+  const isWorkDay = (d) => workDays.has(d.getDay() || 7);
+  const toWorkday = (d) => { for (let i = 0; i < 7 && !isWorkDay(d); i++) d.setDate(d.getDate() + 1); return d; };
+  const nextWorkday = (h, m = 0) => toWorkday(atHour(1, h, m));
+  const inWorkdays = (days, h, m = 0) => toWorkday(atHour(days, h, m));   // „Za 2 dni” w piątek -> poniedziałek
+  const DAY_SHORT = ["Niedz.", "Pon.", "Wt.", "Śr.", "Czw.", "Pt.", "Sob."];
+  /* „Jutro 10:00”, a przed dniem wolnym np. „Pon. 10:00” – żeby było widać, że dzień wolny jest pomijany */
+  const wdLabel = (h, text) => () => { const d = nextWorkday(h), t = new Date(Date.now() + 864e5); return `${d.toDateString() === t.toDateString() ? "Jutro" : DAY_SHORT[d.getDay()]} ${text}`; };
+  const PRESETS = {
+    callback: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Za 2 h", () => new Date(Date.now() + 7200e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(9, "9:00"), () => nextWorkday(9)], [wdLabel(13, "13:00"), () => nextWorkday(13)], ["Za tydzień", () => inWorkdays(7, 10)]],
+    interested: [["Za 1 h", () => new Date(Date.now() + 3600e3)], ["Dziś 15:00", () => atHour(0, 15)], [wdLabel(10, "10:00"), () => nextWorkday(10)], ["Za 2 dni", () => inWorkdays(2, 10)], ["Za tydzień", () => inWorkdays(7, 10)]],
+    offer: [[wdLabel(10, "10:00"), () => nextWorkday(10)], [wdLabel(15, "15:00"), () => nextWorkday(15)], ["Za 2 dni", () => inWorkdays(2, 10)], ["Za tydzień", () => inWorkdays(7, 10)]],
+    no_answer: [["Za 2 h", () => new Date(Date.now() + 7200e3)], [wdLabel(9, "rano"), () => nextWorkday(9)], [wdLabel(15, "po 15"), () => nextWorkday(15, 30)]],
+  };
+  function whenField(kind, label, value, required) {
+    // jedno pole: wpisany termin + przycisk kalendarza doklejony z prawej (otwiera zwykły wybór daty)
+    return `<div class="w-row"><div class="w-field w-when"><label for="f-when">${label}${required ? "" : " (opcjonalnie)"}</label>
+        <div class="w-when-box"><input id="f-when" autocomplete="off" placeholder="np. jutro 10:30 · pt 9 · za 2h" value="${esc(value ? fmtInput(value) : "")}">
+        <span class="w-cal"><button type="button" class="w-cal-btn" id="f-cal" title="Wybierz z kalendarza"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="13.5" rx="2"/><path d="M2.5 8.5h15M6.5 2v4M13.5 2v4"/></svg>Kalendarz</button>
+        <input type="datetime-local" id="f-native" tabindex="-1" aria-hidden="true"></span></div></div></div>
+      <div class="w-chips">${PRESETS[kind].map(([l], i) => `<button type="button" class="w-chip" data-preset="${kind}:${i}">${typeof l === "function" ? l() : l}</button>`).join("")}</div>
+      <div class="w-when-preview" id="f-preview"></div>`;
+  }
+  /* Taryfy w trzech grupach (Komórkowe / Światłowód / Telewizja). Światłowód ma dwie ceny:
+     „… – blok” (MFH) i „… – dom” (SFH) – agent wybiera rodzaj budynku przełącznikiem, a nie osobny kafelek.
+     Zestaw: kilka usług naraz (np. numery + światłowód + TV) – form.basket to lista pozycji,
+     form.plan to pozycja, którą agent właśnie ustawia. */
+  const KINDS = [["mobile", "Komórkowe"], ["fiber", "Światłowód"], ["tv", "Telewizja"]];
+  const INFO_ICON = '<svg class="w-info-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="M10 9v5.5M10 5.6v.2"/></svg>';
+  const HOME_RE = /\s*[–-]\s*(blok|dom)\s*$/i;
+  const kindOf = (p) => /światłowód|swiatlowod|internet/i.test(p.name) ? "fiber" : /\btv\b/i.test(p.name) ? "tv" : "mobile";
+  const homeOf = (p) => { const m = p.name.match(HOME_RE); return m ? m[1].toLowerCase() : null; };
+  const baseOf = (p) => p.name.replace(HOME_RE, "");
+  // na kafelku krótko jak przy komórkowych: „M”, „L”, „VIP” (pełna nazwa idzie do oferty)
+  const chipName = (p) => baseOf(p).replace(/^(magenta\s+)?(światłowód|swiatlowod)(\s+biznes)?\s+|^magenta\s+tv\s+/i, "").trim() || baseOf(p);
+  const planOf = (sel) => plans.find((x) => x.id === sel.product);
+  /* Promocje taryfy: najpierw główna (np. światłowód „12 miesięcy za 10 zł”, pusta nazwa = „6 miesięcy gratis”
+     z „Ustawienia i oferty”), potem inne do wyboru. Każda: miesiące, cena w nich, cena potem. */
+  function promosOf(p) {
+    if (!p) return [];
+    const out = [];
+    if (p.promo_price != null) {
+      const label = p.promo_label || config.promo_label || "";
+      out.push({ label, months: p.promo_months != null ? Number(p.promo_months) : parseInt(label, 10) || 0,
+        price: Number(p.promo_month_price || 0), after: Number(p.promo_price) });
+    }
+    (Array.isArray(p.promos) ? p.promos : []).forEach((x) => out.push({ label: x.label, months: Number(x.months) || 0, price: Number(x.month_price) || 0, after: Number(x.price) }));
+    return out;
+  }
+  const hasPromo = (p) => promosOf(p).length > 0;
+  const promoOf = (p, option) => { const l = promosOf(p); return l[option] || l[0] || { label: "", months: 0, price: 0, after: p ? Number(p.price) : 0 }; };
+  /* Promocja „bez haczyka”: potem płaci się tyle samo co bez niej (światłowód: 12 mies. po 10 zł, potem cena
+     standardowa) – zawsze włączona, przycisku „Bez promocji” nie ma */
+  const freePromo = (p) => { const l = p ? promosOf(p) : []; return l.length > 0 && l.every((x) => x.after === Number(p.price) && x.price < Number(p.price)); };
+  const linePromo = (sel) => (!!sel.promo || freePromo(planOf(sel))) && hasPromo(planOf(sel));
+  const lineOption = (sel) => { const l = promosOf(planOf(sel)); return linePromo(sel) && sel.option < l.length ? sel.option || 0 : 0; };
+  const chipPrice = (sel, p) => (sel.promo || freePromo(p)) && hasPromo(p) ? promoOf(p, sel.option).after : Number(p.price);
+  // światłowód i np. JUMP są wg materiałów na 24 miesiące: CRM sam ustawia 24, 36 da się kliknąć, ale widać podpowiedź
+  const only24 = (p) => !!p && (kindOf(p) === "fiber" || /umowa na 24 miesiące/i.test(p.features || ""));
+  const speedOf = (p) => { const m = (p.features || "").match(/(\d+)\s*Mb\/s/i); return m ? m[1] + " Mb/s" : ""; };
+  /* Kafelki wybranej grupy: przy światłowodzie jeden kafelek na wariant (M/L/VIP) w wybranym rodzaju budynku */
+  function plansOf(kind, home) {
+    const list = plans.filter((p) => kindOf(p) === kind), seen = new Map();
+    list.forEach((p) => {
+      const key = baseOf(p), h = homeOf(p), had = seen.get(key);
+      if (!had || (h === home && homeOf(had) !== home)) seen.set(key, p);
+    });
+    return [...seen.values()];
+  }
+  function planChips(sel) {
+    // światłowód: na kafelku też prędkość (ta sama w bloku i w domu – różni się tylko cena)
+    return plansOf(sel.kind, sel.home).map((p) =>
+      `<button type="button" class="w-chip plan" data-plan="${p.id}" aria-pressed="${p.id === sel.product}" title="${esc(p.name)}"><b>${esc(chipName(p))}</b>${sel.kind === "fiber" && speedOf(p) ? `<em>${esc(speedOf(p))}</em>` : ""}<small>${money(chipPrice(sel, p))}</small></button>`).join("");
+  }
+  /* Promocja: przyciski „Bez promocji” + każda promocja taryfy (światłowód ma kilka do wyboru) */
+  function promoButtons(sel) {
+    const list = promosOf(planOf(sel));
+    if (!list.length) return `<span class="w-promo-none">Ta taryfa nie ma promocji</span>`;
+    const on = linePromo(sel), opt = lineOption(sel);
+    return (freePromo(planOf(sel)) ? "" : `<button type="button" data-promo="-1" aria-pressed="${!on}">Bez promocji</button>`)
+      + list.map((x, i) => `<button type="button" data-promo="${i}" aria-pressed="${on && opt === i}">${esc(x.label || "Promocja")}</button>`).join("");
+  }
+  function syncKind(sel) {   // grupa i rodzaj budynku wynikają z wybranej taryfy
+    const p = planOf(sel);
+    if (p) { sel.kind = kindOf(p); if (homeOf(p)) sel.home = homeOf(p); }
+    sel.kind = sel.kind || "mobile"; sel.home = sel.home || "blok";
+  }
+  function pickerInner(sel) {
+    syncKind(sel);
+    const kinds = KINDS.filter(([k]) => plans.some((p) => kindOf(p) === k));
+    const homes = plans.some((p) => kindOf(p) === "fiber" && homeOf(p));
+    const head = (kinds.length > 1 ? `<div class="w-toggle" id="f-kind">${kinds.map(([k, l]) => `<button type="button" data-kind="${k}" aria-pressed="${sel.kind === k}">${l}</button>`).join("")}</div>` : "")
+      + (homes ? `<div class="w-home" id="f-home" ${sel.kind === "fiber" ? "" : "hidden"}><span>Gdzie światłowód?</span><div class="w-toggle"><button type="button" data-home="blok" aria-pressed="${sel.home === "blok"}">Blok / mieszkanie</button><button type="button" data-home="dom" aria-pressed="${sel.home === "dom"}">Dom jednorodzinny</button></div></div>` : "");
+    return `${head ? `<div class="w-plan-head">${head}</div>` : ""}
+      <div class="w-field"><span>Taryfa</span><div class="w-chips" id="f-plans">${planChips(sel)}</div></div>
+      <p class="w-fiber-note" id="f-fiber-note" ${sel.kind === "fiber" ? "" : "hidden"}>Prędkość jest taka sama w bloku i w domu – różni się tylko cena (dom +10 zł).</p>
+      <button type="button" class="w-pinfo-btn" id="f-pinfo" title="Otwiera okno z pełną informacją o tej taryfie (także lista kanałów TV z wyszukiwarką)">${INFO_ICON}<span>Co zawiera <b id="f-pinfo-name"></b> i informacje dla agenta</span><span class="w-pinfo-go">Pokaż ›</span></button>
+      <div class="w-field" id="f-promo-row"><span>Promocja</span><div class="w-toggle w-promos" id="f-promos">${promoButtons(sel)}</div></div>
+      <div class="w-row">
+        <div class="w-field"><span id="f-qty-label">Liczba numerów</span><div class="w-qty"><button type="button" data-qty="-1" aria-label="Mniej">−</button><input id="f-qty" type="number" min="1" max="500" value="${sel.quantity}" inputmode="numeric"><button type="button" data-qty="1" aria-label="Więcej">+</button></div></div>
+        <div class="w-field"><span>Okres umowy</span><div class="w-toggle" id="f-term"><button type="button" data-term="36" aria-pressed="${sel.term === 36}">36 mies.</button><button type="button" data-term="24" aria-pressed="${sel.term === 24}">24 mies.</button></div><small class="w-term-hint" id="f-term-hint" hidden>Ta usługa: tylko umowa na 24 miesiące</small></div>
+      </div>`;
+  }
+  function planPicker() {
+    if (!plans.length) return `<p class="w-info">Brak taryf w katalogu. Manager dodaje je w „Zarządzanie → Taryfy i produkty”.</p>`;
+    return `<div class="w-basket" id="f-basket"></div>
+      <div id="f-picker">${pickerInner(form.plan)}</div>
+      <div class="w-sum" id="f-sum"></div>`;
+  }
+  function calcPlan(sel) {
+    const p = planOf(sel);
+    if (!p) return null;
+    const promo = linePromo(sel), pr = promoOf(p, lineOption(sel));
+    const first = promo ? pr.after : Number(p.price);
+    const extra = Number(p.extra_price || 0), q = Math.max(1, sel.quantity || 1);
+    const monthly = extra ? first + (q - 1) * extra : first * q;
+    const mult = Number(sel.term === 24 ? config.commission_24 : config.commission_36) || 0;
+    const perNumber = extra > 0;   // komórkowe liczą numery; światłowód i TV – sztuki
+    // jak we wzorniku: przy promocji średni koszt w całym okresie umowy (np. 6 miesięcy po 0 zł, 12 po 50 zł)
+    const months = promo && pr.months > 0 && pr.months < sel.term ? pr.months : 0;
+    const start = months ? pr.price * q : null;   // opłata w miesiącach promocji
+    const average = months ? (start * months + monthly * (sel.term - months)) / sel.term : null;
+    return { p, monthly, commission: monthly * mult, perNumber, average, months, start, promo, label: pr.label };
+  }
+  function basketTotals() {
+    const cs = form.basket.map(calcPlan).filter(Boolean);
+    const monthly = cs.reduce((s, c) => s + c.monthly, 0), commission = cs.reduce((s, c) => s + c.commission, 0);
+    const average = cs.some((c) => c.average != null) ? cs.reduce((s, c) => s + (c.average != null ? c.average : c.monthly), 0) : null;
+    return { cs, monthly, commission, average };
+  }
+  const lineLabel = (sel) => { const p = planOf(sel); return p ? `${p.name}${sel.quantity > 1 ? " ×" + sel.quantity : ""}` : "?"; };
+  function paintBasket() {
+    const el = $("f-basket"); if (!el) return;
+    const used = new Set(form.basket.map((l) => l.kind));
+    const next = KINDS.find(([k]) => !used.has(k) && plans.some((p) => kindOf(p) === k));
+    el.innerHTML = (form.basket.length > 1 ? form.basket.map((l, i) =>
+      `<span class="w-bitem${l === form.plan ? " on" : ""}"><button type="button" data-bpick="${i}" title="Zmień tę usługę">${i + 1}. ${esc(lineLabel(l))}</button><button type="button" class="x" data-bdel="${i}" aria-label="Usuń z zestawu" title="Usuń z zestawu">×</button></span>`).join("") : "")
+      + `<button type="button" class="w-badd" id="f-badd">+ Dodaj kolejną usługę${next ? ` (np. ${next[1].toLowerCase()})` : ""}</button>`;
+  }
+  function paintSum() {
+    const el = $("f-sum"); if (!el || !form.plan) return;
+    const c = calcPlan(form.plan);
+    if (form.basket.length > 1) {
+      const t = basketTotals();
+      el.innerHTML = `<div><span>Razem miesięcznie za ${form.basket.length} usługi (netto)</span><br><b>${money(t.monthly)}</b>${t.average != null ? `<br><span>średnio ${money(t.average)} w okresie umowy</span>` : ""}
+        <ul class="w-blines">${t.cs.map((x, i) => `<li>${esc(lineLabel(form.basket[i]))}: ${money(x.monthly)}${x.start != null ? ` <span>(${money(x.start)} przez ${x.months} mies.)</span>` : ""}</li>`).join("")}</ul></div>
+        <div class="comm"><span>Twoja prowizja przy sprzedaży (ok.)</span><br><b>${money(t.commission)}</b></div>`;
+    } else {
+      el.innerHTML = c ? `<div><span>${c.perNumber ? "Zobowiązanie miesięczne" : "Opłata miesięczna"} (netto)</span><br><b>${money(c.monthly)}</b>${form.plan.quantity > 1 && c.perNumber ? ` <span>(${money(c.monthly / form.plan.quantity)} za numer)</span>` : ""}${c.start ? `<br><span>${money(c.start)} przez pierwsze ${c.months} mies., potem ${money(c.monthly)}</span>` : ""}${c.average != null ? `<br><span>średnio ${money(c.average)} w ${form.plan.term} mies.</span>` : ""}</div>
+      <div class="comm"><span>Twoja prowizja przy sprzedaży (ok.)</span><br><b>${money(c.commission)}</b></div>` : `<span>Wybierz taryfę.</span>`;
+    }
+    document.querySelectorAll("#f-plans [data-plan]").forEach((b) => { const p = plans.find((x) => x.id === Number(b.dataset.plan)); b.setAttribute("aria-pressed", String(Number(b.dataset.plan) === form.plan.product)); b.querySelector("small").textContent = money(chipPrice(form.plan, p)); });
+    // światłowód i JUMP: tylko 24 miesiące – przycisk „36 mies.” zostaje (układ się nie zmienia), ale jest wyłączony
+    const lock24 = !!(c && only24(c.p));
+    if (lock24 && form.plan.term !== 24) { form.plan.term = 24; paintSum(); return; }
+    document.querySelectorAll("#f-term [data-term]").forEach((b) => { b.setAttribute("aria-pressed", String(Number(b.dataset.term) === form.plan.term)); b.disabled = lock24 && b.dataset.term === "36"; });
+    const th = $("f-term-hint"); if (th) th.hidden = !lock24;
+    if (c) {
+      const ql = $("f-qty-label"); if (ql) ql.textContent = c.perNumber ? "Liczba numerów" : "Ilość";
+      // promocje zależą od taryfy (TV nie ma żadnej, światłowód ma kilka)
+      const pb = $("f-promos"); if (pb) pb.innerHTML = promoButtons(form.plan);
+      const info = $("f-pinfo-name");
+      if (info) info.textContent = c.p.name;
+    }
+    document.querySelectorAll("#f-kind [data-kind]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === form.plan.kind)));
+    document.querySelectorAll("#f-home [data-home]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.home === form.plan.home)));
+    const fh = $("f-home"); if (fh) fh.hidden = form.plan.kind !== "fiber";
+    const fn = $("f-fiber-note"); if (fn) fn.hidden = form.plan.kind !== "fiber";
+    paintBasket();
+    const prev = $("f-mail-preview"); if (prev && !prev.hidden) prev.textContent = offerPreviewText();
+  }
+  /* Nowa pozycja zestawu: pierwsza grupa, której jeszcze nie ma (numery → światłowód → TV), taryfa „M” albo pierwsza */
+  function newLine(kind) {
+    const list = plansOf(kind, "blok"), m = list.find((p) => chipName(p) === "M") || list[0] || plans[0] || {};
+    // światłowód ma umowę na 24 miesiące (regulamin T-Mobile), reszta – domyślny okres z ustawień
+    return { product: m.id, quantity: 1, term: kind === "fiber" ? 24 : Number(config.default_term) || 36, promo: false, option: 0, kind, home: "blok" };
+  }
+  function renderPicker() {
+    const box = $("f-picker"); if (!box) return;
+    box.innerHTML = pickerInner(form.plan);
+    wirePicker();
+    paintSum();
+  }
+  function wirePicker() {
+    const box = $("f-plans");
+    if (box) box.addEventListener("click", (e) => { const b = e.target.closest("[data-plan]"); if (b) { form.plan.product = Number(b.dataset.plan); if (only24(planOf(form.plan))) form.plan.term = 24; paintSum(); } });
+    /* Zmiana grupy albo rodzaju budynku: ta sama taryfa (np. „L”) w nowym wariancie, inaczej pierwsza z grupy */
+    const pick = () => {
+      const old = planOf(form.plan), list = plansOf(form.plan.kind, form.plan.home);
+      const same = old && list.find((p) => chipName(p) === chipName(old));
+      const m = same || list.find((p) => chipName(p) === "M") || list[0];
+      if (m) form.plan.product = m.id;
+      if (box) box.innerHTML = planChips(form.plan);
+      paintSum();
+    };
+    // światłowód: umowa tylko na 24 miesiące (regulamin T-Mobile)
+    document.querySelectorAll("#f-kind [data-kind]").forEach((b) => b.addEventListener("click", () => { form.plan.kind = b.dataset.kind; if (b.dataset.kind === "fiber") form.plan.term = 24; pick(); }));
+    document.querySelectorAll("#f-home [data-home]").forEach((b) => b.addEventListener("click", () => { form.plan.home = b.dataset.home; pick(); }));
+    document.querySelectorAll("#f-term [data-term]").forEach((b) => b.addEventListener("click", () => { form.plan.term = Number(b.dataset.term); paintSum(); }));
+    const q = $("f-qty");
+    if (q) {
+      q.addEventListener("input", () => { form.plan.quantity = Math.max(1, Math.min(500, parseInt(q.value, 10) || 1)); paintSum(); });
+      document.querySelectorAll("#f-picker [data-qty]").forEach((b) => b.addEventListener("click", () => { form.plan.quantity = Math.max(1, Math.min(500, form.plan.quantity + Number(b.dataset.qty))); q.value = form.plan.quantity; paintSum(); }));
+    }
+    const pr = $("f-promos");
+    if (pr) pr.addEventListener("click", (e) => { const b = e.target.closest("[data-promo]"); if (!b) return; const i = Number(b.dataset.promo); form.plan.promo = i >= 0; form.plan.option = Math.max(0, i); paintSum(); });
+    const det = $("f-pinfo"); if (det) det.addEventListener("click", () => openProductInfo(form.plan.product));
+  }
+  function wirePlan() {
+    const basket = $("f-basket");
+    if (basket) basket.addEventListener("click", (e) => {
+      const add = e.target.closest("#f-badd"), pick = e.target.closest("[data-bpick]"), del = e.target.closest("[data-bdel]");
+      if (add) {
+        const used = new Set(form.basket.map((l) => l.kind));
+        const kind = (KINDS.find(([k]) => !used.has(k) && plans.some((p) => kindOf(p) === k)) || [form.plan.kind])[0];
+        form.plan = newLine(kind); form.basket.push(form.plan);
+      } else if (pick) {
+        form.plan = form.basket[Number(pick.dataset.bpick)];
+      } else if (del) {
+        const i = Number(del.dataset.bdel), was = form.basket[i] === form.plan;
+        form.basket.splice(i, 1);
+        if (was || !form.basket.includes(form.plan)) form.plan = form.basket[Math.max(0, i - 1)];
+      } else return;
+      renderPicker();
+    });
+    wirePicker();
+    paintSum();
+  }
+  function defaultBasket() {
+    const o = current && lastOffer(current);
+    const find = (id, name) => plans.find((x) => x.id === id || x.name === name);
+    if (o) {   // ostatnia oferta (także zestaw kilku usług) – agent zwykle sprzedaje to, co wysłał
+      const lines = (o.offer.lines && o.offer.lines.length ? o.offer.lines : [o.offer])
+        .map((l) => { const p = find(l.product, l.product_name); return p && { product: p.id, quantity: l.quantity, term: l.term_months, promo: !!l.promo, option: Number(l.option) || 0 }; })
+        .filter(Boolean);
+      if (lines.length) return lines;
+    }
+    return [newLine("mobile")];
+  }
+  /* Tekst do podglądu „jak zobaczy klient” – ten sam układ co oferta z serwera */
+  function offerPreviewText() {
+    const out = [];
+    form.basket.forEach((sel, i) => {
+      const c = calcPlan(sel); if (!c) return;
+      if (i) out.push("", "-".repeat(30), "");
+      out.push(`Oferta: ${c.p.name}`, `${c.perNumber ? "Liczba numerów" : "Ilość"}: ${sel.quantity}`, `Okres umowy: ${sel.term} miesięcy`);
+      if (c.promo && c.label) out.push(`Promocja: ${c.label}`);
+      out.push(`${c.perNumber ? "Zobowiązanie miesięczne" : "Opłata miesięczna"}: ${money(c.monthly)} netto`);
+      if (c.start) out.push(`Przez pierwsze ${c.months} miesięcy: ${money(c.start)} netto miesięcznie, od ${c.months + 1}. miesiąca: ${money(c.monthly)} netto`);
+      if (c.average != null) out.push(`Średni miesięczny koszt w okresie ${sel.term} miesięcy: ${money(c.average)} netto`);
+      if (c.p.features) out.push("", ...c.p.features.split("\n").filter(Boolean).map((f) => "• " + f));
+    });
+    if (form.basket.length > 1) {
+      const t = basketTotals();
+      out.push("", "=".repeat(30), `RAZEM miesięcznie za wszystkie usługi: ${money(t.monthly)} netto`);
+      if (t.average != null) out.push(`Średni miesięczny koszt w okresie umowy: ${money(t.average)} netto`);
+    }
+    return out.join("\n");
+  }
+  const basketLines = () => form.basket.filter((l) => planOf(l)).map((l) => ({ product: l.product, quantity: l.quantity, term_months: l.term, promo: linePromo(l), option: lineOption(l) }));
+
+  /* ---------- informacje o produktach i kanały TV: okno „Produkty i kanały TV” ---------- */
+  /* Szukanie bez względu na wielkość liter, polskie znaki i spacje: „tvp1” = „TVP 1”, „polsat sport” = „Polsat Sport” */
+  const normFind = (s) => String(s || "").toLowerCase().replace(/ł/g, "l").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9+]/g, "");
+  // jak klienci mówią na kanały → jak są zapisane na liście T-Mobile
+  const CH_ALIASES = { jedynka: "tvp1", dwojka: "tvp2", trojka: "tvp3", czworka: "tv4", szostka: "tv6", siodemka: "tvnsiedem", tvn7: "tvnsiedem",
+    canalplus: "canal+", kanalplus: "canal+", canal: "canal+", natgeo: "nationalgeographic", nationalgeo: "nationalgeographic", tvpinfo: "tvpinfo" };
+  const findKey = (q) => { const n = normFind(q); return CH_ALIASES[n] || n; };
+  /* Oficjalna lista kanałów (T-Mobile) przychodzi razem ze stroną; pakiety się sumują: M = S + …, L = S + M + … */
+  const TV = (() => { try { return JSON.parse(document.getElementById("tv-channels").textContent); } catch { return null; } })();
+  const TV_PLANS = ["S", "M", "L"];
+  /* Wiersz informacji: „Kategoria: kanał, kanał, …” to lista kanałów (pokazujemy jako plakietki), reszta – zwykły punkt */
+  // plakietki tylko dla list kanałów TV – zwykłe „Roaming UE: 8,95 GB” albo „15 zł netto, umowa…” zostają tekstem
+  function infoRows(text, chips) {
+    return String(text || "").split("\n").map((x) => x.trim()).filter(Boolean).map((x) => {
+      const m = x.match(/^([^:]{2,30}):\s*(.+)$/);
+      if (chips && m && !/^(za dopłatą|liczba)/i.test(x) && m[2].includes(",")) return { label: m[1], items: m[2].split(",").map((s) => s.trim()).filter(Boolean) };
+      return { label: m && m[1].length < 40 ? m[1] : "", text: m && m[1].length < 40 ? m[2] : x, line: x };
+    });
+  }
+  /* Wszystkie kanały pakietu w kategoriach: kanały z S, potem dochodzące w M, potem w L */
+  function allChannelGroups(plan) {
+    const groups = new Map();
+    TV_PLANS.slice(0, TV_PLANS.indexOf(plan) + 1).forEach((x) => TV.packages[x].forEach((g) => {
+      const list = groups.get(g.group) || []; groups.set(g.group, list);
+      g.channels.forEach((c) => { if (!list.includes(c)) list.push(c); });
+    }));
+    return [...groups].map(([group, channels]) => ({ group, channels }));
+  }
+  const tvPlanOf = (p) => { const m = kindOf(p) === "tv" && p.name.match(/\b(S|M|L)\s*$/i); return m ? m[1].toUpperCase() : null; };
+  function rowsHtml(rows, key) {
+    const hit = (t) => key && normFind(t).includes(key);
+    if (key) rows = rows.map((r) => r.items ? { ...r, items: r.items.filter(hit) } : r).filter((r) => r.items ? r.items.length : hit(r.line));
+    return rows.map((r) => r.items
+      ? `<li class="w-chrow"><b>${esc(r.label)}:</b> ${r.items.map((c) => `<span class="w-ch${hit(c) ? " hit" : ""}">${esc(c)}</span>`).join("")}</li>`
+      : `<li${hit(r.line) ? ' class="hit"' : ""}>${r.label ? `<b>${esc(r.label)}:</b> ${esc(r.text)}` : esc(r.text)}</li>`).join("");
+  }
+  function productInfoHtml(p, find) {
+    const key = find ? findKey(find) : "";
+    const promos = promosOf(p);
+    const price = `<div class="w-pinfo-price">${money(p.price)} netto${Number(p.extra_price) > 0 ? ` · kolejny numer +${money(p.extra_price)}` : ""}</div>`
+      + (promos.length ? `<ul class="w-pinfo-promos">${promos.map((x) => `<li><b>${esc(x.label || "Promocja")}</b>: ${x.months ? `${money(x.price)} przez ${x.months} mies., potem ` : ""}${money(x.after)}</li>`).join("")}</ul>` : "");
+    const feat = p.features ? rowsHtml(infoRows(p.features, kindOf(p) === "tv"), key) : "";
+    // TV bez ściągi w taryfie: WSZYSTKIE kanały pakietu z oficjalnej listy (M = S + M, L = S + M + L)
+    const plan = tvPlanOf(p);
+    const own = !p.info && plan && TV ? allChannelGroups(plan).map((g) => ({ label: g.group, items: g.channels })) : null;
+    const info = own ? rowsHtml(own, key) : p.info ? rowsHtml(infoRows(p.info, kindOf(p) === "tv"), key) : "";
+    return (key ? "" : price)
+      + (feat ? `<div class="w-pinfo-h">W ofercie dla klienta</div><ul>${feat}</ul>` : "")
+      + (info ? `<div class="w-pinfo-h">${own ? `Kanały (lista T-Mobile, stan na ${esc(TV.as_of)})` : "Dla agenta"}</div><ul>${info}</ul>` : "");
+  }
+  /* Kanały pasujące do wpisu, najlepsze na górze: „1” → najpierw TVP 1, Polsat Sport 1, Eurosport 1 (całe słowo),
+     potem kanały zaczynające się od wpisu, na końcu reszta. Każdy: od którego pakietu jest (-1 = tylko za dopłatą). */
+  function channelMatches(find) {
+    const key = findKey(find); if (!key || !TV) return [];
+    const words = String(find).toLowerCase().trim();
+    const found = new Map();
+    TV_PLANS.forEach((plan, i) => TV.packages[plan].forEach((g) => g.channels.forEach((c) => {
+      if (normFind(c).includes(key) && !found.has(c)) found.set(c, i);
+    })));
+    TV.extra.forEach((c) => { if (normFind(c).includes(key) && !found.has(c)) found.set(c, -1); });
+    const wordRe = new RegExp("(^|[\\s(])" + words.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s)])", "i");
+    const rank = (c) => wordRe.test(c) ? 0 : normFind(c).startsWith(key) ? 1 : 2;
+    return [...found].map(([name, from], i) => ({ name, from, r: rank(name), i })).sort((a, b) => a.r - b.r || a.i - b.i);
+  }
+  function channelAnswer(find) {
+    if (!TV) return `<p class="w-info">Lista kanałów nie wczytała się – odśwież stronę.</p>`;
+    const all = channelMatches(find);
+    if (!all.length) return `<div class="w-chans no"><b>✕ Nie ma takiego kanału</b> w żadnym pakiecie Magenta TV (lista T-Mobile, stan na ${esc(TV.as_of)}).<br><span class="muted">Sprawdź pisownię, np. „TVN 24”, „Polsat Sport”, „jedynka”.</span></div>`;
+    const tvProducts = plans.filter((p) => kindOf(p) === "tv");
+    const priceOf = (plan) => { const p = tvProducts.find((x) => tvPlanOf(x) === plan); return p ? ` <span class="muted">(${money(p.price)})</span>` : ""; };
+    const LIMIT = 20;
+    const rows = all.slice(0, LIMIT).map(({ name, from }) => {
+      if (from < 0) return `<li><span class="w-ch hit">${esc(name)}</span> <b>tylko za dopłatą</b> – pakiet CANAL+ SUPER SPORT (do S, M albo L)</li>`;
+      return `<li><span class="w-ch hit">${esc(name)}</span> ${from === 0 ? "jest <b>we wszystkich pakietach</b>" : `jest od pakietu <b>${TV_PLANS[from]}</b>`}:
+        ${TV_PLANS.map((x, i) => i >= from ? `<span class="w-pk yes">✓ ${x}${priceOf(x)}</span>` : `<span class="w-pk no">✕ ${x}</span>`).join("")}</li>`;
+    }).join("");
+    return `<div class="w-chans"><div class="w-pinfo-h">Czy jest ten kanał? (${all.length})</div><ul>${rows}</ul>${all.length > LIMIT ? `<p class="muted small">…i jeszcze ${all.length - LIMIT}. Wpisz dokładniej.</p>` : ""}</div>`;
+  }
+  /* Okno ma dwie zakładki: „Kanały TV” (klient pyta „czy jest Jedynka?”) i „Taryfy i produkty” (ceny, co zawiera,
+     szukanie po produktach, np. „300” → Światłowód M). Każda ma swoje pole szukania. */
+  const PINFO_HINT = { tv: "Czy jest kanał…? Wpisz np. jedynka, 1, HBO, Eurosport, TVN 24, Polsat Sport",
+    prod: "Szukaj w taryfach, np. 300 Mb/s, roaming, JUMP, dekoder" };
+  function openProductInfo(productId) {
+    let dlg = $("pinfo-dialog");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "pinfo-dialog"; dlg.className = "dialog w-pdialog";
+      dlg.innerHTML = `<div class="w-pdhead"><h2>Produkty i kanały TV</h2><button type="button" class="btn-mini" data-close>Zamknij</button></div>
+        <div class="w-toggle w-pmode" id="pinfo-mode"><button type="button" data-mode="tv">Kanały TV</button><button type="button" data-mode="prod">Taryfy i produkty</button></div>
+        <input id="pinfo-find" class="select" type="search" autocomplete="off">
+        <div class="w-toggle" id="pinfo-kinds"></div>
+        <p class="muted small" id="pinfo-note"></p>
+        <div id="pinfo-list" class="w-plist"></div>`;
+      document.body.appendChild(dlg);
+      dlg.querySelector("[data-close]").addEventListener("click", () => dlg.close());
+      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+      const findEl = dlg.querySelector("#pinfo-find");
+      findEl.addEventListener("keydown", (e) => e.stopPropagation());
+      findEl.addEventListener("input", () => { dlg.dataset["find_" + dlg.dataset.mode] = findEl.value; paintProductInfo(); });
+      dlg.querySelector("#pinfo-mode").addEventListener("click", (e) => { const b = e.target.closest("[data-mode]"); if (b) { setPinfoMode(dlg, b.dataset.mode); findEl.focus(); } });
+      dlg.querySelector("#pinfo-kinds").addEventListener("click", (e) => { const b = e.target.closest("[data-pk]"); if (b) { dlg.dataset.kind = b.dataset.pk; dlg.dataset.only = ""; paintProductInfo(); } });
+      dlg.querySelector("#pinfo-list").addEventListener("click", (e) => { if (e.target.closest("[data-pall]")) { dlg.dataset.only = ""; paintProductInfo(); } });
+    }
+    const p = productId && plans.find((x) => x.id === Number(productId));
+    dlg.dataset.only = p ? String(p.id) : "";
+    if (p) dlg.dataset.kind = kindOf(p);
+    else if (!dlg.dataset.kind) dlg.dataset.kind = form && form.plan ? form.plan.kind || "mobile" : "mobile";
+    dlg.dataset.find_tv = ""; dlg.dataset.find_prod = "";
+    setPinfoMode(dlg, p ? "prod" : "tv");   // z „Co zawiera …” – od razu ta taryfa; z lewego panelu – kanały
+    dlg.showModal();
+    dlg.querySelector("#pinfo-find").focus();
+  }
+  function setPinfoMode(dlg, mode) {
+    dlg.dataset.mode = mode;
+    const f = dlg.querySelector("#pinfo-find");
+    f.placeholder = PINFO_HINT[mode]; f.value = dlg.dataset["find_" + mode] || "";
+    dlg.querySelectorAll("#pinfo-mode [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+    dlg.querySelector("#pinfo-kinds").hidden = mode !== "prod";
+    dlg.querySelector("#pinfo-note").textContent = mode === "tv"
+      ? `Pakiety TV się sumują: M ma wszystko z S, a L wszystko z S i M.${TV ? ` Lista kanałów: T-Mobile, stan na ${TV.as_of}.` : ""}`
+      : "Ceny netto. Szukanie przeszukuje wszystkie grupy taryf.";
+    paintProductInfo();
+  }
+  function paintProductInfo() {
+    const dlg = $("pinfo-dialog"); if (!dlg) return;
+    const list = dlg.querySelector("#pinfo-list");
+    const find = dlg.querySelector("#pinfo-find").value.trim(), key = find ? findKey(find) : "";
+    if (dlg.dataset.mode === "tv") {
+      list.innerHTML = key ? channelAnswer(find)
+        : `<p class="w-info">Wpisz nazwę kanału, o który pyta klient. Zobaczysz, w których pakietach jest (S / M / L).</p>`
+          + (TV ? `<ul class="w-pinfo-promos">${TV_PLANS.map((x) => `<li><b>Magenta TV ${x}</b>: ${TV.counts[x]} kanałów</li>`).join("")}</ul>` : "");
+      return;
+    }
+    const only = !find && Number(dlg.dataset.only) || 0;
+    const kinds = KINDS.filter(([k]) => plans.some((p) => kindOf(p) === k));
+    dlg.querySelector("#pinfo-kinds").innerHTML = kinds.map(([k, l]) => `<button type="button" data-pk="${k}" aria-pressed="${!find && !only && dlg.dataset.kind === k}">${l}</button>`).join("");
+    // szukanie przeszukuje wszystkie grupy taryf
+    const text = (p) => p.name + "\n" + (p.features || "") + "\n" + (p.info || "") + (tvPlanOf(p) && !p.info && TV ? "\n" + TV.packages[tvPlanOf(p)].map((g) => g.channels.join(",")).join(",") : "");
+    const shown = plans.filter((p) => only ? p.id === only : key ? normFind(text(p)).includes(key) : kindOf(p) === dlg.dataset.kind);
+    const nameHit = (p) => !!key && normFind(p.name).includes(key);
+    // pasuje nazwa (np. „jump”) → cała karta; inaczej tylko pasujące punkty
+    const card = (p) => `<section class="w-pcard"><h3>${esc(p.name)}</h3>${productInfoHtml(p, nameHit(p) ? "" : find)}</section>`;
+    if (!key) {
+      list.innerHTML = (only ? `<p><button type="button" class="w-link" data-pall>← Pokaż wszystkie produkty z tej grupy</button></p>` : "")
+        + (shown.length ? shown.map(card).join("") : `<p class="w-info">Brak taryf w tej grupie.</p>`);
+      return;
+    }
+    // kolejność: pasuje nazwa → punkty oferty (np. „Prędkość: do 300 Mb/s”) → tylko ściąga dla agenta
+    const rank = (p) => nameHit(p) ? 0 : normFind(p.features).includes(key) ? 1 : 2;
+    const sorted = shown.map((p, i) => [rank(p), i, p]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+    const tvHits = channelMatches(find).length;
+    list.innerHTML = (sorted.length ? sorted.map(card).join("") : `<p class="w-info">Nic nie znaleziono dla „${esc(find)}”.</p>`)
+      + (tvHits ? `<p class="muted small">Szukasz kanału? Pasuje ${tvHits} – <button type="button" class="w-link" data-gotv>sprawdź w „Kanały TV”</button>.</p>` : "");
+    const go = list.querySelector("[data-gotv]");
+    if (go) go.addEventListener("click", () => { dlg.dataset.find_tv = find; setPinfoMode(dlg, "tv"); });
+  }
+
+  function stepHtml(o) {
+    const d = current;
+    if (o === "no_answer") {
+      const auto = d.suggested_retry_at ? new Date(d.suggested_retry_at) : null;
+      const missed = ["offer", "callback"].includes(segOf(d)) && d.next_contact_at && new Date(d.next_contact_at) <= Date.now() + 5 * 60000;
+      const info = missed ? "Umówiony kontakt nie doszedł do skutku. Klient zostaje u Ciebie, ponowna próba za godzinę (możesz zmienić)."
+        : auto ? `System sam ustawi ponowną próbę na <b>${esc(fmtLong(auto))}</b> (o innej porze dnia niż poprzednio). Możesz wpisać własny termin.`
+          : "To ostatnia próba: po zapisie klient wróci do wspólnej puli.";
+      return `<div class="w-step"><p class="w-info">${info}</p>${auto || missed ? whenField("no_answer", "Własny termin ponownej próby", missed ? new Date(Date.now() + 3600e3) : null, false) : ""}</div>`;
+    }
+    if (o === "callback") {
+      return `<div class="w-step"><h3>Kiedy oddzwonić?</h3>${whenField("callback", "Termin", null, true)}
+        <label class="w-field grow">W jakiej sprawie (opcjonalnie)<input id="f-topic" maxlength="255" value="${esc(d.next_contact_note || "")}" placeholder="np. zajęty, prosił po 15; decyduje wspólnik"></label>
+        <label class="w-check"><input type="checkbox" id="f-intro" ${d.knows_caller ? "checked" : ""}> Klient wie, że dzwonimy z ofertą T-Mobile</label></div>`;
+    }
+    if (o === "interested") {
+      return `<div class="w-step"><h3>Zainteresowany – kiedy wrócić do klienta?</h3>
+        <p class="w-info">Klient jest zainteresowany, ale <b>nie dostał jeszcze oferty</b> (np. nie podał e-maila). Trafia do grupy <b>Oferty</b> (najważniejsi). Gdy będziesz mieć e-mail, wybierz przy nim „5 Wyślij ofertę”.</p>
+        ${whenField("interested", "Termin", nextWorkday(10), true)}
+        <label class="w-field grow">Co zrobić przy następnym telefonie<input id="f-topic" maxlength="255" value="${esc(d.next_contact_note || "Dopytać o e-mail, żeby wysłać ofertę")}"></label>
+        <label class="w-field grow">E-mail klienta (jeśli podał)<input id="f-email" type="email" maxlength="254" value="${esc(d.email || "")}" placeholder="np. biuro@firma.pl"></label></div>`;
+    }
+    if (o === "offer") {
+      const target = config.mode === "direct" ? "prosto na e-mail klienta" : `do: <b>${esc(config.forward_name || "osoby wysyłającej")}</b>${config.forward_email ? ` (${esc(config.forward_email)})` : " – adres ustawia manager"}`;
+      return `<div class="w-step"><h3>Oferta dla klienta</h3>${planPicker()}
+        <label class="w-field grow">E-mail klienta${config.mode === "direct" ? "" : " (żeby osoba wysyłająca wiedziała, dokąd)"}<input id="f-email" type="email" maxlength="254" value="${esc(d.email || "")}" placeholder="np. biuro@firma.pl"></label>
+        ${whenField("offer", "Kiedy zadzwonić w sprawie oferty (follow-up)", nextWorkday(10), true)}
+        <label class="w-field grow">Sprawa przy follow-upie<input id="f-topic" maxlength="255" value="Omówić wysłaną ofertę"></label>
+        <p class="w-info">Oferta pójdzie ${target}. <button type="button" class="w-link" id="f-show-preview">Podgląd oferty</button></p>
+        <pre class="w-preview" id="f-mail-preview" hidden></pre></div>`;
+    }
+    if (o === "sold") {
+      return `<div class="w-step"><h3>Co klient kupił?</h3>${planPicker()}<p class="w-info">Klient zostanie zamknięty jako <b>sprzedany</b>. Prowizja doliczy się do Twoich wyników.</p>
+        <p class="w-info">Zapytaj o polecenie: „Kogo Pan zna, kto jeszcze mógłby skorzystać?” → <button type="button" class="w-link" data-referral>+ dodaj polecony kontakt</button></p></div>`;
+    }
+    if (o === "refused") return `<div class="w-step"><h3>Dlaczego odmówił?${reqRefuse ? "" : " (opcjonalnie)"} <small class="muted">dopisze się do komentarza</small></h3><div class="w-chips">${REFUSE_CHIPS.map((c) => `<button type="button" class="w-chip" data-refuse="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>`;
+    if (o === "wrong_number") return `<div class="w-step"><h3>Zły numer</h3>
+      <p class="w-info">Bez nowego numeru klient zostanie zamknięty (<b>nie dzwonić</b>).</p>
+      <label class="w-field grow">Dostałeś inny numer do tej firmy? (np. żona podała numer męża, sekretariat – numer szefa)<input id="f-newphone" maxlength="30" inputmode="tel" placeholder="np. 600 100 200"></label>
+      <p class="w-info" id="f-newphone-info">Jeśli wpiszesz nowy numer, klient <b>zostaje u Ciebie</b>: nowy numer staje się głównym, stary zapisze się jako dodatkowy, a w historii zostanie notatka.</p></div>`;
+    if (o === "skipped") return `<div class="w-step"><h3>Dlaczego pomijasz tę firmę?${reqSkip ? "" : " (opcjonalnie)"}</h3><div class="w-chips" role="radiogroup">${SKIP_CHIPS.map((l) => `<button type="button" class="w-chip" role="radio" aria-checked="false" data-skip="${esc(l)}">${esc(l)}</button>`).join("")}</div><p class="w-info">Pominięcie nie liczy się jako telefon ani próba.</p></div>`;
+    return "";
+  }
+  const SAVE_HINT = { no_answer: "Enter zapisuje i bierze następnego", callback: "Wpisz termin, Enter zapisuje", interested: "Sprawdź termin, Enter zapisuje", offer: "Wybierz taryfę i termin follow-upu", sold: "Wybierz taryfę i liczbę numerów", refused: "Enter zapisuje i bierze następnego", wrong_number: "Enter zapisuje i bierze następnego", skipped: "Enter zapisuje i bierze następnego" };
+  function pick(o) {
+    if (!current || CLOSED.includes(current.status) || !$("out-panel")) return;
+    if (form && form.outcome === o) { resetForm(); return; }
+    const basket = ["offer", "sold"].includes(o) && plans.length ? defaultBasket() : null;
+    form = { outcome: o, basket, plan: basket ? basket[0] : null, skip: "" };
+    document.querySelectorAll("[data-out]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.out === o)));
+    $("step").innerHTML = stepHtml(o);
+    if ($("ct-info")) $("ct-info").innerHTML = contractInfo(current);   // „Odmowa” + późniejszy koniec umowy = samo oddzwonienie
+    paintPhrases(o);
+    $("act-error").hidden = true;
+    $("save-next").disabled = $("save-only").disabled = false;
+    $("save-hint").textContent = keysOn() ? SAVE_HINT[o] || "" : "";
+    wireStep();
+    // „Pomiń firmę” przy kliencie zaznaczonym jako T-Mobile: powód „Już jest w T-Mobile” od razu wybrany (można zmienić)
+    if (o === "skipped" && (current.operators || "").split(",")[0] === "tmobile") {
+      const chip = [...document.querySelectorAll("[data-skip]")].find((b) => /t-?mobile/i.test(b.dataset.skip));
+      if (chip) chip.click();
+    }
+    const focusEl = $("f-when") && o === "callback" ? $("f-when") : null;
+    if (focusEl) { focusEl.focus(); focusEl.select(); } else $("save-next").focus({ preventScroll: true });
+    $("out-panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function resetForm() {
+    form = null;
+    if (!$("out-panel")) return;
+    document.querySelectorAll("[data-out]").forEach((b) => b.setAttribute("aria-checked", "false"));
+    $("step").innerHTML = ""; $("act-note").value = ""; $("act-error").hidden = true; paintPhrases(null);
+    $("save-next").disabled = $("save-only").disabled = true;
+    $("save-hint").textContent = "Wybierz wynik rozmowy";
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+  function paintWhen() {
+    const inp = $("f-when"), pv = $("f-preview"); if (!inp || !pv) return;
+    const v = inp.value.trim();
+    if (!v) { pv.textContent = ""; pv.className = "w-when-preview"; return; }
+    const d = parseWhen(v);
+    if (!d) { pv.textContent = "Nie rozumiem terminu. Spróbuj np. „jutro 10:30”, „pt 9”, „za 2h”."; pv.className = "w-when-preview bad"; return; }
+    pv.textContent = (d < new Date() ? "Ten termin już minął: " : "✓ ") + fmtLong(d); pv.className = "w-when-preview " + (d < new Date() ? "bad" : "ok");
+  }
+  function wireStep() {
+    const inp = $("f-when");
+    if (inp) {
+      inp.addEventListener("input", paintWhen);
+      inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); save(true); } if (e.key === "Escape") resetForm(); });
+      const nat = $("f-native");
+      nat.min = fmtNative(new Date());
+      nat.addEventListener("change", () => { if (nat.value) { inp.value = fmtInput(new Date(nat.value)); paintWhen(); } });
+      $("f-cal").addEventListener("click", () => {
+        const d = parseWhen(inp.value.trim());
+        if (d && d > new Date()) nat.value = fmtNative(d);   // kalendarz otwiera się na już wpisanym terminie
+        try { nat.showPicker(); } catch { nat.focus(); nat.click(); }
+      });
+      paintWhen();
+    }
+    document.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
+      const [kind, i] = b.dataset.preset.split(":"); inp.value = fmtInput(PRESETS[kind][Number(i)][1]()); paintWhen();
+      document.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    }));
+    document.querySelectorAll("#step input:not(#f-when):not([type=checkbox])").forEach((i) => i.addEventListener("keydown", (e) => {
+      e.stopPropagation(); if (e.key === "Enter" && i.id !== "f-qty") { e.preventDefault(); save(true); } if (e.key === "Escape") resetForm();
+    }));
+    if (form.plan) wirePlan();
+    const pv = $("f-show-preview");
+    if (pv) pv.addEventListener("click", () => { const box = $("f-mail-preview"); box.hidden = !box.hidden; box.textContent = offerPreviewText(); });
+    document.querySelectorAll("[data-refuse]").forEach((b) => b.addEventListener("click", () => toggleNote(b.dataset.refuse)));
+    syncChips();
+    document.querySelectorAll("[data-skip]").forEach((b) => b.addEventListener("click", () => {
+      form.skip = b.dataset.skip;
+      document.querySelectorAll("[data-skip]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+      $("save-hint").textContent = "Enter zapisuje i bierze następnego";
+      $("save-next").focus({ preventScroll: true });
+    }));
+  }
+  const fail = (m) => { const e = $("act-error"); e.textContent = m; e.hidden = false; };
+  function readWhen(required) {
+    const inp = $("f-when"); if (!inp) return { ok: true, value: null };
+    const raw = inp.value.trim();
+    if (!raw) return required ? { ok: false, error: "Podaj termin." } : { ok: true, value: null };
+    const d = parseWhen(raw);
+    if (!d) return { ok: false, error: "Nie rozumiem terminu. Spróbuj np. „jutro 10:30”." };
+    if (d < new Date()) return { ok: false, error: "Ten termin już minął." };
+    return { ok: true, value: d };
+  }
+
+  let saving = false;
+  async function save(goNext, noteOnly) {
+    if (saving || !current) return;
+    const note = $("act-note") ? $("act-note").value.trim() : "";
+    if (noteOnly) {
+      if (!note) { fail("Wpisz treść notatki."); return; }
+      return submit({ lead: current.id, outcome: "note", note }, false);
+    }
+    if (!form) { fail("Wybierz wynik rozmowy (klawisze 1–8)."); return; }
+    if (contractSaving) await contractSaving;
+    const o = form.outcome, lead = current.id;
+    if (o === "offer") {
+      if (!form.plan || !basketLines().length) { fail("Wybierz taryfę."); return; }
+      const w = readWhen(true); if (!w.ok) { fail(w.error); return; }
+      const email = $("f-email").value.trim();
+      if (config.mode === "direct" && !email) { fail("Podaj e-mail klienta."); return; }
+      return submitOffer({ lead, lines: basketLines(),
+        client_email: email, next_contact_at: w.value.toISOString(), next_contact_note: $("f-topic").value.trim(), note }, goNext);
+    }
+    const body = { lead, outcome: o, note };
+    if (o === "interested") {
+      const email = $("f-email").value.trim();
+      if (email && email !== (current.email || "")) {
+        const r = await jsonReq(`/api/leads/${lead}/`, "PATCH", { email });
+        if (r.error) { fail(r.error); return; }
+        current.email = email;
+      }
+    }
+    if (o === "callback" || o === "no_answer" || o === "interested") {
+      const w = readWhen(o !== "no_answer"); if (!w.ok) { fail(w.error); return; }
+      if (w.value) { body.next_contact_at = w.value.toISOString(); if ($("f-topic")) body.next_contact_note = $("f-topic").value.trim(); }
+      if (o === "callback") body.introduced = $("f-intro").checked;
+    }
+    if (o === "sold") {
+      if (plans.length) {
+        if (!basketLines().length) { fail("Wybierz taryfę."); return; }
+        body.sale_lines = basketLines();   // zestaw: numery + światłowód + TV w jednej sprzedaży
+      }
+    }
+    if (o === "skipped") { if (!form.skip && reqSkip) { fail("Wybierz powód pominięcia."); return; } if (form.skip) body.skip_reason = form.skip; }
+    if (o === "refused" && reqRefuse && !note) { fail("Wybierz albo wpisz, dlaczego klient odmówił."); return; }
+    if (o === "wrong_number" && $("f-newphone").value.trim()) {
+      const fresh = $("f-newphone").value.trim(), old = current.phone;
+      lock(true);
+      const r = await jsonReq(`/api/leads/${lead}/`, "PATCH", { phone: fresh, phone_alt: old });
+      if (r.error) { lock(false); fail(r.error); return; }
+      const n = await jsonReq("/api/activities/", "POST", { lead, outcome: "note", note: `Zły numer ${old} – nowy numer: ${fresh}${note ? `. ${note}` : ""}` });
+      lock(false);
+      if (n.error) { fail(n.error); return; }
+      toast(`Nowy numer zapisany: ${fresh}. Możesz od razu zadzwonić.`);
+      await refreshAll(); await openLead(lead);
+      setCallState(`Nowy numer: <b>${esc(fresh)}</b> – kliknij „Zadzwoń”.`);
+      return;
+    }
+    return submit(body, goNext);
+  }
+  function lock(on) { saving = on; ["save-next", "save-only"].forEach((id) => { const b = $(id); if (b) b.disabled = on; }); }
+  async function submit(body, goNext) {
+    lock(true);
+    // „Zapisz i dalej”: serwer od razu oddaje następnego klienta (pole `next`) – jedno zapytanie
+    const r = await jsonReq(goNext ? "/api/activities/?next=1" : "/api/activities/", "POST", body);
+    lock(false);
+    if (r.error) { fail(r.error); return; }
+    afterSave(r.data, goNext);
+  }
+  async function submitOffer(body, goNext) {
+    lock(true);
+    const r = await jsonReq("/api/offers/", "POST", body);
+    lock(false);
+    if (r.error) { fail(r.error); return; }
+    const off = r.data.offer;
+    const saved = { id: r.data.activity, outcome: "offer", rescheduled_to: body.next_contact_at };
+    if (off.sent) { toast(`Oferta wysłana na ${off.recipient}. Follow-up zapisany.`); afterSave(saved, goNext); return; }
+    // oferta do ręcznej wysyłki: pasek „Cofnij” i następny klient dopiero po zamknięciu okna z mailem
+    pendingAfter = () => afterSave(saved, goNext);
+    showOfferDialog(r.data);
+  }
+  let pendingAfter = null;
+  $("offer-dialog").addEventListener("close", () => { const run = pendingAfter; pendingAfter = null; if (run) run(); });
+  /* Oferta bez serwera poczty: agent kopiuje gotowy, sformatowany list (wkleja się w Gmailu / Outlooku
+     z pogrubieniami jak we wzorniku) albo pobiera plik oferty i dodaje go jako załącznik. */
+  async function offerHtml(id) {
+    const r = await api(`/api/offers/${id}/html/`);
+    if (!r.ok) throw new Error("Nie udało się pobrać oferty.");
+    return { blob: await r.blob(), name: ((r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "oferta.html" };
+  }
+  function showOfferDialog(d) {
+    const dlg = $("offer-dialog"), o = d.offer;
+    const who = config.mode === "direct" ? "do klienta" : `do osoby wysyłającej oferty${config.forward_name ? ` (${esc(config.forward_name)})` : ""}`;
+    $("od-title").textContent = "Oferta zapisana – wyślij ją";
+    $("od-text").innerHTML = o.recipient ? `CRM nie ma jeszcze skonfigurowanej poczty, więc wyślij ofertę na <b>${esc(o.recipient)}</b> sam:`
+      : "Brak adresu do przekazywania ofert (ustawia go manager). Wyślij ofertę ręcznie:";
+    // „Otwórz w poczcie” (mailto) przenosi tylko zwykły tekst i nie umie dodać załącznika – to ograniczenie
+    // wszystkich programów pocztowych (Thunderbird, Outlook). Dlatego oferta z formatowaniem kopiuje się sama,
+    // a agent wkleja ją w mailu.
+    $("od-steps").innerHTML = `<li>Kliknij <b>„Otwórz w poczcie”</b> – otworzy się mail ${who} z tematem i danymi klienta, a oferta <b>sama się skopiuje</b>.</li>
+      <li>W mailu kliknij <b>prawym przyciskiem myszy</b> pod danymi klienta i wybierz <b>„Wklej”</b> – oferta wklei się z formatowaniem.</li>
+      <li>Jeśli potrzebny jest załącznik: <b>„Pobierz plik oferty”</b>, a w poczcie przycisk <b>„Załącz”</b> i wybierz plik z folderu Pobrane.</li>`;
+    $("od-body").value = `${o.subject}\n\n${o.body}`;
+    $("od-letter").innerHTML = '<p class="muted">Wczytuję podgląd…</p>';
+    let file = null;
+    offerHtml(o.id).then(async (f) => { file = f; const doc = new DOMParser().parseFromString(await f.blob.text(), "text/html"); $("od-letter").innerHTML = doc.body.innerHTML; })
+      .catch(() => { $("od-letter").textContent = o.body; });
+    $("od-mail").href = d.mailto; $("od-mail").hidden = !o.recipient;
+    const flash = (btn, text, back) => { btn.textContent = text; setTimeout(() => { btn.textContent = back; }, 1800); };
+    async function copyLetter() {
+      // Białe tło jako tabela z bgcolor – tak zachowuje je każda poczta, także ciemny Thunderbird
+      // (sam ciemny tekst bez tła byłby tam czarny na czarnym). Nowe oferty mają już tę tabelę z serwera.
+      const inner = $("od-letter").innerHTML;
+      const html = inner.includes("data-offer-card") ? inner
+        : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background:#ffffff;border-collapse:collapse;max-width:760px"><tr><td bgcolor="#ffffff" style="background:#ffffff;color:#25212a;padding:20px 24px">${inner}</td></tr></table>`;
+      const text = $("od-letter").innerText;
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
+        return "html";
+      } catch { return (await CRM.copyText(text)) ? "text" : ""; }
+    }
+    $("od-copy").onclick = async () => {
+      const how = await copyLetter();
+      flash($("od-copy"), how === "html" ? "Skopiowano ✓ – wklej w mailu" : how ? "Skopiowano (bez formatowania)" : "Nie udało się", "Kopiuj ofertę (z formatowaniem)");
+    };
+    $("od-mail").onclick = async (e) => {
+      e.preventDefault();
+      const how = await copyLetter();
+      if (how !== "html") { location.href = d.mailto; return; }   // bez schowka: stary mail z ofertą zwykłym tekstem
+      // krótki mail: dane klienta + miejsce na wklejenie sformatowanej oferty
+      const head = String(o.body).split(/\n-{10,}\n/)[0].replace(/^Proszę o wysłanie oferty do klienta\.\s*/, "").trim();
+      const body = `${head}\n\n(Tu wklej ofertę: prawy przycisk myszy → Wklej)\n`;
+      location.href = `mailto:${encodeURIComponent(o.recipient)}?subject=${encodeURIComponent(o.subject)}&body=${encodeURIComponent(body)}`;
+      flash($("od-mail"), "Oferta skopiowana ✓ – wklej w mailu", "Otwórz w poczcie");
+    };
+    $("od-file").onclick = async () => {
+      try {
+        const f = file || await offerHtml(o.id);
+        const url = URL.createObjectURL(f.blob);
+        const a = Object.assign(document.createElement("a"), { href: url, download: f.name });
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+        flash($("od-file"), "Pobrano ✓", "Pobierz plik oferty");
+      } catch (ex) { toast(ex.message, true); }
+    };
+    dlg.showModal();
+  }
+
+  /* ---------- po zapisie: pasek „Cofnij” i następny klient ---------- */
   const UNDO_SECONDS = 10;
   let undoTimer = null;
   function hideUndo() { clearInterval(undoTimer); const el = $("undo-bar"); if (el) el.remove(); }
-  function showUndo(saved, leadId, html) {
-    hideUndo();
-    if (!saved || !saved.id) return;
+  function showUndo(saved, leadId, text) {
+    hideUndo(); if (!saved || !saved.id) return;
+    if (CRM.undoBarEnabled && !CRM.undoBarEnabled()) { toast(text.replace(/<[^>]+>/g, "")); return; }
     const bar = document.createElement("div");
-    bar.id = "undo-bar"; bar.className = "undo-bar"; bar.setAttribute("role", "status");
-    bar.innerHTML = `<span class="ub-text">${html}</span><button type="button" class="ub-btn" title="Cofnij zapis (Ctrl+Z)">Cofnij <span class="ub-sec">${UNDO_SECONDS}</span></button><span class="ub-time" aria-hidden="true"></span>`;
+    bar.id = "undo-bar"; bar.className = "undo-bar"; bar.setAttribute("role", "status"); bar.style.bottom = "calc(var(--dialbar-h) + 14px)";
+    bar.innerHTML = `<span class="ub-text">${text}</span><button type="button" class="ub-btn">Cofnij <span class="ub-sec">${UNDO_SECONDS}</span></button><span class="ub-time" aria-hidden="true"></span>`;
     document.body.appendChild(bar);
     bar.querySelector(".ub-time").style.animationDuration = UNDO_SECONDS + "s";
     let left = UNDO_SECONDS;
-    undoTimer = setInterval(() => {
-      left -= 1;
-      const sec = bar.querySelector(".ub-sec");
-      if (sec) sec.textContent = String(Math.max(left, 0));
-      if (left <= 0) hideUndo();
-    }, 1000);
-    const btn = bar.querySelector(".ub-btn");
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      let r;
-      try { r = await api(`/api/activities/${saved.id}/undo/`, { method: "POST" }); }
-      catch { toast("Brak połączenia z serwerem. Nie cofnięto.", true); btn.disabled = false; return; }
-      if (!r.ok) {
-        const msg = (await r.json().catch(() => ({}))).detail || "Nie można cofnąć tego zapisu.";
-        toast(msg, true); hideUndo(); return;
-      }
+    undoTimer = setInterval(() => { left -= 1; const s = bar.querySelector(".ub-sec"); if (s) s.textContent = String(Math.max(left, 0)); if (left <= 0) hideUndo(); }, 1000);
+    bar.querySelector(".ub-btn").addEventListener("click", async () => {
+      const r = await jsonReq(`/api/activities/${saved.id}/undo/`, "POST", {});
       hideUndo();
-      toast("Zapis cofnięty.");
-      clearSearch();
-      await loadLeads();
-      refreshReminders();
-      await CRM.openLead(leadId);
+      if (r.error) { toast(r.error, true); return; }
+      toast("Zapis cofnięty."); await refreshAll(); openLead(leadId);
     });
   }
-  /* Ctrl+Z cofa ostatni zapis, dopóki pasek jest widoczny (nie w polach tekstowych, żeby nie psuć ich własnego cofania) */
-  document.addEventListener("keydown", (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z" || e.shiftKey) return;
-    const t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-    const btn = document.querySelector("#undo-bar .ub-btn");
-    if (typing || !btn || btn.disabled) return;
-    e.preventDefault(); btn.click();
-  });
-
-  async function afterSave(leadId, goNext, saved) {
-    clearSearch();   // po zapisie wracasz do zwykłej kolejki (dane z wyszukiwania byłyby nieaktualne)
-    const name = current && current.contact_name ? current.contact_name : "";
-    const out = saved && saved.outcome ? OUT_LABEL[saved.outcome] || "" : "";
-    const again = saved && saved.rescheduled_to ? ` Następny kontakt: <b>${esc(fmt(saved.rescheduled_to))}</b>.` : "";
-    const worth = saved && saved.sale_total ? ` Wartość sprzedaży: <b>${esc(CRM.money(saved.sale_total))}</b>.` : "";
-    savedNote = `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}.${worth}${again}`;
-    showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(out)}${name ? " · " + esc(name) : ""}${saved && saved.sale_total ? " · " + esc(CRM.money(saved.sale_total)) : ""}`);
-    await loadLeads();
-    refreshReminders();
-    if (saved && saved.outcome === "no_answer" && !leads.some((l) => l.id === leadId)) {
-      savedNote += " Limit prób wyczerpany: lead wrócił do wspólnej puli.";
-    }
-    if (goNext) {
-      const od = otherOverdue(leadId);
-      if (od.length) {   // najpierw zaległe, bo przy zaległych backend i tak nie wyda nowego leada (409)
-        savedNote += ` Czeka jeszcze ${od.length} ${plOverdue(od.length)}, otwieram najstarszy.`;
-        select(od[0].id);
-        return;
-      }
-      const untouched = leads.filter((l) => l.id !== leadId && groupOf(l) === 4);   // Twoje leady, do których jeszcze nie dzwoniono
-      if (untouched.length) {
-        savedNote += ` Otwieram kolejnego z Twojej listy (jeszcze bez telefonu, zostało ich ${untouched.length}).`;
-        select(untouched[0].id);
-        return;
-      }
-      const got = await claim();
-      if (got === true) return;
-      if (got === "empty") { doneForNow(); return; }   // pula pusta i nic więcej do zrobienia: mówimy to wprost, zamiast pokazywać znów ten sam lead
-    }
-    if (leads.some((l) => l.id === leadId)) select(leadId);
-    else if (leads.length) select(leads[0].id);
-    else { savedNote = ""; emptyPane(); }
+  async function afterSave(saved, goNext) {
+    const name = current ? title(current) : "", leadId = current ? current.id : null;
+    const again = saved && saved.rescheduled_to ? ` · następny kontakt ${esc(when(saved.rescheduled_to))}` : "";
+    showUndo(saved, leadId, `<b>Zapisano:</b> ${esc(OUT_LABEL[saved.outcome] || "")} · ${esc(name)}${again}`);
+    if (CRM.refreshReminders) CRM.refreshReminders();
+    // „Zapisz i dalej”: od razu następny klient, a listy po lewej i panel „Dziś” odświeżają się w tle
+    if (goNext) { await nextClient(true, saved && saved.next); refreshAll(); armAutoDial(); return; }
+    await refreshAll();
+    if (leadId) openLead(leadId);
   }
+  async function refreshAll() { await Promise.all([loadLeads(), loadSummary(), loadHistory(), loadSideData()]); }
 
-  /* Pula pusta, a w kolejce nic nie czeka „na teraz”: wprost to mówimy i pokazujemy, co jest najbliżej */
-  function doneForNow() {
-    selectedId = null; renderList();
-    const upcoming = leads.slice().sort(byUrgency).slice(0, 3);
-    const note = savedNote; savedNote = "";
-    $("lead-pane").innerHTML = `${note ? `<div class="saved-banner" role="status"><span class="sb-ic">✓</span><div>${note}</div></div>` : ""}
-      <div class="card empty"><h2>Na teraz wszystko zrobione</h2>
-        <p class="muted">Wspólna pula jest pusta i nie masz więcej leadów do pierwszego telefonu ani zaległych kontaktów.${upcoming.length ? " Najbliższe zaplanowane:" : ""}</p>
-        ${upcoming.length ? `<div class="lead-list">${upcoming.map((l) => leadItem(l, groupOf(l))).join("")}</div>` : ""}</div>`;
-  }
-
-  /* Sprzedaż (wynik „Sprzedane”): wiersze „produkt + ilość”, wartość liczy się na żywo z cen katalogu.
-     Serwer i tak liczy wartość sam, z ceny z chwili zapisu. */
-  function makeSale() {
-    const box = $("sale-fields"), rowsEl = $("sale-rows"), sumEl = $("sale-sum"), noteEl = $("sale-note"), addBtn = $("sale-add");
-    const find = (id) => products.find((x) => String(x.id) === String(id));
-    const cents = (x) => Math.round(Number(x.price) * 100);
-    const optionText = (x) => `${x.name} – ${Number(x.price) > 0 ? CRM.money(x.price) : "brak ceny"}${x.unit ? " / " + x.unit : ""}`;
-    const usedIds = () => [...rowsEl.querySelectorAll(".sale-prod")].map((el) => el.value);
-    function recalc() {
-      let total = 0, noPrice = false;
-      rowsEl.querySelectorAll(".sale-row").forEach((row) => {
-        const x = find(row.querySelector(".sale-prod").value), q = Number(row.querySelector(".sale-qty").value);
-        const line = x && Number.isInteger(q) && q > 0 ? cents(x) * q : 0;
-        if (x && !(Number(x.price) > 0)) noPrice = true;
-        total += line;
-        row.querySelector(".sale-line").textContent = x ? CRM.money(line / 100) : "–";
-      });
-      sumEl.textContent = CRM.money(total / 100);
-      addBtn.hidden = !products.length;
-      addBtn.disabled = rowsEl.children.length >= products.length;
-      if (products.length) {
-        noteEl.hidden = !noPrice;
-        if (noPrice) noteEl.textContent = "Ten produkt nie ma ceny w katalogu, więc jego wartość wyniesie 0 zł. Ceny ustawia manager na stronie „Produkty”.";
-      }
-    }
-    function addRow(preferredId) {
-      const used = usedIds();
-      const pick = (preferredId && !used.includes(String(preferredId)) && find(preferredId)) || products.find((x) => !used.includes(String(x.id)));
-      if (!pick) return null;
-      const row = document.createElement("div");
-      row.className = "sale-row";
-      row.innerHTML = `<select class="select sale-prod" aria-label="Produkt">${products.map((x) => `<option value="${x.id}"${x.id === pick.id ? " selected" : ""}>${esc(optionText(x))}</option>`).join("")}</select>
-        <input type="number" class="select sale-qty" min="1" max="9999" step="1" value="1" inputmode="numeric" aria-label="Ilość">
-        <b class="sale-line">–</b>
-        <button type="button" class="sale-del" title="Usuń pozycję" aria-label="Usuń pozycję">×</button>`;
-      rowsEl.appendChild(row);
-      recalc();
-      return row;
-    }
-    rowsEl.addEventListener("input", recalc);
-    rowsEl.addEventListener("change", recalc);
-    rowsEl.addEventListener("click", (e) => {
-      const del = e.target.closest(".sale-del");
-      if (!del || rowsEl.children.length < 2) return;
-      del.closest(".sale-row").remove();
-      recalc();
-    });
-    addBtn.addEventListener("click", () => { const row = addRow(); if (row) row.querySelector(".sale-qty").select(); });
-    return {
-      open() {
-        box.hidden = false;
-        if (!products.length) {
-          noteEl.hidden = false;
-          noteEl.textContent = "Katalog produktów jest pusty, więc sprzedaż zapisze się bez wartości. Produkty i ceny dodaje manager na stronie „Produkty”.";
-        } else if (!rowsEl.children.length) addRow(current && current.product);
-        recalc();
-      },
-      close() { box.hidden = true; rowsEl.innerHTML = ""; noteEl.hidden = true; },
-      firstQty: () => rowsEl.querySelector(".sale-qty"),
-      lines() {
-        if (!products.length) return { ok: true, lines: [] };
-        const out = [];
-        for (const row of rowsEl.querySelectorAll(".sale-row")) {
-          const id = Number(row.querySelector(".sale-prod").value), q = Number(row.querySelector(".sale-qty").value);
-          if (!id) return { ok: false, error: "Wybierz produkt." };
-          if (!Number.isInteger(q) || q < 1) return { ok: false, error: "Ilość musi być liczbą całkowitą, co najmniej 1." };
-          if (q > 9999) return { ok: false, error: "Ilość jest za duża (maksymalnie 9999). Sprawdź, czy to nie literówka." };
-          out.push({ product: id, quantity: q });
-        }
-        return out.length ? { ok: true, lines: out } : { ok: false, error: "Dodaj, co zostało sprzedane." };
-      },
-    };
-  }
-
-  function wireForm(leadId) {
-    const form = $("act-form"), err = $("act-error");
-    const sale = makeSale();
-    const submits = () => form.querySelectorAll("[type=submit]");
-    const fail = (m) => { err.textContent = m; err.hidden = false; };
-    const actions = form.querySelector(".actions"), primary = form.querySelector("[data-next]");
-    const setArmed = (on) => actions.classList.toggle("armed", on);
-    /* Zacznij od nowa: czyści wynik, terminy i komentarze (kliknięcie tego samego wyniku albo Esc). */
-    function reset() {
-      outcome = null; err.hidden = true;
-      form.querySelectorAll("[data-outcome]").forEach((x) => x.setAttribute("aria-checked", "false"));
-      form.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", "false"));
-      $("cb-fields").hidden = true;
-      sale.close();
-      ["cb-at", "cb-note", "act-note"].forEach((id) => { $(id).value = ""; });
-      updatePreview();
-      $("hint").textContent = "Wybierz wynik (klawisze 1–6). Pomyłka? Kliknij ten sam przycisk albo Esc, żeby zacząć od nowa.";
-      submits().forEach((s) => { s.disabled = true; });
-      setArmed(false);
-      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    }
-    resetForm = reset;
-    $("reset-btn").addEventListener("click", reset);
-    /* Podświetlenie: przycisk „Zapisz i weź kolejnego” + podpowiedź, gdy Enter właśnie go uruchomi. */
-    const hintEl = form.querySelector(".enter-hint");
-    [$("cb-note"), $("act-note"), primary].forEach((f) => {
-      f.addEventListener("focus", () => {
-        if (!outcome) return;
-        hintEl.textContent = f === $("act-note") ? "↵ Enter zapisuje i bierze kolejnego (Shift+Enter = nowa linia)" : "↵ Enter zapisuje i bierze kolejnego";
-        setArmed(true);
-      });
-      f.addEventListener("blur", () => setArmed(false));
-    });
-    $("sale-fields").addEventListener("focusin", (e) => {
-      if (outcome !== "sold" || !e.target.matches(".sale-qty, .sale-prod")) return;
-      hintEl.textContent = "↵ Enter zapisuje i bierze kolejnego";
-      setArmed(true);
-    });
-    $("sale-fields").addEventListener("focusout", () => setArmed(false));
-    /* Wybór terminu z kalendarza (natywny picker przeglądarki) */
-    const nat = $("cb-native");
-    $("cb-pick").addEventListener("click", () => {
-      nat.min = fmtNative(new Date());
-      nat.value = fmtNative(parseWhen($("cb-at").value) || atNine(1));
-      try { nat.showPicker(); } catch { nat.focus(); nat.click(); }
-    });
-    const applyPicked = () => {
-      if (!nat.value) return;
-      $("cb-at").value = fmtInput(new Date(nat.value));
-      form.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", "false"));
-      updatePreview();
-    };
-    nat.addEventListener("input", applyPicked);                       // data wpisuje się od razu przy każdym kliknięciu w kalendarzu
-    nat.addEventListener("change", () => { applyPicked(); $("cb-note").focus(); });
-    form.querySelectorAll("[data-outcome]").forEach((b) => b.addEventListener("click", () => {
-      if (outcome === b.dataset.outcome) { reset(); return; }
-      outcome = b.dataset.outcome; err.hidden = true;
-      form.querySelectorAll("[data-outcome]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-      const fresh = isFresh(current), lastTry = outcome === "no_answer" && isLastTry(current);
-      const sched = SCHEDULING.includes(outcome) && !lastTry, required = REQUIRED.includes(outcome);
-      autoRetry = false;
-      $("cb-fields").hidden = !sched;
-      if (outcome === "sold") sale.open(); else sale.close();
-      let hintText = OUTCOMES.find((o) => o[0] === outcome)[2];
-      if (sched) {
-        const missed = outcome === "no_answer" && isMissable(current);
-        const autoTerm = outcome === "no_answer" && fresh && !missed && current.suggested_retry_at ? new Date(current.suggested_retry_at) : null;
-        $("cb-label").textContent = { callback: "Kiedy oddzwonić", interested: "Kiedy ponownie zadzwonić", no_answer: missed ? "Ponowna próba (nie odebrał w terminie)" : autoTerm ? "Ponowna próba (ustawiona automatycznie, możesz zmienić)" : "Ponowna próba (opcjonalnie)" }[outcome];
-        $("cb-why-label").textContent = "W jakiej sprawie (opcjonalnie)";
-        $("cb-note").value = (current && current.next_contact_note) || "";   // podpowiedź: ostatnio wpisana sprawa
-        $("cb-at").value = required ? fmtInput(atNine(1)) : missed ? fmtInput(new Date(Date.now() + 3600e3)) : autoTerm ? fmtInput(autoTerm) : "";
-        autoRetry = !!autoTerm;
-        updatePreview();
-        form.querySelectorAll("[data-preset]").forEach((p) => p.setAttribute("aria-pressed", "false"));
-        if (missed) hintText = "Umówiony kontakt nie doszedł do skutku. Lead zostaje u Ciebie, a ponowna próba trafi do planu dnia na wskazany termin (domyślnie za godzinę).";
-        else if (autoTerm) hintText = `Próba ${triesOf(current) + 1} z ${maxTries()} bez odpowiedzi. Ponowną próbę ustawiłem na ${longDate(autoTerm)}. Zmień termin, jeśli wolisz inny, albo od razu zapisz.`;
-      } else if (lastTry) {
-        hintText = `To ostatnia próba (${triesOf(current) + 1} z ${maxTries()}). Po zapisie lead wróci do wspólnej puli i zniknie z Twojej listy.`;
-      }
-      $("hint").textContent = hintText;
-      submits().forEach((s) => { s.disabled = false; });
-      /* Kursor od razu ląduje tam, gdzie agent ma coś wpisać lub zatwierdzić (Enter). */
-      const focusOn = { callback: "cb-at", interested: "cb-at", refused: "act-note" }[outcome];
-      const saleQty = outcome === "sold" ? sale.firstQty() : null;   // sprzedaż: kursor od razu w ilości (domyślnie 1)
-      (saleQty || (focusOn ? $(focusOn) : form.querySelector("[data-next]"))).focus({ preventScroll: true });
-      ensureFormVisible(form);   // wynik wybrany z góry strony: przewiń tak, żeby było widać przyciski 1–6 i zapis
-      if (focusOn === "cb-at") $("cb-at").select();   // od razu można nadpisać domyślny termin
-      if (saleQty) saleQty.select();
-    }));
-    const clearPresets = () => form.querySelectorAll("[data-preset]").forEach((p) => p.setAttribute("aria-pressed", "false"));
-    $("cb-at").addEventListener("input", () => { autoRetry = false; clearPresets(); updatePreview(); });
-    $("cb-at").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("cb-note").focus(); } });
-    /* Enter w komentarzu działa tak samo jak wszędzie: zapisuje i bierze kolejnego (nowa linia: Shift+Enter) */
-    $("act-note").addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing) return;
-      e.preventDefault();
-      if (!primary.disabled) primary.click();
-    });
-    form.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
-      const was = b.getAttribute("aria-pressed") === "true";
-      autoRetry = false;
-      clearPresets();
-      if (was && !REQUIRED.includes(outcome)) { $("cb-at").value = ""; updatePreview(); return; }  /* drugie kliknięcie czyści termin */
-      b.setAttribute("aria-pressed", "true");
-      $("cb-at").value = fmtInput(PRESETS[Number(b.dataset.preset)][1]());
-      updatePreview();
-    }));
-    $("note-only").addEventListener("click", async () => {
-      const note = $("act-note").value.trim();
-      if (!note) { fail("Wpisz treść notatki."); return; }
-      let r;
-      try { r = await postActivity({ lead: leadId, outcome: "note", note }); } catch { fail("Brak połączenia z serwerem. Spróbuj ponownie."); return; }
-      if (!r.ok) { fail(errText(await r.json().catch(() => ({})))); return; }
-      const saved = await r.json().catch(() => ({}));
-      try { await afterSave(leadId, false, saved); } catch (ex) { console.error(ex); toast("Zapisano, ale nie udało się odświeżyć widoku. Odśwież stronę (F5).", true); }
-    });
-    let saving = false;
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault(); err.hidden = true;
-      if (!outcome) { fail("Wybierz wynik rozmowy."); return; }
-      const goNext = e.submitter && e.submitter.dataset.next === "1";
-      const body = { lead: leadId, outcome, note: $("act-note").value.trim() };
-      if (SCHEDULING.includes(outcome) && !$("cb-fields").hidden && !(autoRetry && outcome === "no_answer")) {
-        // (przy nietkniętej automatycznej propozycji nie wysyłamy terminu: serwer policzy go od chwili zapisu)
-        const raw = $("cb-at").value.trim(), why = $("cb-note").value.trim();
-        const when = raw ? parseWhen(raw) : null;
-        if (raw && !when) { fail("Nie rozumiem terminu. Spróbuj np. „jutro 9:30” albo „25.10 10:23”."); return; }
-        if (REQUIRED.includes(outcome) && !when) { fail("Podaj termin ponownego kontaktu."); return; }
-        if (when && when < new Date()) { fail("Ten termin już minął."); return; }
-        if (when) { body.next_contact_at = when.toISOString(); body.next_contact_note = why; }
-      }
-      if (outcome === "sold") {
-        const sl = sale.lines();
-        if (!sl.ok) { fail(sl.error); return; }
-        if (sl.lines.length) body.sale_lines = sl.lines;
-      }
-      if (saving) return;   // podwójne kliknięcie / Enter nie zapisze drugi raz
-      saving = true;
-      submits().forEach((s) => { s.disabled = true; });
-      const unlock = () => { saving = false; submits().forEach((s) => { s.disabled = false; }); };
-      let r;
-      try { r = await postActivity(body); } catch { fail("Brak połączenia z serwerem. Spróbuj ponownie."); unlock(); return; }
-      if (!r.ok) { fail(errText(await r.json().catch(() => ({})))); unlock(); return; }
-      const saved = await r.json().catch(() => ({}));
-      try { await afterSave(leadId, goNext, saved); }
-      catch (ex) { console.error(ex); toast("Zapisano, ale nie udało się odświeżyć widoku. Odśwież stronę (F5).", true); }
-      finally { saving = false; }
-    });
-  }
-
-  async function claim() {
-    clearSearch();
-    const btn = $("claim-btn"); btn.disabled = true;
+  /* ---------- „Następny klient” ---------- */
+  const REASON_TOAST = { offer: "Follow-up po ofercie", callback: "Umówione oddzwonienie", retry: "Ponowna próba", new: "Nowa firma" };
+  /* Bez mrugania: przyciski i karta przygasają dopiero, gdy serwer odpowiada dłużej niż 0,3 s
+     (szybka odpowiedź nie zmienia wyglądu); drugie kliknięcie w trakcie nic nie robi */
+  let nextBusy = false;
+  async function nextClient(refreshLater, ready) {
+    if (nextBusy) return;
+    nextBusy = true;
+    const pane = $("lead-pane");
+    const slow = setTimeout(() => {
+      document.querySelectorAll("#claim-btn, [data-next-btn]").forEach((b) => { b.disabled = true; });
+      if (pane) pane.classList.add("w-busy");
+    }, 300);
     try {
-      const r = await api("/api/leads/next/", { method: "POST" });
-      const d = await r.json().catch(() => ({}));
-      if (r.status === 409) { toast(`Masz zaległe oddzwonienia (${d.overdue_count}). Zrób je najpierw – są na górze listy.`, true); return false; }
-      if (r.status === 404) { toast("Pula jest pusta – brak leadów do pobrania.", true); return "empty"; }
-      if (!r.ok) { toast(d.detail || "Nie udało się pobrać leada.", true); return false; }
-      await loadLeads(); select(d.id);
-      refreshReminders();
-      return true;
-    } catch (ex) {
-      console.error(ex); toast("Brak połączenia z serwerem. Spróbuj ponownie.", true); return false;
-    } finally { btn.disabled = false; }
+      // `ready` = następny klient przyszedł już w odpowiedzi na zapis („Zapisz i dalej”)
+      const r = ready ? { ok: !!ready.lead, status: ready.lead ? 200 : 404 } : await api("/api/work/next/", { method: "POST" });
+      const d = ready || await r.json().catch(() => ({}));
+      if (r.status === 404) { welcome(d.detail || "Na teraz nie ma nic do zrobienia."); return; }
+      if (!r.ok) { toast(d.detail || "Nie udało się pobrać klienta.", true); return; }
+      await openLead(d.lead.id, d.reason, d.lead.activities ? d.lead : null);
+      if (!refreshLater) { if (!leads.some((l) => l.id === d.lead.id)) loadLeads(); loadSummary(); }
+      CRM.scrollTop();
+    } catch { toast("Brak połączenia z serwerem.", true); } finally {
+      clearTimeout(slow); nextBusy = false;
+      document.querySelectorAll("#claim-btn, [data-next-btn]").forEach((b) => { b.disabled = false; });
+      if (pane) pane.classList.remove("w-busy");
+    }
   }
 
-  loadProducts();
-  api("/api/settings/").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { rules = d; renderList(); } }).catch(() => {});
-  $("claim-btn").addEventListener("click", claim);
-  $("lead-pane").addEventListener("click", (e) => {
-    if (e.target.closest("#banner-clear")) { clearSearch(); return; }
-    const item = e.target.closest(".empty .lead-item[data-id]");   // lista „najbliższe zaplanowane” na ekranie „wszystko zrobione”
-    if (item) select(Number(item.dataset.id));
+  /* ---------- wyszukiwarka z górnego paska ---------- */
+  document.addEventListener("crm:search", async (e) => {
+    e.preventDefault();
+    const q = (e.detail && e.detail.q || "").trim();
+    if (q.length < 2) return;
+    const r = await api("/api/leads/lookup/?q=" + encodeURIComponent(q));
+    if (!r.ok) { toast("Nie udało się wyszukać.", true); return; }
+    const found = await r.json();
+    if (!found.length) { toast(`Nie znaleziono klienta dla „${q}”.`, true); return; }
+    await openLead(found[0].id);
+    if (found.length > 1) toast(`Znaleziono ${found.length} klientów – otwieram najlepiej pasującego.`);
   });
-  $("lead-list").addEventListener("click", (e) => {
-    if (e.target.closest("#found-clear")) { clearSearch(); return; }
-    const item = e.target.closest("[data-id]");
-    if (item) select(Number(item.dataset.id));
-  });
-  /* Skróty: 1–6 wybiera wynik, Enter (albo Ctrl+Enter) zapisuje i bierze kolejnego. */
-  document.addEventListener("keydown", (e) => {
-    const form = $("act-form");
-    if (!form) return;
-    if (e.key === "Escape" && resetForm) { resetForm(); return; }
-    if (e.key === "Enter" && e.ctrlKey) { const b = form.querySelector("[data-next]"); if (b && !b.disabled) b.click(); return; }
-    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && e.target === document.body) {
-      const b = form.querySelector("[data-next]");
-      if (b && !b.disabled) { e.preventDefault(); b.click(); }
+
+  /* ---------- kliknięcia ---------- */
+  document.addEventListener("click", async (e) => {
+    const t = e.target;
+    if (t.closest("#claim-btn, [data-next-btn]")) { nextClient(); return; }
+    const seg = t.closest("[data-seg]"); if (seg) { segFilter = seg.dataset.seg; tab = "todo"; paintTabs(); renderSegs(); renderList(); return; }
+    const item = t.closest("#lead-list [data-id], #side [data-id]"); if (item) { openLead(Number(item.dataset.id)); return; }
+    if (t.closest("#tab-todo")) { tab = "todo"; paintTabs(); renderList(); return; }
+    if (t.closest("#tab-hist")) { tab = "hist"; paintTabs(); loadHistory(); renderHistory(); return; }
+    if (t.closest("#tab-sms")) { tab = "sms"; paintTabs(); renderSms(); loadSms(); return; }
+    const sf = t.closest("[data-sms-all]");
+    if (sf) { smsAll = sf.dataset.smsAll === "1"; try { localStorage.setItem("crm_sms_all", smsAll ? "1" : "0"); } catch { /* brak dostępu */ } renderSms(); return; }
+    const mail = t.closest("[data-sms-mail]");
+    if (mail) {
+      const r = await jsonReq(`/api/leads/${mail.dataset.smsMail}/`, "PATCH", { email: mail.dataset.mail });
+      if (r.error) { toast(r.error, true); return; }
+      toast(`E-mail ${mail.dataset.mail} zapisany w karcie klienta.`);
+      smsList.filter((s) => s.lead === Number(mail.dataset.smsMail)).forEach((s) => { s.email = ""; s.lead_email = mail.dataset.mail; });
+      renderSms();
+      if (current && current.id === Number(mail.dataset.smsMail)) { current.email = mail.dataset.mail; renderCard(); }
       return;
     }
-    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
-    const o = OUTCOMES[Number(e.key) - 1];
-    if (o) { e.preventDefault(); form.querySelector(`[data-outcome="${o[0]}"]`).click(); }   // preventDefault: cyfra nie wpisze się w pole, na które przeskoczy kursor
-  });
-  /* Żywy licznik: co sekundę (jak karty przypomnień, żeby oba miejsca zmieniały się w tej samej chwili) odświeża „za X min” na liście i w karcie, a przy zmianie pilności przesuwa leada do innej grupy */
-  setInterval(() => {
-    if (document.hidden) return;
-    renderList();
-    const nc = document.querySelector(".next-card[data-iso]");
-    if (!nc) return;
-    const iso = nc.dataset.iso, due = new Date(iso) < new Date(), soft = nc.classList.contains("soft");
-    nc.classList.toggle("late", due && !soft);
-    const state = nc.querySelector(".nc-state"), when = nc.querySelector(".nc-when");
-    if (state) state.textContent = soft ? (due ? "Czas na ponowną próbę" : "Ponowna próba") : due ? "Zaległy kontakt" : "Następny kontakt";
-    if (when) when.textContent = rel(iso);
-  }, 1000);
-  setInterval(() => { if (!document.hidden) loadSummary(); }, 30000);   // pasek dnia: liczby „zaległe / do ponowienia” zmieniają się z upływem czasu
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { renderList(); } });
-  /* /crm/queue/?lead=ID (link z planu dnia) otwiera od razu wskazanego leada */
-  const wanted = Number(new URLSearchParams(location.search).get("lead"));
-  loadLeads().then(async () => {
-    const find = new URLSearchParams(location.search).get("find");   // z wyszukiwarki na innej stronie
-    if (find) {
-      if ($("gsearch-input")) $("gsearch-input").value = find;
-      await doSearch(find);
-      if (found && found.length) return;
+    if (t.closest("#call-btn")) { callNow(); return; }
+    if (t.closest("#hangup-btn, #db-hangup")) { hangUp(); return; }
+    const out = t.closest("[data-out]"); if (out) { pick(out.dataset.out); return; }
+    if (t.closest("#save-next")) { save(true); return; }
+    if (t.closest("#save-only")) { save(false); return; }
+    if (t.closest("#note-only")) { save(false, true); return; }
+    if (t.closest("#reset-form")) { resetForm(); return; }
+    if (t.closest("#edit-data, [data-edit]")) { editData(); return; }
+    if (t.closest("[data-referral]")) { openContact(); return; }
+    const reg = t.closest("[data-reg]");
+    if (reg) {
+      const ok = await CRM.copyText(reg.dataset.reg);
+      window.open("https://www.biznes.gov.pl/pl/wyszukiwarka-firm/", "_blank", "noopener");
+      toast(ok ? "NIP skopiowany. W wyszukiwarce kliknij pole prawym przyciskiem myszy i wybierz „Wklej”." : "Otworzyłem wyszukiwarkę firm – przepisz NIP.");
     }
-    if (wanted && !leads.some((l) => l.id === wanted)) {   // np. z wyszukiwarki: lead zamknięty albo spoza kolejki
-      await select(wanted);
-      if (current) return;
-    }
-    const first = leads.find((l) => l.id === wanted) || leads[0];
-    return first ? select(first.id) : emptyPane();
-  }).catch(() => {
-    $("lead-list").innerHTML = '<p class="form-error">Nie udało się wczytać leadów. Odśwież stronę (Ctrl+F5).</p>';
   });
+  const paintTabs = () => { ["todo", "hist", "sms"].forEach((k) => $("tab-" + k).setAttribute("aria-selected", String(tab === k))); };
+  /* numer w karcie: przy połączonym telefonie dzwoni przez Solid Dialer (nie przez program do dzwonienia na komputerze) */
+  document.addEventListener("click", (e) => {
+    const ph = e.target.closest("#lead-pane .w-phone, #lead-pane .w-alt a");
+    if (!ph || !current || !dialer.paired || dialer.paused) return;
+    e.preventDefault();
+    if (ph.classList.contains("w-phone")) callNow(); else if (CRM.dialViaPhone) CRM.dialViaPhone(ph.textContent.trim());
+  }, true);
+
+  /* ---------- klawisze (tylko pojedyncze, bez kombinacji) ---------- */
+  const keysOn = () => !CRM.keysEnabled || CRM.keysEnabled();
+  const paintKeys = () => document.body.classList.toggle("no-keys", !keysOn());
+  document.addEventListener("crm:view", paintKeys);
+  paintKeys();
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && autoDial) { stopAutoDial("Wstrzymane. Zadzwoń, kiedy będziesz gotowy."); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey || CRM.tourActive || !keysOn()) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+    if (document.querySelector("dialog[open]")) return;
+    if (e.key === "Escape") { resetForm(); return; }
+    if (typing) return;
+    const k = e.key.toLowerCase();
+    if (k === "n") { e.preventDefault(); nextClient(); return; }
+    if (k === "z" && current) { e.preventDefault(); callNow(); return; }
+    if (k === "x" && showPart("hangupBtn") && showPart("hangupKey") && dialer.call && dialer.call.state === "dialing" && !dialer.call.hangup) { e.preventDefault(); hangUp(); return; }
+    if (e.key === "Enter" && form) { e.preventDefault(); save(true); return; }
+    const o = OUTCOMES.find((x) => String(x.n) === e.key);
+    if (o && current) { e.preventDefault(); pick(o.key); }
+  });
+
+  /* ---------- nowy kontakt (np. z polecenia) i dzwonienie na dowolny numer ---------- */
+  function openContact(prefill = {}) {
+    const dlg = $("contact-dialog");
+    $("nc-phone").value = prefill.phone || ""; $("nc-company").value = ""; $("nc-person").value = ""; $("nc-email").value = ""; $("nc-note").value = "";
+    $("nc-error").hidden = true;
+    const ref = current && !tourDemo ? current : null;
+    $("nc-ref-row").hidden = !ref;
+    $("nc-ref").checked = !!ref && !prefill.phone;
+    if (ref) $("nc-ref-text").textContent = `Polecił go: ${title(ref)}`;
+    dlg.showModal();
+    $("nc-phone").focus();
+  }
+  async function saveContact(andCall) {
+    const body = { phone: $("nc-phone").value.trim(), company_name: $("nc-company").value.trim(), contact_name: $("nc-person").value.trim(),
+      email: $("nc-email").value.trim(), note: $("nc-note").value.trim() };
+    if (!body.phone) { $("nc-error").textContent = "Podaj numer telefonu."; $("nc-error").hidden = false; return; }
+    if (current && !$("nc-ref-row").hidden && $("nc-ref").checked) body.referred_by = current.id;
+    const r = await jsonReq("/api/work/contact/", "POST", body);
+    if (r.status === 409) {
+      $("nc-error").innerHTML = esc(r.data.detail || "Ten numer jest już w CRM.") + (r.data.lead ? ` <button type="button" class="w-link" id="nc-open">Otwórz tego klienta</button>` : "");
+      $("nc-error").hidden = false;
+      const b = $("nc-open"); if (b) b.addEventListener("click", async () => { $("contact-dialog").close(); await loadLeads(); openLead(r.data.lead); });
+      return;
+    }
+    if (r.error) { $("nc-error").textContent = r.error; $("nc-error").hidden = false; return; }
+    $("contact-dialog").close();
+    toast("Nowy kontakt dodany do Twoich klientów.");
+    await refreshAll();
+    await openLead(r.data.lead.id);
+    if (andCall) callNow();
+  }
+  $("contact-open").addEventListener("click", () => openContact());
+  $("pinfo-open").addEventListener("click", () => openProductInfo());
+  $("nc-cancel").addEventListener("click", () => $("contact-dialog").close());
+  $("contact-form").addEventListener("submit", (e) => { e.preventDefault(); saveContact(false); });
+  $("nc-call").addEventListener("click", () => saveContact(true));
+
+  function openDial() {
+    $("dl-phone").value = ""; $("dl-found").textContent = ""; $("dl-error").hidden = true;
+    $("dial-dialog").showModal(); $("dl-phone").focus();
+  }
+  let dialLookup = null;
+  $("dl-phone").addEventListener("input", () => {
+    clearTimeout(dialLookup);
+    const q = $("dl-phone").value.replace(/\D/g, "");
+    if (q.length < 9) { $("dl-found").textContent = ""; return; }
+    dialLookup = setTimeout(async () => {
+      const r = await api("/api/leads/lookup/?q=" + encodeURIComponent(q)).catch(() => null);
+      const found = r && r.ok ? await r.json() : [];
+      const hit = found.find((x) => x.match === "exact") || null;
+      $("dl-found").innerHTML = hit ? `Ten numer jest w CRM: <b>${esc(hit.display_name || hit.company_name || hit.contact_name || hit.phone)}</b> · <button type="button" class="w-link" data-open-found="${hit.id}">otwórz kartę</button>` : "Numeru nie ma w CRM – możesz zadzwonić albo dodać go jako klienta.";
+    }, 350);
+  });
+  $("dl-found").addEventListener("click", (e) => { const b = e.target.closest("[data-open-found]"); if (b) { $("dial-dialog").close(); openLead(Number(b.dataset.openFound)); } });
+  async function dialAny() {
+    const phone = $("dl-phone").value.trim();
+    if ((phone.replace(/\D/g, "")).length < 9) { $("dl-error").textContent = "Numer musi mieć co najmniej 9 cyfr."; $("dl-error").hidden = false; return; }
+    $("dial-dialog").close();
+    if ((dialer.online || dialer.paired) && !dialer.paused) {
+      const r = await jsonReq("/api/dialer/call/", "POST", { phone });
+      if (r.error) { toast(r.error, true); return; }
+      dialer = { ...dialer, ...r.data }; renderDialbar(); pollDialerSoon();
+      toast(dialer.online ? `Telefon wybiera numer ${phone}.` : "Telefon nie odpowiada – otwórz Solid Dialer. Numer wybierze się, gdy telefon się połączy.");
+    } else {
+      location.href = "tel:" + phone.replace(/[^\d+]/g, "");
+    }
+  }
+  $("dial-open").addEventListener("click", openDial);
+  $("db-dial").addEventListener("click", openDial);
+  $("dl-cancel").addEventListener("click", () => $("dial-dialog").close());
+  $("dial-form").addEventListener("submit", (e) => { e.preventDefault(); dialAny(); });
+  $("dl-add").addEventListener("click", () => { const phone = $("dl-phone").value.trim(); $("dial-dialog").close(); openContact({ phone }); });
+
+  /* ---------- samouczek: raz dla każdego agenta, potem z „Moje ustawienia” ---------- */
+  const DEMO_LEAD = { id: 0, phone: "500 100 200", phone_alt: "", company_name: "Przykładowa Firma Jan Nowak", display_name: "Przykładowa Firma Jan Nowak",
+    contact_name: "Jan Nowak", email: "", company_nip: "0000000000", company_regon: "", company_krs: "", company_street: "ul. Przykładowa 1",
+    company_postal_code: "00-001", company_city: "Olsztyn", status: "new", activities: [], attempts_count: 0, operators: "", client_comment: "",
+    next_contact_at: null, next_contact_note: "", knows_caller: false, missed_calls: 0 };
+  /* Haki dla samouczka (tour.js): przykładowy klient zamiast prawdziwego, podgląd wyników bez zapisu */
+  let tourBefore = null;
+  CRM.tourQueue = {
+    prepare() {
+      if (tourDemo) return;
+      tourBefore = current ? current.id : null;
+      tourDemo = true; current = { ...DEMO_LEAD }; renderCard();
+    },
+    demo(o) {
+      if (!tourDemo || !$("out-panel")) return;
+      if (o && (!form || form.outcome !== o)) pick(o);
+      if (!o && form) resetForm();
+    },
+    cleanup() {
+      if (!tourDemo) return;
+      tourDemo = false; current = null;
+      if (tourBefore) openLead(tourBefore); else welcome();
+    },
+  };
+  const startTour = () => CRM.tour && CRM.tour.start();
+  CRM.startTour = startTour;
+
+  /* ---------- start ---------- */
+  setInterval(() => { if (!document.hidden && tab === "todo") renderList(); }, 30000);
+  setInterval(() => { if (!document.hidden) { loadSummary(); loadDialer(); } }, 20000);
+  setInterval(() => { if (!document.hidden) loadSideData(); }, 120000);
+  (async () => {
+    // wszystko naraz (nie w dwóch turach po kolei) – ekran otwiera się szybciej
+    const lists = Promise.all([loadLeads(), loadSummary(), loadDialer(), loadSideData(), loadHistory()]);
+    const [pr, cf, rl] = await Promise.all([api("/api/products/?is_active=true&page_size=500").catch(() => null), api("/api/offer-config/").catch(() => null), api("/api/settings/").catch(() => null)]);
+    try { if (rl && rl.ok) { const d = await rl.json(); if (d.work_days) workDays = new Set([...d.work_days].map(Number));
+      reqSkip = !!d.require_skip_reason; reqRefuse = !!d.require_refuse_reason;
+      if (d.quick_phrases) { const q = d.quick_phrases; PHRASES = { ...PHRASES, ...q, refused: [], skipped: [] }; if (Array.isArray(q.refused)) REFUSE_CHIPS = q.refused;
+        if (Array.isArray(q.skip_never) && Array.isArray(q.skip_lost)) SKIP_CHIPS = [...q.skip_never, ...q.skip_lost]; }
+      if (form) paintPhrases(form.outcome); } } catch { /* pon–pt */ }
+    try { if (pr && pr.ok) { const d = await pr.json(); plans = (d.results || d).filter((p) => p.is_active); } } catch { /* bez taryf */ }
+    try { if (cf && cf.ok) config = { ...config, ...(await cf.json()) }; } catch { /* domyślne ustawienia */ }
+    await lists;
+    const params = new URLSearchParams(location.search);
+    const wanted = Number(params.get("lead")), find = params.get("find");
+    if (find) { const input = $("gsearch-input"); if (input) input.value = find; document.dispatchEvent(new CustomEvent("crm:search", { detail: { q: find }, cancelable: true })); return; }
+    if (wanted && await openLead(wanted)) return;
+    if (CRM.tour) {
+      if (params.get("tour") === "1") { window.history.replaceState(null, "", location.pathname); welcome(); setTimeout(startTour, 300); return; }
+      if (CRM.tour.resume()) return;
+      if (CRM.tour.shouldAutoStart()) { welcome(); setTimeout(startTour, 300); return; }
+    }
+    const first = leads.slice().sort(cmp)[0];
+    if (first && isDue(first) && segOf(first) !== "new") openLead(first.id); else welcome();
+  })().catch(() => { $("lead-pane").innerHTML = `<div class="w-panel"><p class="w-error">Nie udało się wczytać danych. Odśwież stronę (F5).</p></div>`; });
 })();
