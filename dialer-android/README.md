@@ -28,6 +28,18 @@ Na serwerze docelowo używamy `https://`.
 - `POST /api/dialer/sms/{id}/done/` `{ok, error}`
 - `POST /api/dialer/calls/{id}/recording/?duration=SEK` – surowy plik nagrania (`audio/ogg` albo `audio/mp4`)
 - poll dostaje `?rec=1|0&v=WERSJA` (czy da się nagrywać, wersja aplikacji), a zadanie `call` ma pole `record`
+- od 1.3: `POST /api/dialer/phone/ring/` `{phone}` (dzwoni klient), `POST /api/dialer/phone/log/` `{calls: [{phone, type: in|out|missed, seconds, at}]}`
+  (rejestr połączeń, których CRM nie zlecał), `POST /api/dialer/phone/sms/` `{sender, text, at}` (przychodzący SMS)
+- od 1.4: w trakcie połączenia `GET /api/dialer/calls/{id}/hangup/` → `{hangup}`; gdy `true`, aplikacja kończy połączenie
+
+## Telefon w CRM (od 1.3) i „Rozłącz” (od 1.4)
+- Gdy dzwoni klient, CRM od razu pokazuje kartę „Dzwoni do Ciebie: firma”.
+- Po rozmowie aplikacja wysyła do CRM połączenia z rejestru (klient oddzwonił, numer wybrany ręcznie). CRM zapisuje
+  tylko połączenia z numerami klientów i liczy je do minut rozmów – prywatne rozmowy nie trafiają do CRM.
+- Przychodzące SMS-y: CRM zapisuje tylko SMS-y od klientów i wiadomości od sieci o numerze klienta („numer już dostępny”).
+- „Rozłącz” w CRM kończy połączenie wybrane z CRM (zgoda „Telefon” – kończenie połączeń; nie każdy telefon na to pozwala).
+- Na Xiaomi: Ustawienia → Aplikacje → Solid Dialer → **Autostart** włączony i **Oszczędzanie baterii: bez ograniczeń**,
+  inaczej telefon usypia aplikację w tle.
 
 ## SMS z przypomnieniem
 Przed umówionym telefonem aplikacja sama wysyła klientowi SMS z przypomnieniem (ile wcześniej i treść ustawia
@@ -35,7 +47,7 @@ manager w CRM: Ustawienia → „SMS z przypomnieniem”). SMS idzie z karty SIM
 (widać go potem w „Wysłanych” w Wiadomościach), więc kosztuje tyle co zwykły SMS w abonamencie, bez żadnej bramki.
 Działa tylko, gdy telefon jest włączony i dialer pracuje. Przy pierwszym uruchomieniu nowej wersji zgódź się na „SMS-y”.
 
-## Nagrywanie rozmów (1.2, opcjonalne)
+## Nagrywanie rozmów (od 1.2, opcjonalne)
 Gdy manager włączy nagrywanie w CRM (i połączy Dysk Google), aplikacja nagrywa rozmowy wybrane z CRM, a po rozmowie
 wysyła nagranie do CRM. Na telefonie raz: „Włącz nagrywanie rozmów” → zgoda na mikrofon → w ułatwieniach dostępu włączyć
 „Solid Dialer – nagrywanie rozmów” (Android 13+: najpierw w informacjach o aplikacji ⋮ → „Zezwól na ustawienia z ograniczeniami”).
